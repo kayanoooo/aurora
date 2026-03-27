@@ -22,22 +22,28 @@ if (isElectron()) {
     });
 }
 
+const ENV_API_URL = process.env.REACT_APP_API_URL;
+const ENV_WS_URL = process.env.REACT_APP_WS_URL;
+
 export const config = {
     get SERVER_IP() { return getServerHost(); },
     get BASE_URL() {
         if (isElectron()) return `http://${getServerHost()}:8000`;
+        if (ENV_API_URL) return ENV_API_URL.replace('/api', '');
         const loc = window.location;
         if (loc.protocol === 'https:') return `https://${loc.host}`;
         return `http://${getServerHost()}:8000`;
     },
     get API_URL() {
         if (isElectron()) return `http://${getServerHost()}:8000/api`;
+        if (ENV_API_URL) return ENV_API_URL;
         const loc = window.location;
         if (loc.protocol === 'https:') return `https://${loc.host}/api`;
         return `http://${getServerHost()}:8000/api`;
     },
     get WS_URL() {
         if (isElectron()) return `ws://${getServerHost()}:8000`;
+        if (ENV_WS_URL) return ENV_WS_URL;
         const loc = window.location;
         if (loc.protocol === 'https:') return `wss://${loc.host}`;
         return `ws://${getServerHost()}:8000`;

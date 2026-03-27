@@ -127,7 +127,12 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-    """При остановке сервера закрываем пул"""
+    """При остановке сервера обновляем last_seen и закрываем пул"""
+    for user_id in list(manager.active_connections.keys()):
+        try:
+            await UserModel.update_last_seen(user_id)
+        except Exception:
+            pass
     await DatabasePool.close()
     print("👋 Database pool closed")
 
@@ -966,7 +971,23 @@ async def websocket_endpoint(websocket: WebSocket):
                 }
             })
         await MessageModel.mark_as_delivered([msg['id'] for msg in undelivered])
-    
+
+    # Уведомляем о прочитанных сообщениях которые были прочитаны пока мы были оффлайн
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT id FROM messages WHERE sender_id = %s AND is_read = 1",
+                (user_id,)
+            )
+            read_msgs = await cur.fetchall()
+    if read_msgs:
+        read_ids = [m['id'] for m in read_msgs]
+        await manager.send_message_to_user(user_id, {
+            "type": "messages_read",
+            "data": {"reader_id": None, "message_ids": read_ids}
+        })
+
     try:
         while True:
             data = await websocket.receive_json()

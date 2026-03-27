@@ -775,7 +775,7 @@ async def get_file(filename: str):
     if not content_type:
         content_type = "application/octet-stream"
     
-    return FileResponse(file_path, media_type=content_type)
+    return FileResponse(file_path, media_type=content_type, headers={"Access-Control-Allow-Origin": "*"})
 
 @app.get("/files/download/{message_id}")
 async def download_file_by_id(message_id: int):

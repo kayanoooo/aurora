@@ -420,7 +420,7 @@ class GroupModel:
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "INSERT INTO groups (name, description, creator_id) VALUES (%s, %s, %s)",
+                    "INSERT INTO `groups` (name, description, creator_id) VALUES (%s, %s, %s)",
                     (name, description, creator_id)
                 )
                 group_id = cur.lastrowid
@@ -439,8 +439,8 @@ class GroupModel:
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
-                    """SELECT g.*, COUNT(gm.user_id) as member_count 
-                       FROM groups g
+                    """SELECT g.*, COUNT(gm.user_id) as member_count
+                       FROM `groups` g
                        LEFT JOIN group_members gm ON g.id = gm.group_id
                        WHERE g.id = %s
                        GROUP BY g.id""",
@@ -457,7 +457,7 @@ class GroupModel:
                 await cur.execute(
                     """SELECT g.*, COUNT(gm2.user_id) as member_count,
                               (SELECT COUNT(*) FROM group_messages WHERE group_id = g.id) as message_count
-                       FROM groups g
+                       FROM `groups` g
                        JOIN group_members gm ON g.id = gm.group_id
                        LEFT JOIN group_members gm2 ON g.id = gm2.group_id
                        WHERE gm.user_id = %s
@@ -519,9 +519,9 @@ class GroupModel:
             async with conn.cursor() as cur:
                 try:
                     if name is not None:
-                        await cur.execute("UPDATE groups SET name = %s WHERE id = %s", (name, group_id))
+                        await cur.execute("UPDATE `groups` SET name = %s WHERE id = %s", (name, group_id))
                     if description is not None:
-                        await cur.execute("UPDATE groups SET description = %s WHERE id = %s", (description, group_id))
+                        await cur.execute("UPDATE `groups` SET description = %s WHERE id = %s", (description, group_id))
                     return True
                 except Exception as e:
                     print(f"Error updating group: {e}")
@@ -536,7 +536,7 @@ class GroupModel:
                 try:
                     await cur.execute("DELETE FROM group_members WHERE group_id = %s", (group_id,))
                     await cur.execute("DELETE FROM group_messages WHERE group_id = %s", (group_id,))
-                    await cur.execute("DELETE FROM groups WHERE id = %s", (group_id,))
+                    await cur.execute("DELETE FROM `groups` WHERE id = %s", (group_id,))
                     return True
                 except Exception as e:
                     print(f"Error deleting group: {e}")
@@ -565,7 +565,7 @@ class GroupModel:
             async with conn.cursor() as cur:
                 try:
                     await cur.execute(
-                        "UPDATE groups SET avatar = %s WHERE id = %s",
+                        "UPDATE `groups` SET avatar = %s WHERE id = %s",
                         (avatar_path, group_id)
                     )
                     return True

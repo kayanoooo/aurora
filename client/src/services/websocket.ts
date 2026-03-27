@@ -42,10 +42,16 @@ class WebSocketService {
         }
 
         this.token = token;
-        const loc = window.location;
-        const wsProto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsHost = loc.protocol === 'https:' ? loc.host : `${loc.hostname}:8000`;
-        const url = `${wsProto}//${wsHost}/ws?token=${token}`;
+        const envWsUrl = process.env.REACT_APP_WS_URL;
+        let url: string;
+        if (envWsUrl) {
+            url = `${envWsUrl}/ws?token=${token}`;
+        } else {
+            const loc = window.location;
+            const wsProto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsHost = loc.protocol === 'https:' ? loc.host : `${loc.hostname}:8000`;
+            url = `${wsProto}//${wsHost}/ws?token=${token}`;
+        }
         console.log('🔌 Creating WS to:', url);
 
         const ws = new WebSocket(url);

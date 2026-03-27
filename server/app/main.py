@@ -62,7 +62,7 @@ app.add_middleware(
         "http://127.0.0.1:8000",
         "http://192.168.1.2:3000",
         "http://192.168.1.2:8000",
-        "*"
+        "https://aurora-messenger.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],

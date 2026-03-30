@@ -3,50 +3,68 @@ import { config } from '../config';
 const API_URL = config.API_URL;
 
 export const api = {
-    async register(username: string, email: string, password: string) {
+    async register(email: string, password: string) {
         try {
             const response = await fetch(`${API_URL}/register`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ username, email, password }),
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
             });
-
             if (!response.ok) {
                 let detail = 'Ошибка регистрации';
                 try { const j = await response.json(); detail = j.detail || detail; } catch {}
                 return { success: false, detail };
             }
-
-            const data = await response.json();
-            return data;
-        } catch (error) {
-            throw error;
-        }
+            return await response.json();
+        } catch (error) { throw error; }
     },
 
-    async login(username: string, password: string) {
+    async setupProfile(token: string, tag: string, username: string, theme?: string) {
+        try {
+            const response = await fetch(`${API_URL}/setup?token=${token}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tag, username, theme }),
+            });
+            if (!response.ok) {
+                let detail = 'Ошибка настройки профиля';
+                try { const j = await response.json(); detail = j.detail || detail; } catch {}
+                return { success: false, detail };
+            }
+            return await response.json();
+        } catch (error) { throw error; }
+    },
+
+    async login(email: string, password: string) {
         try {
             const response = await fetch(`${API_URL}/login`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ username, password }),
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
             });
-
             if (!response.ok) {
                 let detail = 'Ошибка входа';
                 try { const j = await response.json(); detail = j.detail || detail; } catch {}
                 return { success: false, detail };
             }
+            return await response.json();
+        } catch (error) { throw error; }
+    },
 
-            const data = await response.json();
-            return data;
-        } catch (error) {
-            throw error;
-        }
+    async resetPassword(email: string, username: string, new_password: string) {
+        try {
+            const response = await fetch(`${API_URL}/password-reset`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, username, new_password }),
+            });
+            if (!response.ok) {
+                let detail = 'Ошибка сброса пароля';
+                try { const j = await response.json(); detail = j.detail || detail; } catch {}
+                return { success: false, detail };
+            }
+            return await response.json();
+        } catch (error) { throw error; }
     },
     
     async getUsers(token: string) {

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import Auth from './components/Auth';
 import Chat from './components/Chat';
+import SetupModal from './components/SetupModal';
 import { ThemeSettings } from './types';
 import { api } from './services/api';
 import { wsService } from './services/websocket';
@@ -15,6 +16,15 @@ const DEFAULT_THEME: ThemeSettings = {
     avatarColor: '#1a73e8',
 };
 
+const THEME_MAP: Record<string, Partial<ThemeSettings>> = {
+    dark:     { darkMode: true,  chatBg: '#1a1a2e', bubbleOwnColor: '#6366f1' },
+    light:    { darkMode: false, chatBg: '#f8f9ff', bubbleOwnColor: '#6366f1' },
+    midnight: { darkMode: true,  chatBg: '#0f0c29', bubbleOwnColor: '#8b5cf6' },
+    forest:   { darkMode: true,  chatBg: '#1a2e1a', bubbleOwnColor: '#22c55e' },
+    ocean:    { darkMode: true,  chatBg: '#0c1a2e', bubbleOwnColor: '#06b6d4' },
+    rose:     { darkMode: true,  chatBg: '#2e1a1a', bubbleOwnColor: '#f43f5e' },
+};
+
 interface AuthState {
     token: string;
     userId: number;
@@ -25,6 +35,7 @@ interface AuthState {
 
 function App() {
     const [auth, setAuth] = useState<AuthState | null>(null);
+    const [setupToken, setSetupToken] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [theme, setTheme] = useState<ThemeSettings>(() => {
         try {
@@ -70,7 +81,11 @@ function App() {
         setLoading(false);
     }, [restoreSession]);
 
-    const handleAuth = useCallback(async (token: string, userId: number, username: string) => {
+    const handleAuth = useCallback(async (token: string, userId: number, username: string, setupRequired?: boolean) => {
+        if (setupRequired) {
+            setSetupToken(token);
+            return;
+        }
         let avatar: string | undefined;
         let status: string | undefined;
         try {
@@ -91,6 +106,26 @@ function App() {
         setAuth({ token, userId, username, avatar, status });
     }, []);
 
+    const handleSetupComplete = useCallback(async (newToken: string, username: string, selectedTheme: string) => {
+        const themeOverride = THEME_MAP[selectedTheme] || {};
+        const newTheme = { ...DEFAULT_THEME, ...themeOverride };
+        setTheme(newTheme);
+        localStorage.setItem('chat_theme', JSON.stringify(newTheme));
+
+        setSetupToken(null);
+        let avatar: string | undefined;
+        let userId = 0;
+        try {
+            const res = await api.getProfile(newToken);
+            if (res.success && res.user) {
+                avatar = res.user.avatar || undefined;
+                userId = res.user.id;
+            }
+        } catch {}
+        sessionStorage.setItem('chat_auth', JSON.stringify({ token: newToken, userId, username }));
+        setAuth({ token: newToken, userId, username, avatar });
+    }, []);
+
     const handleThemeChange = useCallback((newTheme: ThemeSettings) => {
         setTheme(newTheme);
         localStorage.setItem('chat_theme', JSON.stringify(newTheme));
@@ -100,6 +135,7 @@ function App() {
         wsService.disconnect();
         sessionStorage.removeItem('chat_auth');
         setAuth(null);
+        setSetupToken(null);
         setTheme(DEFAULT_THEME);
     }, []);
 
@@ -118,6 +154,10 @@ function App() {
                 <div style={{ width: 40, height: 40, border: '3px solid rgba(255,255,255,0.2)', borderTopColor: '#8b5cf6', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
             </div>
         );
+    }
+
+    if (setupToken) {
+        return <SetupModal token={setupToken} onComplete={handleSetupComplete} />;
     }
 
     return (

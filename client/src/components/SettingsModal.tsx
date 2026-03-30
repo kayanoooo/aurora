@@ -81,7 +81,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     }, [token, profileLoaded]);
 
     const hasAvatar = !!(avatarPreview || currentAvatar);
-    const avatarUrl = avatarPreview ? avatarPreview : currentAvatar ? `${BASE_URL}${currentAvatar}` : null;
+    const avatarUrl = avatarPreview ? avatarPreview : config.fileUrl(currentAvatar);
     const initials = (username || currentUsername)[0]?.toUpperCase() || '?';
 
     const handleAvatarFile = (e: React.ChangeEvent<HTMLInputElement>) => {

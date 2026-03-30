@@ -53,7 +53,7 @@ class UserModel:
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
-                    "SELECT id, username, email, password_hash, created_at, avatar, status, avatar_color, birthday, phone, privacy_settings, last_seen FROM users WHERE username = %s",
+                    "SELECT id, username, tag, email, password_hash, created_at, avatar, status, avatar_color, birthday, phone, privacy_settings, last_seen FROM users WHERE username = %s",
                     (username,)
                 )
                 return await cur.fetchone()
@@ -65,7 +65,7 @@ class UserModel:
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
-                    "SELECT id, username, email, created_at, avatar, status, avatar_color, birthday, phone, privacy_settings FROM users WHERE id = %s",
+                    "SELECT id, username, tag, email, created_at, avatar, status, avatar_color, birthday, phone, privacy_settings FROM users WHERE id = %s",
                     (user_id,)
                 )
                 return await cur.fetchone()
@@ -86,7 +86,7 @@ class UserModel:
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute("""
-                    SELECT u.id, u.username, u.email, u.created_at, u.avatar, u.status, u.avatar_color, u.privacy_settings, u.last_seen,
+                    SELECT u.id, u.username, u.tag, u.email, u.created_at, u.avatar, u.status, u.avatar_color, u.privacy_settings, u.last_seen,
                         (SELECT MAX(m.id) FROM messages m
                          WHERE (m.sender_id = %s AND m.receiver_id = u.id)
                             OR (m.sender_id = u.id AND m.receiver_id = %s)) AS last_msg_id

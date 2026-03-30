@@ -1132,7 +1132,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             </div>
                                             <div style={{ minWidth: 0, flex: 1 }}>
                                                 <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
-                                                <div style={{ fontSize: 11, color: u.is_online ? '#22c55e' : (dm ? '#5a5a8a' : '#9ca3af') }}>{u.is_online ? '🟢 в сети' : 'не в сети'}</div>
+                                                <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{u.tag ? `@${u.tag}` : (u.is_online ? '🟢 в сети' : 'не в сети')}</div>
                                             </div>
                                         </div>
                                     ))}

@@ -28,13 +28,22 @@ from .websocket_manager import manager
 
 # Pydantic модели для запросов
 class RegisterRequest(BaseModel):
-    username: str
     email: str
     password: str
 
-class LoginRequest(BaseModel):
+class SetupRequest(BaseModel):
+    tag: str
     username: str
+    theme: Optional[str] = None
+
+class LoginRequest(BaseModel):
+    email: str
     password: str
+
+class PasswordResetRequest(BaseModel):
+    email: str
+    username: str
+    new_password: str
 
 class CreateGroupRequest(BaseModel):
     name: str
@@ -154,44 +163,96 @@ async def root():
 
 @app.post("/api/register")
 async def register(request: RegisterRequest):
-    """Регистрация нового пользователя"""
-    existing = await UserModel.get_user_by_username(request.username)
-    if existing:
-        raise HTTPException(status_code=400, detail="Это имя пользователя уже занято")
-    
+    """Регистрация — шаг 1: email + пароль"""
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT id FROM users WHERE email = %s", (request.email,))
+            if await cur.fetchone():
+                raise HTTPException(status_code=400, detail="Этот email уже зарегистрирован")
+
     password_hash = hash_password(request.password)
-    user_id = await UserModel.create_user(request.username, request.email, password_hash)
-    
+    temp_username = f"user_{uuid.uuid4().hex[:8]}"
+    user_id = await UserModel.create_user(temp_username, request.email, password_hash)
     if not user_id:
-        raise HTTPException(status_code=500, detail="Failed to create user")
-    
-    token = create_jwt_token(user_id, request.username)
-    
-    return {
-        "success": True,
-        "user_id": user_id,
-        "username": request.username,
-        "token": token
-    }
+        raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
+
+    token = create_jwt_token(user_id, temp_username)
+    return {"success": True, "user_id": user_id, "token": token, "setup_required": True}
+
+@app.post("/api/setup")
+async def setup_profile(request: SetupRequest, token: str):
+    """Регистрация — шаг 2: выбор тега и ника"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    tag = request.tag.lstrip('@').lower().strip()
+    if not tag or len(tag) < 3 or len(tag) > 30:
+        raise HTTPException(status_code=400, detail="Тег должен быть от 3 до 30 символов")
+    import re
+    if not re.match(r'^[a-z0-9_]+$', tag):
+        raise HTTPException(status_code=400, detail="Тег может содержать только латинские буквы, цифры и _")
+
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT id FROM users WHERE tag = %s AND id != %s", (tag, payload['user_id']))
+            if await cur.fetchone():
+                raise HTTPException(status_code=400, detail="Этот тег уже занят")
+            await cur.execute(
+                "UPDATE users SET tag = %s, username = %s, setup_complete = 1 WHERE id = %s",
+                (tag, request.username, payload['user_id'])
+            )
+
+    new_token = create_jwt_token(payload['user_id'], request.username)
+    return {"success": True, "token": new_token, "username": request.username, "tag": tag}
 
 @app.post("/api/login")
 async def login(request: LoginRequest):
-    """Вход пользователя"""
-    user = await UserModel.get_user_by_username(request.username)
+    """Вход по email + паролю"""
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT id, username, password_hash, setup_complete FROM users WHERE email = %s",
+                (request.email,)
+            )
+            user = await cur.fetchone()
+
     if not user:
         raise HTTPException(status_code=401, detail="Пользователь не найден")
-
     if not verify_password(request.password, user['password_hash']):
         raise HTTPException(status_code=401, detail="Неверный пароль")
-    
+
     token = create_jwt_token(user['id'], user['username'])
-    
     return {
         "success": True,
         "user_id": user['id'],
         "username": user['username'],
-        "token": token
+        "token": token,
+        "setup_required": not bool(user['setup_complete'])
     }
+
+@app.post("/api/password-reset")
+async def password_reset(request: PasswordResetRequest):
+    """Сброс пароля по email + нику"""
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT id FROM users WHERE email = %s AND username = %s",
+                (request.email, request.username)
+            )
+            user = await cur.fetchone()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь с таким email и именем не найден")
+    new_hash = hash_password(request.new_password)
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (new_hash, user['id']))
+    return {"success": True}
 
 # ========== Пользователи ==========
 
@@ -205,7 +266,7 @@ async def get_recent_users(token: str):
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                "SELECT id, username, avatar, avatar_color, status, last_seen FROM users WHERE id != %s ORDER BY created_at DESC LIMIT 15",
+                "SELECT id, username, tag, avatar, avatar_color, status, last_seen FROM users WHERE id != %s AND setup_complete = 1 ORDER BY created_at DESC LIMIT 15",
                 (payload['user_id'],)
             )
             rows = await cur.fetchall()
@@ -256,17 +317,20 @@ async def find_user(token: str, username: str):
 
 @app.get("/api/users/search")
 async def search_users(token: str, query: str):
-    """Поиск пользователей по префиксу имени"""
+    """Поиск пользователей по нику или тегу"""
     payload = decode_jwt_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
     current_user_id = payload['user_id']
+    clean_query = query.lstrip('@')
     pool = await DatabasePool.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                "SELECT id, username, avatar, avatar_color, status FROM users WHERE username LIKE %s AND id != %s ORDER BY username LIMIT 10",
-                (f"{query}%", current_user_id)
+                """SELECT id, username, tag, avatar, avatar_color, status FROM users
+                   WHERE (username LIKE %s OR tag LIKE %s) AND id != %s AND setup_complete = 1
+                   ORDER BY username LIMIT 10""",
+                (f"{clean_query}%", f"{clean_query}%", current_user_id)
             )
             rows = await cur.fetchall()
     result = []

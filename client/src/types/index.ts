@@ -1,6 +1,7 @@
 export interface User {
     id: number;
     username: string;
+    tag?: string;
     email: string;
     created_at: string;
     avatar?: string;

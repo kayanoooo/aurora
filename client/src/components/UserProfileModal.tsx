@@ -148,7 +148,8 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                                 : <span style={{ color: 'white', fontSize: 40, fontWeight: 700 }}>{fullUser.username[0]?.toUpperCase()}</span>
                             }
                         </div>
-                        <h2 style={{ fontSize: 22, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', margin: '0 0 4px' }}>{fullUser.username}</h2>
+                        <h2 style={{ fontSize: 22, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', margin: '0 0 2px' }}>{fullUser.username}</h2>
+                        {fullUser.tag && <p style={{ fontSize: 13, color: '#6366f1', margin: '0 0 4px', fontWeight: 600 }}>@{fullUser.tag}</p>}
                         {fullUser.is_online
                             ? <p style={{ fontSize: 13, color: '#22c55e', margin: '0 0 4px', fontWeight: 600 }}>🟢 в сети</p>
                             : fullUser.last_seen && fullUser.last_seen !== 'hidden'

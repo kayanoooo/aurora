@@ -11,6 +11,14 @@ import json
 import mimetypes
 from urllib.parse import quote
 from datetime import datetime, timezone
+import cloudinary
+import cloudinary.uploader
+
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+)
 
 from .config import config
 from .models import DatabasePool, UserModel, MessageModel, GroupModel, GroupMessageModel, ReactionModel, FolderModel, GroupReadModel
@@ -364,13 +372,9 @@ async def update_avatar(token: str = Form(...), file: UploadFile = File(...)):
     allowed = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
     if file.content_type not in allowed:
         raise HTTPException(status_code=400, detail="Only images allowed")
-    ext = os.path.splitext(file.filename)[1]
-    unique_filename = f"avatar_{uuid.uuid4().hex}{ext}"
-    file_path = os.path.join("uploads", unique_filename)
     content = await file.read()
-    with open(file_path, "wb") as f:
-        f.write(content)
-    avatar_url = f"/files/{unique_filename}"
+    result = cloudinary.uploader.upload(content, folder="avatars", resource_type="image")
+    avatar_url = result["secure_url"]
     await UserModel.update_avatar(payload['user_id'], avatar_url)
     user = await UserModel.get_user_by_id(payload['user_id'])
     try:
@@ -455,13 +459,9 @@ async def update_group_avatar(group_id: int, token: str = Form(...), file: Uploa
     allowed = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
     if file.content_type not in allowed:
         raise HTTPException(status_code=400, detail="Only images allowed")
-    ext = os.path.splitext(file.filename)[1]
-    unique_filename = f"group_{uuid.uuid4().hex}{ext}"
-    file_path = os.path.join("uploads", unique_filename)
     content = await file.read()
-    with open(file_path, "wb") as f:
-        f.write(content)
-    avatar_url = f"/files/{unique_filename}"
+    result = cloudinary.uploader.upload(content, folder="group_avatars", resource_type="image")
+    avatar_url = result["secure_url"]
     await GroupModel.update_group_avatar(group_id, avatar_url)
     # Notify group members
     members = await GroupModel.get_members(group_id)
@@ -737,34 +737,28 @@ async def upload_file(token: str = Form(...), file: UploadFile = File(...)):
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    file_extension = os.path.splitext(file.filename)[1]
-    unique_filename = f"{uuid.uuid4().hex}{file_extension}"
-    file_path = os.path.join("uploads", unique_filename)
+    content = await file.read()
+    total_size = len(content)
+    if total_size > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="Файл превышает лимит 1 ГБ")
 
-    total_size = 0
-    chunk_size = 1024 * 1024  # 1 MB chunks
     try:
-        with open(file_path, "wb") as f:
-            while True:
-                chunk = await file.read(chunk_size)
-                if not chunk:
-                    break
-                total_size += len(chunk)
-                if total_size > MAX_UPLOAD_SIZE:
-                    f.close()
-                    os.remove(file_path)
-                    raise HTTPException(status_code=413, detail="Файл превышает лимит 1 ГБ")
-                f.write(chunk)
-    except HTTPException:
-        raise
+        resource_type = "video" if file.content_type and file.content_type.startswith("video") else \
+                        "image" if file.content_type and file.content_type.startswith("image") else "raw"
+        result = cloudinary.uploader.upload(
+            content,
+            folder="chat_files",
+            resource_type=resource_type,
+            use_filename=True,
+            unique_filename=True,
+        )
+        file_url = result["secure_url"]
     except Exception as e:
-        if os.path.exists(file_path):
-            os.remove(file_path)
         raise HTTPException(status_code=500, detail=str(e))
 
     return {
         "success": True,
-        "file_path": f"/files/{unique_filename}",
+        "file_path": file_url,
         "filename": file.filename,
         "file_size": total_size
     }

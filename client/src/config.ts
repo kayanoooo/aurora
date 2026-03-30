@@ -49,6 +49,16 @@ export const config = {
         return `ws://${getServerHost()}:8000`;
     },
 
+    fileUrl(path: string | null | undefined): string | null {
+        if (!path) return null;
+        if (path.startsWith('http')) return path;
+        if (isElectron()) return `http://${getServerHost()}:8000${path}`;
+        if (ENV_API_URL) return `${ENV_API_URL.replace('/api', '')}${path}`;
+        const loc = window.location;
+        const base = loc.protocol === 'https:' ? `https://${loc.host}` : `http://${getServerHost()}:8000`;
+        return `${base}${path}`;
+    },
+
     isElectron,
 
     /** Change the server address (Electron only). Persists across restarts. */

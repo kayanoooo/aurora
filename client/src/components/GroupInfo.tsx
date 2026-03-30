@@ -180,7 +180,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
     }
 
     const isAdmin = members.find(m => m.id === currentUserId)?.role === 'admin';
-    const groupAvatarUrl = group?.avatar ? `${BASE_URL}${group.avatar}` : null;
+    const groupAvatarUrl = config.fileUrl(group?.avatar);
 
     return (
         <>
@@ -303,7 +303,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                                         onClick={() => onUserClick?.({ id: member.id, username: member.username, email: member.email, avatar: member.avatar, created_at: member.joined_at })}
                                     >
                                         {member.avatar
-                                            ? <img src={`${BASE_URL}${member.avatar}`} alt={member.username} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+                                            ? <img src={config.fileUrl(member.avatar) ?? undefined} alt={member.username} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
                                             : member.username[0].toUpperCase()
                                         }
                                     </div>

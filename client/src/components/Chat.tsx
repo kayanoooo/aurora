@@ -1128,7 +1128,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
                                             className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
                                             <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? 'transparent' : (u.avatar_color || '#6366f1'), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
-                                                {u.avatar ? <img src={`${BASE_URL}${u.avatar}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
+                                                {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
                                             </div>
                                             <div style={{ minWidth: 0, flex: 1 }}>
                                                 <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
@@ -1151,7 +1151,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
                                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
                                                     <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? 'transparent' : (u.avatar_color || '#6366f1'), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
-                                                        {u.avatar ? <img src={`${BASE_URL}${u.avatar}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
+                                                        {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
                                                     </div>
                                                     <div style={{ minWidth: 0, flex: 1 }}>
                                                         <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
@@ -1169,7 +1169,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
                                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
                                                     <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? 'transparent' : (u.avatar_color || '#6366f1'), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
-                                                        {u.avatar ? <img src={`${BASE_URL}${u.avatar}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
+                                                        {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
                                                     </div>
                                                     <div style={{ minWidth: 0, flex: 1 }}>
                                                         <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
@@ -1252,7 +1252,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         style={{ ...darkStyles.chatItem, ...((activeChat?.type === item.type && activeChat?.id === item.id) ? darkStyles.activeChatItem : {}) }}
                                     >
                                         <div style={{ ...styles.avatar, background: item.avatar ? 'transparent' : (item.key === `private-${currentUserId}` ? (dm ? 'linear-gradient(135deg,#312e81,#6c47d4)' : 'linear-gradient(135deg,#6366f1,#a78bfa)') : (item.color || '#6366f1')), overflow: 'hidden', flexShrink: 0, fontSize: 16 }}>
-                                            {item.avatar ? <img src={`${BASE_URL}${item.avatar}`} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : item.key === `private-${currentUserId}` ? '⭐' : item.name[0]?.toUpperCase()}
+                                            {item.avatar ? <img src={config.fileUrl(item.avatar) ?? undefined} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : item.key === `private-${currentUserId}` ? '⭐' : item.name[0]?.toUpperCase()}
                                         </div>
                                         <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
                                             <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1309,7 +1309,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 >
                                     <div style={{ ...styles.avatar, backgroundColor: group.avatar ? 'transparent' : '#6366f1', overflow: 'hidden', flexShrink: 0 }}>
                                         {group.avatar
-                                            ? <img src={`${BASE_URL}${group.avatar}`} alt={group.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            ? <img src={config.fileUrl(group.avatar) ?? undefined} alt={group.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                             : <span style={{ fontSize: 18, color: 'white', fontWeight: 700 }}>{group.name[0]?.toUpperCase()}</span>
                                         }
                                     </div>
@@ -1359,7 +1359,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             >
                                 <div style={{ ...styles.avatar, backgroundColor: user.avatar ? 'transparent' : (user.avatar_color || '#1a73e8'), overflow: 'hidden', flexShrink: 0 }}>
                                     {user.avatar
-                                        ? <img src={`${BASE_URL}${user.avatar}`} alt={user.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        ? <img src={config.fileUrl(user.avatar) ?? undefined} alt={user.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                         : user.username[0].toUpperCase()
                                     }
                                 </div>
@@ -1383,7 +1383,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 <div style={darkStyles.profileCard}>
                     <div style={{ ...styles.profileAvatar, backgroundColor: currentUserAvatar ? 'transparent' : avatarBg }} onClick={() => setShowSettings(true)}>
                         {currentUserAvatar
-                            ? <img src={`${BASE_URL}${currentUserAvatar}`} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+                            ? <img src={config.fileUrl(currentUserAvatar) ?? undefined} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
                             : <span style={{ color: 'white', fontWeight: 700, fontSize: 16 }}>{currentUsername[0]?.toUpperCase()}</span>
                         }
                     </div>
@@ -1446,7 +1446,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     const chatUser = activeChat.type === 'private' ? users.find(u => u.id === activeChat.id) : null;
                                     const chatGroup = activeChat.type === 'group' ? groups.find(g => g.id === activeChat.id) : null;
                                     const bg = isSelf ? '#f0a500' : activeChat.type === 'group' ? '#6366f1' : (chatUser?.avatar_color || '#1a73e8');
-                                    const src = isSelf ? null : chatUser?.avatar ? `${BASE_URL}${chatUser.avatar}` : chatGroup?.avatar ? `${BASE_URL}${chatGroup.avatar}` : null;
+                                    const src = isSelf ? null : chatUser?.avatar ? config.fileUrl(chatUser.avatar) : chatGroup?.avatar ? config.fileUrl(chatGroup.avatar) : null;
                                     const initial = isSelf ? '⭐' : activeChat.name[0]?.toUpperCase();
                                     const canClick = activeChat.type === 'private' && !isSelf;
                                     const canClickGroup = activeChat.type === 'group';
@@ -1597,7 +1597,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 title={`Профиль ${(msg as any).sender_name}`}
                                             >
                                                 {senderAvatar
-                                                    ? <img src={`${BASE_URL}${senderAvatar}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                    ? <img src={config.fileUrl(senderAvatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                                     : (msg as any).sender_name?.[0]?.toUpperCase() || '?'
                                                 }
                                             </div>
@@ -2149,7 +2149,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', cursor: 'pointer' }}
                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
                                     <div style={{ width: 36, height: 36, borderRadius: '50%', background: g.avatar ? 'transparent' : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700 }}>
-                                        {g.avatar ? <img src={`${BASE_URL}${g.avatar}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : g.name[0]?.toUpperCase()}
+                                        {g.avatar ? <img src={config.fileUrl(g.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : g.name[0]?.toUpperCase()}
                                     </div>
                                     <span style={{ fontSize: 14, color: dm ? '#e2e8f0' : '#1e1b4b' }}>{g.name}</span>
                                 </div>
@@ -2171,7 +2171,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', cursor: 'pointer' }}
                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
                                     <div style={{ width: 36, height: 36, borderRadius: '50%', background: u.avatar ? 'transparent' : (u.avatar_color || '#1a73e8'), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700 }}>
-                                        {u.avatar ? <img src={`${BASE_URL}${u.avatar}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
+                                        {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
                                     </div>
                                     <span style={{ fontSize: 14, color: dm ? '#e2e8f0' : '#1e1b4b' }}>{u.username}</span>
                                 </div>
@@ -2225,7 +2225,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             >
                                 <div style={{ width: 36, height: 36, borderRadius: '50%', backgroundColor: toast.avatarSrc ? 'transparent' : toast.avatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 15, color: 'white', fontWeight: 700 }}>
                                     {toast.avatarSrc
-                                        ? <img src={`${BASE_URL}${toast.avatarSrc}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        ? <img src={config.fileUrl(toast.avatarSrc) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                         : toast.avatarLetter
                                     }
                                 </div>

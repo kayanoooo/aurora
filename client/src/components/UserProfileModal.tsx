@@ -38,7 +38,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
         }).catch(() => {});
     }, [token, user.username]);
 
-    const avatarUrl = fullUser.avatar ? `${BASE_URL}${fullUser.avatar}` : null;
+    const avatarUrl = config.fileUrl(fullUser.avatar);
 
     // Parse media from messages
     const { imgs, vids, auds, files } = useMemo(() => {

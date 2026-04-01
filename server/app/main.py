@@ -244,7 +244,7 @@ async def setup_profile(request: SetupRequest, token: str):
             )
             # Auto-subscribe new user to the official Aurora channel
             await cur.execute(
-                "SELECT id FROM groups WHERE channel_tag = 'auroramessenger' AND is_channel = 1 LIMIT 1"
+                "SELECT id FROM `groups` WHERE channel_tag = 'auroramessenger' AND is_channel = 1 LIMIT 1"
             )
             aurora_channel = await cur.fetchone()
             if aurora_channel:
@@ -935,7 +935,7 @@ async def search_channels(token: str, query: str):
                           (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS member_count,
                           EXISTS(SELECT 1 FROM group_members gm2
                                  WHERE gm2.group_id = g.id AND gm2.user_id = %s) AS is_member
-                   FROM groups g
+                   FROM `groups` g
                    WHERE g.is_channel = 1 AND g.channel_type = 'public'
                      AND (g.channel_tag LIKE %s OR g.name LIKE %s)
                    ORDER BY member_count DESC LIMIT 10""",

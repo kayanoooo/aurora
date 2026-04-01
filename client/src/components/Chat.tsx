@@ -248,7 +248,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const currentUploadXHR = useRef<XMLHttpRequest | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const inputRef = useRef<HTMLInputElement>(null);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    const autoResize = (el: HTMLTextAreaElement) => {
+        el.style.height = 'auto';
+        el.style.height = Math.min(el.scrollHeight, 150) + 'px';
+    };
     const activeChatRef = useRef<ChatItem | null>(null);
     // Draft text per chat: key = "type-id"
     const chatDrafts = useRef<Map<string, string>>(new Map());
@@ -907,7 +911,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     }, []);
 
     const restoreDraft = useCallback((key: string) => {
-        if (inputRef.current) inputRef.current.value = chatDrafts.current.get(key) || '';
+        if (inputRef.current) {
+            inputRef.current.value = chatDrafts.current.get(key) || '';
+            autoResize(inputRef.current);
+        }
     }, []);
 
     const selectPrivateChat = (user: User) => {
@@ -955,7 +962,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         const targetChat = { ...activeChat };
         const targetReplyTo = replyTo;
 
-        if (inputRef.current) inputRef.current.value = '';
+        if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; }
         setReplyTo(null);
 
         // Text only — send immediately via WS
@@ -2702,17 +2709,20 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         {!selectionMode && (!isChannelChat || isGroupAdmin) && <div style={{ ...darkStyles.inputArea, position: 'relative' }}>
                             {showEmojiPicker && (
                                 <EmojiPicker
-                                    onSelect={emoji => { if (inputRef.current) { inputRef.current.value += emoji; inputRef.current.focus(); } }}
+                                    onSelect={emoji => { if (inputRef.current) { inputRef.current.value += emoji; autoResize(inputRef.current); inputRef.current.focus(); } }}
                                     onClose={() => setShowEmojiPicker(false)}
                                     isDark={theme.darkMode}
                                 />
                             )}
-                            <input
+                            <textarea
                                 ref={inputRef}
-                                type="text"
+                                rows={1}
                                 defaultValue=""
-                                onKeyDown={(e) => { if (e.key === 'Enter') sendMessage(); }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+                                }}
                                 onKeyUp={handleTyping}
+                                onInput={(e) => autoResize(e.currentTarget)}
                                 onPaste={(e) => {
                                     const items = e.clipboardData?.items;
                                     if (!items) return;
@@ -2720,6 +2730,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     if (imgs.length > 0) {
                                         e.preventDefault();
                                         addPendingFiles(imgs.map(i => i.getAsFile()!).filter(Boolean));
+                                    } else {
+                                        setTimeout(() => { if (inputRef.current) autoResize(inputRef.current); }, 0);
                                     }
                                 }}
                                 placeholder={isChannelChat ? 'Написать пост...' : 'Введите сообщение...'}
@@ -3330,8 +3342,8 @@ const styles: { [key: string]: React.CSSProperties } = {
     timestamp: { fontSize: 10, marginTop: 5, opacity: 0.55 },
     replyBar: { padding: '10px 16px', background: 'linear-gradient(90deg, #ede9fe, #f5f3ff)', borderTop: '1px solid #ede9fe', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
     replyClose: { background: 'none', border: 'none', fontSize: 16, cursor: 'pointer', color: '#a5b4fc', padding: '0 4px' },
-    inputArea: { padding: '12px 16px', borderTop: '1px solid #e8e8ef', display: 'flex', gap: 8, alignItems: 'center', backgroundColor: '#f7f8fc' },
-    input: { flex: 1, padding: '11px 16px', fontSize: 14, border: '1.5px solid #dddde8', borderRadius: 24, outline: 'none', backgroundColor: '#eef0f8', transition: 'border-color 0.2s' },
+    inputArea: { padding: '10px 16px', borderTop: '1px solid #e8e8ef', display: 'flex', gap: 8, alignItems: 'flex-end', backgroundColor: '#f7f8fc' },
+    input: { flex: 1, padding: '10px 16px', fontSize: 14, border: '1.5px solid #dddde8', borderRadius: 16, outline: 'none', backgroundColor: '#eef0f8', transition: 'border-color 0.2s', resize: 'none' as const, lineHeight: '1.5', maxHeight: 150, overflowY: 'auto' as const, fontFamily: 'inherit' },
     fileBtn: { padding: '10px 13px', backgroundColor: '#eef0f8', border: '1.5px solid #dddde8', borderRadius: 12, cursor: 'pointer', fontSize: 16, color: '#6366f1', transition: 'all 0.15s' },
     sendBtn: { padding: '10px 20px', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white', border: 'none', borderRadius: 24, cursor: 'pointer', fontSize: 14, fontWeight: 600 as const, boxShadow: '0 2px 10px rgba(99,102,241,0.35)', transition: 'all 0.15s' },
     noChat: { flex: 1, display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', color: '#c4b5fd', fontSize: 16, gap: 12 },

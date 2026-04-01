@@ -17,6 +17,20 @@ import { config } from '../config';
 
 const BASE_URL = config.BASE_URL;
 
+const formatMembers = (n: number, type: 'member' | 'subscriber' = 'member'): string => {
+    const abs = Math.abs(n);
+    const mod10 = abs % 10;
+    const mod100 = abs % 100;
+    if (type === 'subscriber') {
+        if (mod10 === 1 && mod100 !== 11) return `${n} подписчик`;
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return `${n} подписчика`;
+        return `${n} подписчиков`;
+    }
+    if (mod10 === 1 && mod100 !== 11) return `${n} участник`;
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return `${n} участника`;
+    return `${n} участников`;
+};
+
 interface ChatProps {
     token: string;
     currentUserId: number;
@@ -474,6 +488,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         loadGroups();
         api.getFolders(token).then(res => { if (res.folders) setFolders(res.folders); }).catch(() => {});
     }, [loadUsers, loadGroups]);
+
+    useEffect(() => {
+        const id = setInterval(loadGroups, 30000);
+        return () => clearInterval(id);
+    }, [loadGroups]);
 
     // === In-chat search ===
     const [chatSearchOpen, setChatSearchOpen] = useState(false);
@@ -1517,7 +1536,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{ch.channel_tag ? `@${ch.channel_tag}` : ''}{ch.member_count ? ` · ${ch.member_count} подписчиков` : ''}</div>
+                                                        <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{ch.channel_tag ? `@${ch.channel_tag}` : ''}{ch.member_count ? ` · ${formatMembers(ch.member_count, 'subscriber')}` : ''}</div>
                                                     </div>
                                                     {ch.is_member ? <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 600 }}>✓</span> : null}
                                                 </div>
@@ -1714,7 +1733,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 return renderSidebarSub(
                                                     typing ? `✍️ ${typing} печатает...` : undefined,
                                                     group.last_msg_text, group.last_msg_file, group.last_msg_filename,
-                                                    group.last_msg_time ? '' : (group.member_count ? `${group.member_count} участников` : ''),
+                                                    group.last_msg_time ? '' : (group.member_count ? formatMembers(group.member_count, group.is_channel ? 'subscriber' : 'member') : ''),
                                                     group.last_msg_time ? senderLabel : undefined
                                                 );
                                             })()}
@@ -1775,7 +1794,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 4 }}>
                                         <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, display: 'flex', alignItems: 'center', gap: 3 }}>
                                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.username}</span>
-                                            {user.tag === 'kayano' && <span title="разработчик Aurora" style={{ fontSize: 12, flexShrink: 0, cursor: 'default', lineHeight: 1 }}>🔧</span>}
+                                            {(user.tag === 'kayano' || user.tag === 'durov') && <span title="разработчик Aurora" style={{ fontSize: 12, flexShrink: 0, cursor: 'default', lineHeight: 1 }}>🔧</span>}
                                         </div>
                                         {user.last_msg_time && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', flexShrink: 0, whiteSpace: 'nowrap' }}>{formatSidebarTime(user.last_msg_time)}</div>}
                                     </div>
@@ -1813,7 +1832,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         <div style={styles.profileInfo}>
                             <div style={{ ...darkStyles.profileName, display: 'flex', alignItems: 'center', gap: 4 }}>
                                 {currentUsername}
-                                {currentUserTag === 'kayano' && <span title="разработчик Aurora" style={{ fontSize: 12, cursor: 'default', lineHeight: 1 }}>🔧</span>}
+                                {(currentUserTag === 'kayano' || currentUserTag === 'durov') && <span title="разработчик Aurora" style={{ fontSize: 12, cursor: 'default', lineHeight: 1 }}>🔧</span>}
                             </div>
                             {currentUserTag && <div style={styles.profileStatus}>@{currentUserTag}</div>}
                         </div>
@@ -1921,9 +1940,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             title="Медиа и файлы">
                                             <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: dm ? '#e2e8f0' : '#1e1b4b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
                                                 {activeChat.name}
-                                                {activeChat.type === 'private' && users.find(u => u.id === activeChat.id)?.tag === 'kayano' && (
-                                                    <span title="разработчик Aurora" style={{ fontSize: 15, flexShrink: 0, cursor: 'default' }}>🔧</span>
-                                                )}
+                                                {activeChat.type === 'private' && (() => { const t = users.find(u => u.id === activeChat.id)?.tag; return (t === 'kayano' || t === 'durov') && <span title="разработчик Aurora" style={{ fontSize: 15, flexShrink: 0, cursor: 'default' }}>🔧</span>; })()}
                                                 {!!isChannelChat && activeGroup?.channel_tag === 'auroramessenger' && (
                                                     <span title="Официальный канал Aurora" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', flexShrink: 0 }}>
                                                         <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6.5L4.5 9L10 3" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -1932,7 +1949,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             </h3>
                                             <div style={{ fontSize: 12, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 2 }}>
                                                 {activeChat.type === 'group'
-                                                    ? (() => { const cnt = activeGroup?.member_count; return cnt ? `${cnt} участников` : ''; })()
+                                                    ? (() => { const cnt = activeGroup?.member_count; return cnt ? formatMembers(cnt, activeGroup?.is_channel ? 'subscriber' : 'member') : ''; })()
                                                     : activeChat.id === currentUserId
                                                     ? 'сохранённые сообщения'
                                                     : (() => {
@@ -2260,7 +2277,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 const nameColor = isBgDark(bubbleBg) ? '#c4b5fd' : '#6366f1';
                                                 return <div style={{ ...styles.senderName, color: nameColor, display: 'flex', alignItems: 'center', gap: 4 }}>
                                                     {msg.sender_name}
-                                                    {(msg as any).sender_tag === 'kayano' && <span title="разработчик Aurora" style={{ fontSize: 12, lineHeight: 1, cursor: 'default' }}>🔧</span>}
+                                                    {((msg as any).sender_tag === 'kayano' || (msg as any).sender_tag === 'durov') && <span title="разработчик Aurora" style={{ fontSize: 12, lineHeight: 1, cursor: 'default' }}>🔧</span>}
                                                 </div>;
                                             })()}
 

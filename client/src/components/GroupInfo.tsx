@@ -6,6 +6,20 @@ import { config } from '../config';
 
 const BASE_URL = config.BASE_URL;
 
+const formatMembers = (n: number, type: 'member' | 'subscriber' = 'member'): string => {
+    const abs = Math.abs(n);
+    const mod10 = abs % 10;
+    const mod100 = abs % 100;
+    if (type === 'subscriber') {
+        if (mod10 === 1 && mod100 !== 11) return `${n} подписчик`;
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return `${n} подписчика`;
+        return `${n} подписчиков`;
+    }
+    if (mod10 === 1 && mod100 !== 11) return `${n} участник`;
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return `${n} участника`;
+    return `${n} участников`;
+};
+
 const isImg = (n: string) => /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(n);
 const isVid = (n: string) => /\.(mp4|webm|ogg|mov|avi|mkv)$/i.test(n);
 const isAud = (n: string) => /\.(mp3|ogg|wav|flac|aac|m4a|opus|weba)$/i.test(n);
@@ -269,7 +283,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
             <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
                     {member.username}
-                    {member.tag === 'kayano' && <span title="разработчик Aurora" style={{ fontSize: 12, cursor: 'default' }}>🔧</span>}
+                    {member.tag === 'kayano' || member.tag === 'durov' && <span title="разработчик Aurora" style={{ fontSize: 12, cursor: 'default' }}>🔧</span>}
                 </div>
                 <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 2 }}>{member.role === 'admin' ? '👑 Администратор' : '👤 Участник'}</div>
             </div>
@@ -367,8 +381,8 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                             <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
                                 <div style={{ ...t.statCard }}>
                                     <span style={{ fontSize: 18 }}>👥</span>
-                                    <span style={{ fontSize: 15, fontWeight: 700, color: dm ? '#e0e0f0' : '#1e1b4b' }}>{group?.member_count}</span>
-                                    <span style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>участников</span>
+                                    <span style={{ fontSize: 15, fontWeight: 700, color: dm ? '#e0e0f0' : '#1e1b4b' }}>{group?.member_count ?? 0}</span>
+                                    <span style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{group?.member_count ? formatMembers(group.member_count, group.is_channel ? 'subscriber' : 'member').replace(/^\d+ /, '') : (group?.is_channel ? 'подписчиков' : 'участников')}</span>
                                 </div>
                                 <div style={{ ...t.statCard }}>
                                     <span style={{ fontSize: 18 }}>📅</span>
@@ -463,7 +477,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                     {isChannel ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                             {[
-                                { icon: '👥', label: `Участники (${group?.member_count})`, action: () => setShowMembersModal(true) },
+                                { icon: '👥', label: group?.member_count ? formatMembers(group.member_count, isChannel ? 'subscriber' : 'member') : 'Участники', action: () => setShowMembersModal(true) },
                                 { icon: '👑', label: `Администраторы (${members.filter(m => m.role === 'admin').length})`, action: () => setShowAdminsModal(true) },
                                 { icon: '➕', label: 'Добавить участников', action: () => { setShowAddMembersModal(true); setAddMembersSearch(''); setAddMembersResults([]); } },
                             ].map(item => (
@@ -498,7 +512,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                                             onClick={() => onUserClick?.({ id: member.id, username: member.username, email: member.email, avatar: member.avatar, created_at: member.joined_at })}
                                         >
                                             {member.username}
-                                            {member.tag === 'kayano' && <span title="разработчик Aurora" style={{ fontSize: 12, cursor: 'default', flexShrink: 0 }}>🔧</span>}
+                                            {member.tag === 'kayano' || member.tag === 'durov' && <span title="разработчик Aurora" style={{ fontSize: 12, cursor: 'default', flexShrink: 0 }}>🔧</span>}
                                         </div>
                                         <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
                                             <span>{member.role === 'admin' ? '👑 Администратор' : '👤 Участник'}</span>
@@ -636,7 +650,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
         )}
 
         {/* Channel: Members modal */}
-        {showMembersModal && channelSubModal(`Участники (${group?.member_count})`, () => setShowMembersModal(false),
+        {showMembersModal && channelSubModal(group?.member_count ? formatMembers(group.member_count, isChannel ? 'subscriber' : 'member') : 'Участники', () => setShowMembersModal(false),
             members.map(m => renderMemberRow(m, false))
         )}
 

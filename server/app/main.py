@@ -1,5 +1,5 @@
 import aiomysql
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -87,20 +87,34 @@ class UpdateChannelSettingsRequest(BaseModel):
 
 app = FastAPI(title="Messenger API", version="2.0.0")
 
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://192.168.1.2:3000",
+    "http://192.168.1.2:8000",
+    "http://192.168.1.9:3000",
+    "http://192.168.1.9:8000",
+    "https://aurora-messenger.vercel.app",
+]
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    origin = request.headers.get("origin", "")
+    headers = {}
+    if origin in ALLOWED_ORIGINS:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+    import traceback
+    print(f"Unhandled exception on {request.method} {request.url}: {exc}")
+    traceback.print_exc()
+    return JSONResponse(status_code=500, content={"detail": str(exc)}, headers=headers)
+
 # Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "http://192.168.1.2:3000",
-        "http://192.168.1.2:8000",
-        "http://192.168.1.9:3000",
-        "http://192.168.1.9:8000",
-        "https://aurora-messenger.vercel.app",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],

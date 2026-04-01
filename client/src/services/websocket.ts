@@ -5,6 +5,8 @@ class WebSocketService {
     private token: string = '';
     private queue: any[] = [];
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    private reconnectAttempts: number = 0;
+    private readonly MAX_RECONNECT_DELAY = 30000;
 
     private constructor() {}
 
@@ -60,6 +62,7 @@ class WebSocketService {
         ws.onopen = () => {
             if (this.socket !== ws) { console.log('⚠️ onopen: stale socket, ignoring'); return; }
             console.log('✅ WS connected, flushing queue:', this.queue.length);
+            this.reconnectAttempts = 0;
             this.queue.forEach(msg => ws.send(JSON.stringify(msg)));
             this.queue = [];
         };
@@ -69,7 +72,10 @@ class WebSocketService {
             console.log('❌ WS closed, code:', event.code, 'token present:', !!this.token);
             this.socket = null;
             if (this.token) {
-                this.reconnectTimer = setTimeout(() => this.connect(this.token), 2000);
+                this.reconnectAttempts++;
+                const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), this.MAX_RECONNECT_DELAY);
+                console.log(`🔄 Reconnect attempt ${this.reconnectAttempts} in ${delay}ms`);
+                this.reconnectTimer = setTimeout(() => this.connect(this.token), delay);
             }
         };
 
@@ -94,6 +100,7 @@ class WebSocketService {
         console.log('🔌 disconnect() called');
         this.token = '';
         this.queue = [];
+        this.reconnectAttempts = 0;
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
@@ -186,6 +193,14 @@ class WebSocketService {
 
     sendGroupTyping(groupId: number) {
         return this.send({ type: 'group_typing', group_id: groupId });
+    }
+
+    sendSetOnline() {
+        return this.send({ type: 'set_online' });
+    }
+
+    sendSetOffline() {
+        return this.send({ type: 'set_offline' });
     }
 
     onMessage(handler: (data: any) => void): () => void {

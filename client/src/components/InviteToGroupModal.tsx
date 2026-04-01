@@ -12,7 +12,7 @@ interface InviteToGroupModalProps {
 
 const InviteToGroupModal: React.FC<InviteToGroupModalProps> = ({ token, groupId, groupName, isDark = false, onClose, onInvited }) => {
     const dm = isDark;
-    const [username, setUsername] = useState('');
+    const [username, setUsername] = useState(''); // stores tag input
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
@@ -25,13 +25,18 @@ const InviteToGroupModal: React.FC<InviteToGroupModalProps> = ({ token, groupId,
         if (!username.trim()) return;
         setLoading(true); setError(''); setSuccess('');
         try {
-            const response = await api.inviteToGroup(token, groupId, username.trim());
+            const response = await api.inviteToGroup(token, groupId, username.trim().replace(/^@/, ''));
             if (response.success) {
-                setSuccess(`Пользователь ${username} добавлен в группу`);
+                setSuccess(`Пользователь @${username.replace(/^@/, '')} добавлен в группу`);
                 setUsername('');
                 setTimeout(() => { onInvited(); close(); }, 1500);
-            } else setError(response.message || 'Failed to invite user');
-        } catch (err) { setError('Network error'); console.error(err); }
+            } else {
+                const msg = response.message || '';
+                if (msg === 'User not found') setError('Пользователь не найден');
+                else if (msg === 'User already in group') setError('Пользователь уже в группе');
+                else setError('Не удалось пригласить');
+            }
+        } catch (err) { setError('Ошибка сети'); console.error(err); }
         finally { setLoading(false); }
     };
 
@@ -45,7 +50,7 @@ const InviteToGroupModal: React.FC<InviteToGroupModalProps> = ({ token, groupId,
                     Группа: <strong style={{ color: dm ? '#c4b5fd' : '#6366f1' }}>{groupName}</strong>
                 </p>
                 <form onSubmit={handleSubmit}>
-                    <input type="text" placeholder="Имя пользователя" value={username} onChange={e => setUsername(e.target.value)} style={t.input} autoFocus required />
+                    <input type="text" placeholder="@тег пользователя" value={username} onChange={e => setUsername(e.target.value)} style={t.input} autoFocus required />
                     {error && <div style={{ color: '#f44336', fontSize: 12, marginBottom: 12, textAlign: 'center' }}>{error}</div>}
                     {success && <div style={{ color: '#4caf50', fontSize: 12, marginBottom: 12, textAlign: 'center' }}>{success}</div>}
                     <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>

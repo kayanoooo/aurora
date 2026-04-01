@@ -13,6 +13,11 @@ export interface User {
     privacy_settings?: string;
     last_seen?: string | null;
     is_online?: boolean;
+    last_msg_text?: string | null;
+    last_msg_file?: string | null;
+    last_msg_filename?: string | null;
+    last_msg_time?: string | null;
+    last_msg_sender_id?: number | null;
 }
 
 export interface Message {
@@ -43,6 +48,18 @@ export interface Group {
     member_count: number;
     message_count?: number;
     avatar?: string;
+    last_msg_text?: string | null;
+    last_msg_file?: string | null;
+    last_msg_filename?: string | null;
+    last_msg_time?: string | null;
+    last_msg_sender_id?: number | null;
+    last_msg_sender_name?: string | null;
+    // Channel fields
+    is_channel?: number;
+    channel_type?: 'public' | 'private';
+    channel_tag?: string | null;
+    invite_link?: string | null;
+    my_role?: 'admin' | 'member';
 }
 
 export interface GroupMember {
@@ -50,6 +67,7 @@ export interface GroupMember {
     username: string;
     email: string;
     avatar?: string;
+    tag?: string;
     role: 'admin' | 'member';
     joined_at: string;
 }
@@ -59,6 +77,7 @@ export interface GroupMessage {
     group_id: number;
     sender_id: number;
     sender_name: string;
+    sender_tag?: string;
     sender_avatar?: string;
     sender_avatar_color?: string;
     message_text?: string;

@@ -15,13 +15,14 @@ interface UserProfileModalProps {
     token: string;
     isDark?: boolean;
     messages?: any[];
+    isOnline?: boolean;
     onClose: () => void;
     onStartChat?: () => void;
     onGoToMessage?: (id: number) => void;
 }
 
 const UserProfileModal: React.FC<UserProfileModalProps> = ({
-    user, token, isDark = false, messages = [], onClose, onStartChat, onGoToMessage
+    user, token, isDark = false, messages = [], isOnline, onClose, onStartChat, onGoToMessage
 }) => {
     const dm = isDark;
     const [fullUser, setFullUser] = useState<User>(user);
@@ -142,15 +143,18 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     )}
 
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 20 }}>
-                        <div onClick={() => avatarUrl && setAvatarLightbox(true)} style={{ width: 96, height: 96, borderRadius: '50%', backgroundColor: fullUser.avatar_color || '#6c47d4', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14, overflow: 'hidden', boxShadow: '0 4px 20px rgba(108,71,212,0.4)', cursor: avatarUrl ? 'zoom-in' : 'default' }}>
+                        <div onClick={() => avatarUrl && setAvatarLightbox(true)} style={{ width: 96, height: 96, borderRadius: '50%', backgroundColor: avatarUrl ? (dm ? '#1a1a2e' : '#f3f4f6') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14, overflow: 'hidden', boxShadow: '0 4px 20px rgba(108,71,212,0.4)', cursor: avatarUrl ? 'zoom-in' : 'default' }}>
                             {avatarUrl
                                 ? <img src={avatarUrl} alt={fullUser.username} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
                                 : <span style={{ color: 'white', fontSize: 40, fontWeight: 700 }}>{fullUser.username[0]?.toUpperCase()}</span>
                             }
                         </div>
-                        <h2 style={{ fontSize: 22, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', margin: '0 0 2px' }}>{fullUser.username}</h2>
+                        <h2 style={{ fontSize: 22, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', margin: '0 0 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                            {fullUser.username}
+                            {fullUser.tag === 'kayano' && <span title="разработчик Aurora" style={{ fontSize: 18, cursor: 'default' }}>🔧</span>}
+                        </h2>
                         {fullUser.tag && <p style={{ fontSize: 13, color: '#6366f1', margin: '0 0 4px', fontWeight: 600 }}>@{fullUser.tag}</p>}
-                        {fullUser.is_online
+                        {(isOnline ?? fullUser.is_online)
                             ? <p style={{ fontSize: 13, color: '#22c55e', margin: '0 0 4px', fontWeight: 600 }}>🟢 в сети</p>
                             : fullUser.last_seen && fullUser.last_seen !== 'hidden'
                                 ? <p style={{ fontSize: 13, color: sub, margin: '0 0 4px' }}>{formatLastSeenProfile(fullUser.last_seen)}</p>

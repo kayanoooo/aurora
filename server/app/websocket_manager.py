@@ -3,23 +3,33 @@ from fastapi import WebSocket
 
 class ConnectionManager:
     """Управляет WebSocket соединениями"""
-    
+
     def __init__(self):
         # user_id -> websocket
         self.active_connections: Dict[int, WebSocket] = {}
-    
+        # users who manually set themselves offline (tab hidden / blur)
+        self.manual_offline: set = set()
+
     async def connect(self, user_id: int, websocket: WebSocket):
         """Подключает пользователя"""
         await websocket.accept()
         self.active_connections[user_id] = websocket
+        self.manual_offline.discard(user_id)
         print(f"User {user_id} connected. Total active: {len(self.active_connections)}")
-    
+
     def disconnect(self, user_id: int):
         """Отключает пользователя"""
         if user_id in self.active_connections:
             del self.active_connections[user_id]
+            self.manual_offline.discard(user_id)
             print(f"User {user_id} disconnected. Total active: {len(self.active_connections)}")
-    
+
+    def set_manual_offline(self, user_id: int):
+        self.manual_offline.add(user_id)
+
+    def set_manual_online(self, user_id: int):
+        self.manual_offline.discard(user_id)
+
     async def send_message_to_user(self, user_id: int, message: dict) -> bool:
         """Отправляет сообщение конкретному пользователю"""
         print(f"📤 Attempting to send to user {user_id}: {message}")
@@ -50,6 +60,6 @@ class ConnectionManager:
     
     def is_user_online(self, user_id: int) -> bool:
         """Проверяет, онлайн ли пользователь"""
-        return user_id in self.active_connections
+        return user_id in self.active_connections and user_id not in self.manual_offline
 
 manager = ConnectionManager()

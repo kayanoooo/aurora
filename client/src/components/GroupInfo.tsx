@@ -53,6 +53,22 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
     const [confirm, setConfirm] = useState<{ message: string; onConfirm: () => void } | null>(null);
     const fileRef = useRef<HTMLInputElement>(null);
 
+    // Channel-specific state
+    const [showMembersModal, setShowMembersModal] = useState(false);
+    const [showAdminsModal, setShowAdminsModal] = useState(false);
+    const [showAddMembersModal, setShowAddMembersModal] = useState(false);
+    const [inviteLink, setInviteLink] = useState<string | null>(null);
+    const [inviteCopied, setInviteCopied] = useState(false);
+    const [generatingLink, setGeneratingLink] = useState(false);
+    const [channelSettings, setChannelSettings] = useState(false);
+    const [editChannelType, setEditChannelType] = useState<'public' | 'private'>('public');
+    const [editChannelTag, setEditChannelTag] = useState('');
+    const [channelSettingsSaving, setChannelSettingsSaving] = useState(false);
+    const [addMembersSearch, setAddMembersSearch] = useState('');
+    const [addMembersResults, setAddMembersResults] = useState<any[]>([]);
+    const [addMembersLoading, setAddMembersLoading] = useState(false);
+    const addMembersSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
     // Media panel
     const [mediaExpanded, setMediaExpanded] = useState(false);
     const [mediaTab, setMediaTab] = useState<'images' | 'video' | 'audio' | 'files'>('images');
@@ -129,6 +145,65 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
         setConfirm({ message: `Удалить ${username} из группы?`, onConfirm: async () => { setConfirm(null); try { const res = await api.removeMember(token, groupId, userId); if (res.success) { setMembers(prev => prev.filter(m => m.id !== userId)); setGroup(g => g ? { ...g, member_count: g.member_count - 1 } : g); } } catch {} } });
     };
 
+    const handleSetMemberRole = async (userId: number, role: 'admin' | 'member') => {
+        try {
+            const res = await api.setMemberRole(token, groupId, userId, role);
+            if (res.success) setMembers(prev => prev.map(m => m.id === userId ? { ...m, role } : m));
+        } catch {}
+    };
+
+    const handleGenerateInviteLink = async () => {
+        if (inviteLink) { navigator.clipboard.writeText(inviteLink).then(() => { setInviteCopied(true); setTimeout(() => setInviteCopied(false), 2000); }); return; }
+        setGeneratingLink(true);
+        try {
+            const res = await api.generateInviteLink(token, groupId);
+            if (res.invite_link) {
+                setInviteLink(res.invite_link);
+                setGroup(g => g ? { ...g, invite_link: res.invite_link } : g);
+                navigator.clipboard.writeText(res.invite_link).then(() => { setInviteCopied(true); setTimeout(() => setInviteCopied(false), 2000); });
+            }
+        } catch {} finally { setGeneratingLink(false); }
+    };
+
+    const handleSaveChannelSettings = async () => {
+        setChannelSettingsSaving(true);
+        try {
+            const res = await api.updateChannelSettings(token, groupId, editChannelType, editChannelType === 'public' ? editChannelTag : undefined);
+            if (res.success) {
+                setGroup(g => g ? { ...g, channel_type: editChannelType, channel_tag: editChannelType === 'public' ? editChannelTag : null, invite_link: editChannelType === 'public' ? g.invite_link : null } : g);
+                setChannelSettings(false);
+                if (editChannelType === 'public') setInviteLink(null);
+            } else alert(res.detail || 'Ошибка');
+        } catch { alert('Ошибка соединения'); } finally { setChannelSettingsSaving(false); }
+    };
+
+    const searchAddMembers = (q: string) => {
+        setAddMembersSearch(q);
+        if (addMembersSearchTimer.current) clearTimeout(addMembersSearchTimer.current);
+        const clean = q.trim().replace(/^@/, '');
+        if (!clean) { setAddMembersResults([]); return; }
+        addMembersSearchTimer.current = setTimeout(async () => {
+            setAddMembersLoading(true);
+            try {
+                const r = await api.searchUsers(token, clean);
+                // filter to only tag matches (not username-only matches)
+                const filtered = (r.users || []).filter((u: any) =>
+                    u.tag?.toLowerCase().startsWith(clean.toLowerCase()) &&
+                    !members.find(m => m.id === u.id)
+                );
+                setAddMembersResults(filtered);
+            }
+            catch {} finally { setAddMembersLoading(false); }
+        }, 300);
+    };
+
+    const handleAddMember = async (userId: number, tag: string) => {
+        try {
+            const res = await api.inviteToGroup(token, groupId, tag);
+            if (res.success) { await loadGroupInfo(); setAddMembersResults(prev => prev.filter(u => u.id !== userId)); }
+        } catch {}
+    };
+
     // Extract media from messages
     const { imgs, vids, auds, files } = useMemo(() => {
         const i: any[] = [], v: any[] = [], a: any[] = [], f: any[] = [];
@@ -181,6 +256,49 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
 
     const isAdmin = members.find(m => m.id === currentUserId)?.role === 'admin';
     const groupAvatarUrl = config.fileUrl(group?.avatar);
+    const isChannel = !!group?.is_channel;
+    const resolvedInviteLink = inviteLink ?? group?.invite_link ?? null;
+
+    // Channel sub-modal helper
+    const renderMemberRow = (member: GroupMember, showRoleActions: boolean) => (
+        <div key={member.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 12, backgroundColor: dm ? '#1a1a30' : '#f8f9ff', border: dm ? '1px solid rgba(255,255,255,0.04)' : '1px solid #ede9fe' }}>
+            <div style={{ width: 38, height: 38, borderRadius: '50%', backgroundColor: member.avatar ? (dm ? '#1a1a30' : '#f8f9ff') : '#6366f1', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 700, overflow: 'hidden', flexShrink: 0, cursor: onUserClick ? 'pointer' : 'default' }}
+                onClick={() => onUserClick?.({ id: member.id, username: member.username, email: member.email, avatar: member.avatar, created_at: member.joined_at })}>
+                {member.avatar ? <img src={config.fileUrl(member.avatar) ?? undefined} alt={member.username} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : member.username[0].toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {member.username}
+                    {member.tag === 'kayano' && <span title="разработчик Aurora" style={{ fontSize: 12, cursor: 'default' }}>🔧</span>}
+                </div>
+                <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 2 }}>{member.role === 'admin' ? '👑 Администратор' : '👤 Участник'}</div>
+            </div>
+            {isAdmin && member.id !== currentUserId && showRoleActions && (
+                <div style={{ display: 'flex', gap: 4 }}>
+                    {member.role === 'member'
+                        ? <button onClick={() => handleSetMemberRole(member.id, 'admin')} style={{ padding: '4px 8px', borderRadius: 8, background: dm ? 'rgba(99,102,241,0.15)' : '#ede9fe', border: 'none', color: '#6366f1', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>+ Админ</button>
+                        : <button onClick={() => handleSetMemberRole(member.id, 'member')} style={{ padding: '4px 8px', borderRadius: 8, background: dm ? 'rgba(239,68,68,0.1)' : '#fff0f0', border: 'none', color: '#f87171', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>− Права</button>
+                    }
+                    <button onClick={() => handleRemoveMember(member.id, member.username)} style={{ width: 28, height: 28, background: dm ? 'rgba(239,68,68,0.1)' : '#fff0f0', border: dm ? '1px solid rgba(239,68,68,0.3)' : '1px solid #ffcdd2', color: '#f87171', borderRadius: 8, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>✕</button>
+                </div>
+            )}
+        </div>
+    );
+
+    const channelSubModal = (title: string, onCloseModal: () => void, children: React.ReactNode) => ReactDOM.createPortal(
+        <div onClick={onCloseModal} className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 1500, backgroundColor: dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div onClick={e => e.stopPropagation()} className="modal-enter" style={{ background: dm ? '#13132a' : '#ffffff', borderRadius: 20, width: 420, maxWidth: '94vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3)' : '0 0 40px rgba(99,102,241,0.12)', border: dm ? '1px solid rgba(99,102,241,0.25)' : '1px solid #ede9fe' }}>
+                <div style={{ padding: '18px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${border}` }}>
+                    <span style={{ fontSize: 16, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b' }}>{title}</span>
+                    <button onClick={onCloseModal} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: dm ? '#9999bb' : '#9ca3af' }}>✕</button>
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {children}
+                </div>
+            </div>
+        </div>,
+        document.body
+    );
 
     return (
         <>
@@ -207,7 +325,10 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
 
                     {/* Avatar */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 20 }}>
-                        <div style={{ width: 90, height: 90, borderRadius: '50%', background: groupAvatarUrl ? 'none' : 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden', boxShadow: '0 0 24px rgba(99,102,241,0.45)' }}>
+                        <div
+                            style={{ width: 90, height: 90, borderRadius: '50%', background: groupAvatarUrl ? (dm ? '#1a1a30' : '#f8f9ff') : 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden', boxShadow: '0 0 24px rgba(99,102,241,0.45)', cursor: groupAvatarUrl ? 'zoom-in' : 'default' }}
+                            onClick={() => { if (groupAvatarUrl) setLightbox({ src: groupAvatarUrl, filename: group?.name || 'avatar', isVideo: false }); }}
+                        >
                             {uploadingAvatar
                                 ? <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ width: 24, height: 24, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /></div>
                                 : groupAvatarUrl
@@ -259,10 +380,59 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                             <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
                                 {isAdmin && <>
                                     <button onClick={() => setEditing(true)} style={t.btnEdit}>✏️ Редактировать</button>
-                                    <button onClick={handleDeleteGroup} style={t.btnDelete}>🗑️ Удалить группу</button>
+                                    <button onClick={handleDeleteGroup} style={t.btnDelete}>🗑️ {isChannel ? 'Удалить канал' : 'Удалить группу'}</button>
                                 </>}
-                                <button onClick={handleLeaveGroup} style={{ ...t.btnDelete, flex: isAdmin ? '0 0 100%' : 1 }}>🚪 Покинуть группу</button>
+                                <button onClick={handleLeaveGroup} style={{ ...t.btnDelete, flex: isAdmin ? '0 0 100%' : 1 }}>🚪 {isChannel ? 'Покинуть канал' : 'Покинуть группу'}</button>
                             </div>
+
+                            {/* Channel: invite link for public */}
+                            {isChannel && group?.channel_type === 'public' && (
+                                <div style={{ backgroundColor: dm ? '#1e1e3a' : '#f5f3ff', border: dm ? '1px solid rgba(99,102,241,0.15)' : '1px solid #ede9fe', borderRadius: 12, padding: '12px 14px', marginBottom: 14 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: dm ? '#7c7caa' : '#6b7280', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 6 }}>Пригласительная ссылка</div>
+                                    {resolvedInviteLink ? (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            <div style={{ flex: 1, fontSize: 12, color: dm ? '#a5b4fc' : '#6366f1', wordBreak: 'break-all', background: dm ? '#252540' : '#ede9fe', padding: '6px 10px', borderRadius: 8 }}>{resolvedInviteLink}</div>
+                                            <button onClick={handleGenerateInviteLink} style={{ padding: '6px 12px', borderRadius: 8, background: inviteCopied ? '#22c55e' : 'linear-gradient(135deg, #6c47d4, #8b5cf6)', color: 'white', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, flexShrink: 0, transition: 'background 0.2s' }}>{inviteCopied ? '✓ Скопировано' : 'Копировать'}</button>
+                                        </div>
+                                    ) : (
+                                        <button onClick={handleGenerateInviteLink} disabled={generatingLink} style={{ width: '100%', padding: '8px', borderRadius: 10, background: 'linear-gradient(135deg, #6c47d4, #8b5cf6)', color: 'white', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>{generatingLink ? 'Генерация...' : 'Создать ссылку'}</button>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Channel settings */}
+                            {isAdmin && isChannel && (
+                                <div style={{ marginBottom: 14 }}>
+                                    {channelSettings ? (
+                                        <div style={{ backgroundColor: dm ? '#1e1e3a' : '#f5f3ff', border: dm ? '1px solid rgba(99,102,241,0.15)' : '1px solid #ede9fe', borderRadius: 12, padding: '12px 14px' }}>
+                                            <div style={{ fontSize: 11, fontWeight: 700, color: dm ? '#7c7caa' : '#6b7280', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 10 }}>Настройки канала</div>
+                                            <div style={{ display: 'flex', gap: 8, marginBottom: editChannelType === 'public' ? 10 : 0 }}>
+                                                {(['public', 'private'] as const).map(typ => (
+                                                    <button key={typ} onClick={() => setEditChannelType(typ)}
+                                                        style={{ flex: 1, padding: '8px', borderRadius: 10, border: editChannelType === typ ? '2px solid #6366f1' : dm ? '1.5px solid #3a3a5e' : '1.5px solid #ede9fe', background: editChannelType === typ ? (dm ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.08)') : 'transparent', color: editChannelType === typ ? '#6366f1' : (dm ? '#9090b0' : '#6b7280'), cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                                                        {typ === 'public' ? '🌐 Публичный' : '🔒 Частный'}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            {editChannelType === 'public' && (
+                                                <div>
+                                                    <label style={{ fontSize: 11, color: dm ? '#7c7caa' : '#6b7280', display: 'block', marginBottom: 4 }}>Тег канала (без @)</label>
+                                                    <input style={t.input} value={editChannelTag} onChange={e => setEditChannelTag(e.target.value.replace(/[^a-z0-9_]/gi, '').toLowerCase())} placeholder="my_channel" maxLength={32} />
+                                                </div>
+                                            )}
+                                            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                                                <button onClick={handleSaveChannelSettings} disabled={channelSettingsSaving || (editChannelType === 'public' && !editChannelTag.trim())} style={t.btnPrimary}>{channelSettingsSaving ? 'Сохранение...' : 'Сохранить'}</button>
+                                                <button onClick={() => setChannelSettings(false)} style={t.btnCancel}>Отмена</button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <button onClick={() => { setChannelSettings(true); setEditChannelType(group?.channel_type || 'public'); setEditChannelTag(group?.channel_tag || ''); }}
+                                            style={{ width: '100%', padding: 10, background: dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.08)', color: '#a5b4fc', border: dm ? '1px solid rgba(99,102,241,0.25)' : '1px solid #c4b5fd', borderRadius: 12, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                                            ⚙️ Настройки канала
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                         </>
                     )}
 
@@ -289,7 +459,23 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                         </div>
                     )}
 
-                    {/* Members */}
+                    {/* Members — channel shows buttons, group shows inline */}
+                    {isChannel ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {[
+                                { icon: '👥', label: `Участники (${group?.member_count})`, action: () => setShowMembersModal(true) },
+                                { icon: '👑', label: `Администраторы (${members.filter(m => m.role === 'admin').length})`, action: () => setShowAdminsModal(true) },
+                                { icon: '➕', label: 'Добавить участников', action: () => { setShowAddMembersModal(true); setAddMembersSearch(''); setAddMembersResults([]); } },
+                            ].map(item => (
+                                <button key={item.label} onClick={item.action}
+                                    style={{ width: '100%', padding: '12px 16px', borderRadius: 12, border: dm ? '1px solid rgba(99,102,241,0.2)' : '1px solid #ede9fe', background: dm ? '#1e1e3a' : '#f5f3ff', color: dm ? '#e0e0f0' : '#1e1b4b', cursor: 'pointer', fontSize: 14, fontWeight: 600, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10 }}>
+                                    <span style={{ fontSize: 18 }}>{item.icon}</span>
+                                    {item.label}
+                                    <span style={{ marginLeft: 'auto', color: sub, fontSize: 16 }}>›</span>
+                                </button>
+                            ))}
+                        </div>
+                    ) : (
                     <div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                             <span style={{ color: dm ? '#e0e0f0' : '#1e1b4b', fontWeight: 700, fontSize: 14 }}>Участники</span>
@@ -299,7 +485,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                             {members.map(member => (
                                 <div key={member.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 12, backgroundColor: dm ? '#1a1a30' : '#f8f9ff', border: dm ? '1px solid rgba(255,255,255,0.04)' : '1px solid #ede9fe' }}>
                                     <div
-                                        style={{ width: 38, height: 38, borderRadius: '50%', backgroundColor: '#6366f1', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 700, overflow: 'hidden', flexShrink: 0, cursor: onUserClick ? 'pointer' : 'default' }}
+                                        style={{ width: 38, height: 38, borderRadius: '50%', backgroundColor: member.avatar ? (dm ? '#1a1a30' : '#f8f9ff') : '#6366f1', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 700, overflow: 'hidden', flexShrink: 0, cursor: onUserClick ? 'pointer' : 'default' }}
                                         onClick={() => onUserClick?.({ id: member.id, username: member.username, email: member.email, avatar: member.avatar, created_at: member.joined_at })}
                                     >
                                         {member.avatar
@@ -308,9 +494,12 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                                         }
                                     </div>
                                     <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ fontSize: 14, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', cursor: onUserClick ? 'pointer' : 'default', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                        <div style={{ fontSize: 14, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', cursor: onUserClick ? 'pointer' : 'default', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}
                                             onClick={() => onUserClick?.({ id: member.id, username: member.username, email: member.email, avatar: member.avatar, created_at: member.joined_at })}
-                                        >{member.username}</div>
+                                        >
+                                            {member.username}
+                                            {member.tag === 'kayano' && <span title="разработчик Aurora" style={{ fontSize: 12, cursor: 'default', flexShrink: 0 }}>🔧</span>}
+                                        </div>
                                         <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
                                             <span>{member.role === 'admin' ? '👑 Администратор' : '👤 Участник'}</span>
                                             {(() => {
@@ -323,8 +512,8 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                                                         let txt = '';
                                                         if (diffMin < 1) txt = 'только что';
                                                         else if (diffMin < 60) txt = `${diffMin} мин. назад`;
-                                                        else if (Math.floor(diffMin / 60) < 6) txt = `${Math.floor(diffMin / 60)} ч. назад`;
-                                                        else txt = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+                                                        else if (diffMin < 1440) txt = `${Math.floor(diffMin / 60)} ч. назад`;
+                                                        else txt = `${Math.floor(diffMin / 1440)} дн. назад`;
                                                         return <span>· {txt}</span>;
                                                     } catch { return null; }
                                                 }
@@ -339,6 +528,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                             ))}
                         </div>
                     </div>
+                    )}
                 </div>
 
                 {/* Right panel — media */}
@@ -443,6 +633,59 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                 </div>
             </div>,
             document.body
+        )}
+
+        {/* Channel: Members modal */}
+        {showMembersModal && channelSubModal(`Участники (${group?.member_count})`, () => setShowMembersModal(false),
+            members.map(m => renderMemberRow(m, false))
+        )}
+
+        {/* Channel: Admins modal */}
+        {showAdminsModal && channelSubModal(`Администраторы`, () => setShowAdminsModal(false),
+            <>
+                {members.filter(m => m.role === 'admin').map(m => renderMemberRow(m, true))}
+                {members.filter(m => m.role !== 'admin').length > 0 && (
+                    <>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: dm ? '#7c7caa' : '#6b7280', textTransform: 'uppercase', letterSpacing: '0.6px', marginTop: 8, marginBottom: 4 }}>Участники</div>
+                        {members.filter(m => m.role !== 'admin').map(m => renderMemberRow(m, true))}
+                    </>
+                )}
+            </>
+        )}
+
+        {/* Channel: Add Members modal */}
+        {showAddMembersModal && channelSubModal('Добавить участников', () => setShowAddMembersModal(false),
+            <>
+                <input
+                    type="text"
+                    placeholder="@тег пользователя"
+                    value={addMembersSearch}
+                    onChange={e => searchAddMembers(e.target.value)}
+                    style={{ ...t.input, marginBottom: 8 }}
+                    autoFocus
+                />
+                {group?.channel_type === 'public' && resolvedInviteLink && (
+                    <button onClick={handleGenerateInviteLink} style={{ width: '100%', padding: '10px', borderRadius: 10, background: dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.08)', color: '#a5b4fc', border: dm ? '1px solid rgba(99,102,241,0.25)' : '1px solid #c4b5fd', cursor: 'pointer', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+                        🔗 {inviteCopied ? 'Ссылка скопирована!' : 'Пригласить по ссылке'}
+                    </button>
+                )}
+                {addMembersLoading && <div style={{ textAlign: 'center', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13 }}>Поиск...</div>}
+                {addMembersResults.map((u: any) => (
+                    <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 12, backgroundColor: dm ? '#1a1a30' : '#f8f9ff', border: dm ? '1px solid rgba(255,255,255,0.04)' : '1px solid #ede9fe' }}>
+                        <div style={{ width: 36, height: 36, borderRadius: '50%', background: u.avatar ? (dm ? '#1a1a30' : '#f8f9ff') : '#6366f1', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 15, overflow: 'hidden', flexShrink: 0 }}>
+                            {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt={u.username} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : u.username[0].toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
+                            {u.tag && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>@{u.tag}</div>}
+                        </div>
+                        <button onClick={() => handleAddMember(u.id, u.tag)} style={{ padding: '6px 14px', borderRadius: 8, background: 'linear-gradient(135deg, #6c47d4, #8b5cf6)', color: 'white', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, flexShrink: 0 }}>Добавить</button>
+                    </div>
+                ))}
+                {!addMembersLoading && addMembersSearch && addMembersResults.length === 0 && (
+                    <div style={{ textAlign: 'center', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13 }}>Не найдено</div>
+                )}
+            </>
         )}
 
         {/* Lightbox */}

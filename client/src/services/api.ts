@@ -51,12 +51,12 @@ export const api = {
         } catch (error) { throw error; }
     },
 
-    async resetPassword(email: string, username: string, new_password: string) {
+    async resetPassword(email: string, tag: string, old_password: string, new_password: string) {
         try {
             const response = await fetch(`${API_URL}/password-reset`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, username, new_password }),
+                body: JSON.stringify({ email, tag, old_password, new_password }),
             });
             if (!response.ok) {
                 let detail = 'Ошибка сброса пароля';
@@ -171,6 +171,18 @@ export const api = {
         return response.json();
     },
 
+    async searchChannels(token: string, query: string) {
+        const response = await fetch(`${API_URL}/channels/search?token=${token}&query=${encodeURIComponent(query)}`);
+        if (!response.ok) return { channels: [] };
+        return response.json();
+    },
+
+    async joinGroup(token: string, groupId: number) {
+        const response = await fetch(`${API_URL}/groups/${groupId}/join?token=${token}`, { method: 'POST' });
+        if (!response.ok) return { success: false };
+        return response.json();
+    },
+
     async deleteGroup(token: string, groupId: number) {
         const response = await fetch(`${API_URL}/groups/${groupId}?token=${token}`, { method: 'DELETE' });
         return response.json();
@@ -221,15 +233,17 @@ export const api = {
         return response.json();
     },
 
-    async inviteToGroup(token: string, groupId: number, username: string) {
+    async inviteToGroup(token: string, groupId: number, tag: string) {
         const response = await fetch(`${API_URL}/groups/${groupId}/invite?token=${token}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ username }),
+            body: JSON.stringify({ tag: tag.replace(/^@/, '') }),
         });
-        return response.json();
+        const data = await response.json();
+        if (!response.ok) return { success: false, message: data.detail || 'Ошибка' };
+        return data;
     },
 
     async getGroupMessages(token: string, groupId: number, limit: number = 50) {
@@ -253,7 +267,7 @@ export const api = {
 
     async updateProfile(token: string, data: {
         username?: string; status?: string; avatar_color?: string;
-        birthday?: string; phone?: string; privacy_settings?: string;
+        birthday?: string; phone?: string; privacy_settings?: string; tag?: string;
     }) {
         const response = await fetch(`${API_URL}/profile?token=${token}`, {
             method: 'PUT',
@@ -343,6 +357,57 @@ export const api = {
     },
     async removeChatFromFolder(token: string, folderId: number, chatType: string, chatId: number) {
         const response = await fetch(`${API_URL}/folders/${folderId}/chats/${chatType}/${chatId}?token=${token}`, { method: 'DELETE' });
+        return response.json();
+    },
+
+    // ========== Каналы ==========
+
+    async createChannel(token: string, name: string, description: string = '', channelType: string = 'public', channelTag?: string) {
+        const body = { name, description, channel_type: channelType, channel_tag: channelTag || null };
+        const response = await fetch(`${API_URL}/channels?token=${token}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        return response.json();
+    },
+
+    async updateGroupAvatar(token: string, groupId: number, file: File) {
+        const formData = new FormData();
+        formData.append('token', token);
+        formData.append('file', file);
+        const response = await fetch(`${API_URL}/groups/${groupId}/avatar`, {
+            method: 'POST',
+            body: formData,
+        });
+        return response.json();
+    },
+
+    async generateInviteLink(token: string, groupId: number) {
+        const response = await fetch(`${API_URL}/groups/${groupId}/invite-link?token=${token}`, {
+            method: 'POST',
+        });
+        return response.json();
+    },
+
+    async joinViaInviteLink(token: string, inviteLink: string) {
+        const response = await fetch(`${API_URL}/groups/join/${inviteLink}?token=${token}`);
+        return response.json();
+    },
+
+    async setMemberRole(token: string, groupId: number, userId: number, role: string) {
+        const response = await fetch(`${API_URL}/groups/${groupId}/members/${userId}/role?token=${token}&role=${role}`, {
+            method: 'PUT',
+        });
+        return response.json();
+    },
+
+    async updateChannelSettings(token: string, groupId: number, channelType?: string, channelTag?: string) {
+        const response = await fetch(`${API_URL}/groups/${groupId}/channel-settings?token=${token}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channel_type: channelType, channel_tag: channelTag }),
+        });
         return response.json();
     },
 };

@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../services/api';
 import { wsService } from '../services/websocket';
 import { User, Message, Group, GroupMessage, ChatItem, ThemeSettings } from '../types';
-import FileMessage from './FileMessage';
+import FileMessage, { ImageGrid } from './FileMessage';
 import CreateGroupModal from './CreateGroupModal';
+import CreateChannelModal from './CreateChannelModal';
 import InviteToGroupModal from './InviteToGroupModal';
 import GroupInfo from './GroupInfo';
 import SearchModal from './SearchModal';
@@ -12,7 +13,6 @@ import UserProfileModal from './UserProfileModal';
 import EmojiPicker from './EmojiPicker';
 import FolderManager from './FolderManager';
 import ChatMediaPanel from './ChatMediaPanel';
-import HelpModal from './HelpModal';
 import { config } from '../config';
 
 const BASE_URL = config.BASE_URL;
@@ -23,13 +23,14 @@ interface ChatProps {
     currentUsername: string;
     currentUserAvatar?: string;
     currentUserStatus?: string;
+    currentUserTag?: string;
     theme: ThemeSettings;
     onThemeChange: (theme: ThemeSettings) => void;
     onProfileUpdate: (username: string, avatar?: string, status?: string) => void;
     onLogout: () => void;
 }
 
-const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, currentUserAvatar, currentUserStatus, theme, onThemeChange, onProfileUpdate, onLogout }) => {
+const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, currentUserAvatar, currentUserStatus, currentUserTag, theme, onThemeChange, onProfileUpdate, onLogout }) => {
     const [users, setUsers] = useState<User[]>([]);
     const [groups, setGroups] = useState<Group[]>([]);
     const [activeChat, setActiveChat] = useState<ChatItem | null>(null);
@@ -40,6 +41,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [uploadProgress, setUploadProgress] = useState(0);
     const [uploadingFileName, setUploadingFileName] = useState('');
     const [showCreateGroup, setShowCreateGroup] = useState(false);
+    const [showCreateChannel, setShowCreateChannel] = useState(false);
+    const [showCreateDropdown, setShowCreateDropdown] = useState(false);
     const [showInviteModal, setShowInviteModal] = useState(false);
     const [showGroupInfo, setShowGroupInfo] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
@@ -49,6 +52,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
     const [replyTo, setReplyTo] = useState<any>(null);
     const [selectedUserForProfile, setSelectedUserForProfile] = useState<User | null>(null);
+    const [profileFromGroupInfo, setProfileFromGroupInfo] = useState(false);
     const [dragOver, setDragOver] = useState(false);
     const dragCounterRef = useRef(0);
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -56,7 +60,19 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [typingChats, setTypingChats] = useState<Record<string, string>>({});
     const typingChatsTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
     const [recentUsers, setRecentUsers] = useState<User[]>([]);
-    const [showHelp, setShowHelp] = useState(false);
+    const [selectionMode, setSelectionMode] = useState(false);
+    const [selectedMsgIds, setSelectedMsgIds] = useState<Set<number>>(new Set());
+    const [forwardingMessages, setForwardingMessages] = useState<any[] | null>(null);
+    const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+    const [previewGroup, setPreviewGroup] = useState<Group | null>(null); // channel being viewed but not yet joined
+
+    // Channel comments panel
+    const [commentPostId, setCommentPostId] = useState<number | null>(null);
+    const [commentText, setCommentText] = useState('');
+    const [commentReplyTo, setCommentReplyTo] = useState<any>(null);
+    const [hoveredCommentId, setHoveredCommentId] = useState<number | null>(null);
+    const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
+    const [editingCommentText, setEditingCommentText] = useState('');
 
     interface ToastItem {
         id: number;
@@ -79,6 +95,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [sidebarSearchQuery, setSidebarSearchQuery] = useState('');
     const [sidebarSearchFocused, setSidebarSearchFocused] = useState(false);
     const [sidebarSearchResults, setSidebarSearchResults] = useState<User[]>([]);
+    const [sidebarChannelResults, setSidebarChannelResults] = useState<any[]>([]);
     const [sidebarSearchLoading, setSidebarSearchLoading] = useState(false);
     const sidebarSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [searchHistory, setSearchHistory] = useState<User[]>(() => {
@@ -103,8 +120,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     // Clear chat confirmation
     const [showClearConfirm, setShowClearConfirm] = useState(false);
 
-    // Sidebar visibility
-    const [sidebarHidden, setSidebarHidden] = useState(false);
+    // Sidebar state: full | compact | hidden
+    type SidebarState = 'full' | 'compact' | 'hidden';
+    const [sidebarState, setSidebarState] = useState<SidebarState>('full');
+    const sidebarHidden = sidebarState === 'hidden'; // compat
+    const cycleSidebar = () => setSidebarState(s => s === 'full' ? 'compact' : s === 'compact' ? 'hidden' : 'full');
+    const sidebarCompact = sidebarState === 'compact';
 
     // Chat folders
     interface ChatFolder { id: number; name: string; color: string; chats: {chat_type: string; chat_id: number}[]; }
@@ -126,6 +147,71 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             localStorage.setItem('aurora_pinned', JSON.stringify(Array.from(next)));
             return next;
         });
+        setPinMenu(null);
+    };
+
+    // Muted chats
+    const [mutedChats, setMutedChats] = useState<Set<string>>(() => {
+        try { return new Set(JSON.parse(localStorage.getItem('aurora_muted') || '[]')); }
+        catch { return new Set(); }
+    });
+    const mutedChatsRef = useRef<Set<string>>(new Set());
+    useEffect(() => { mutedChatsRef.current = mutedChats; }, [mutedChats]);
+    const toggleMute = (key: string) => {
+        setMutedChats(prev => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key); else next.add(key);
+            localStorage.setItem('aurora_muted', JSON.stringify(Array.from(next)));
+            return next;
+        });
+        setPinMenu(null);
+    };
+
+    // Pinned messages within chats (localStorage only)
+    const [pinnedMessages, setPinnedMessages] = useState<Record<string, { id: number; text: string; sender: string } | null>>(() => {
+        try { return JSON.parse(localStorage.getItem('aurora_pinned_msgs') || '{}'); }
+        catch { return {}; }
+    });
+    const togglePinMessage = (chatKey: string, msg: any) => {
+        setPinnedMessages(prev => {
+            const next = { ...prev, [chatKey]: prev[chatKey]?.id === msg.id ? null : { id: msg.id, text: msg.message_text || '[файл]', sender: (msg as any).sender_name || 'Вы' } };
+            localStorage.setItem('aurora_pinned_msgs', JSON.stringify(next));
+            return next;
+        });
+        setMenuMessageId(null);
+    };
+
+    // Folder context menu
+    const [folderCtxMenu, setFolderCtxMenu] = useState<{ x: number; y: number; folderId: number } | null>(null);
+    // "Add to folder" submenu key within chat context menu
+    const [addToFolderKey, setAddToFolderKey] = useState<string | null>(null);
+
+    const handleDeleteChat = (key: string) => {
+        const parts = key.split('-');
+        const type = parts[0];
+        const id = parseInt(parts[1]);
+        if (type === 'private') {
+            setUsers(prev => prev.filter(u => u.id !== id));
+            if (activeChat?.type === 'private' && activeChat.id === id) { setActiveChat(null); setMessages([]); }
+        } else {
+            setGroups(prev => prev.filter(g => g.id !== id));
+            if (activeChat?.type === 'group' && activeChat.id === id) { setActiveChat(null); setMessages([]); }
+        }
+        setUnreadCounts(prev => { const n = { ...prev }; delete n[key]; return n; });
+        if (pinnedChats.has(key)) togglePin(key);
+        setPinMenu(null);
+    };
+
+    const addChatToFolder = async (folderId: number, chatKey: string) => {
+        const parts = chatKey.split('-');
+        const chatType = parts[0];
+        const chatId = parseInt(parts[1]);
+        try {
+            await api.addChatToFolder(token, folderId, chatType, chatId);
+            const res = await api.getFolders(token);
+            if (res.folders) setFolders(res.folders);
+        } catch {}
+        setAddToFolderKey(null);
         setPinMenu(null);
     };
 
@@ -242,11 +328,14 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const playGlobalAudio = React.useCallback((src: string, filename: string) => {
         const index = mediaPlaylist.findIndex(x => x.src === src);
         setNowPlaying({ src, filename, index: index >= 0 ? index : 0 });
-        if (globalAudioRef.current) {
-            globalAudioRef.current.src = src;
-            globalAudioRef.current.play().catch(() => {});
-        }
-        setGlobalPlaying(true);
+        setGlobalDuration(0);
+        setGlobalCurrentTime(0);
+        setGlobalPlaying(false);
+        const audio = globalAudioRef.current;
+        if (!audio) return;
+        audio.src = src;
+        audio.load(); // force metadata load before play
+        audio.play().catch(() => {});
     }, [mediaPlaylist]);
 
     const prevTrack = () => {
@@ -276,12 +365,30 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     };
 
     const seekGlobal = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!globalAudioRef.current || !globalDuration) return;
+        if (!globalAudioRef.current) return;
+        const dur = isFinite(globalAudioRef.current.duration) ? globalAudioRef.current.duration : 0;
+        if (!dur) return;
         const rect = e.currentTarget.getBoundingClientRect();
-        globalAudioRef.current.currentTime = ((e.clientX - rect.left) / rect.width) * globalDuration;
+        globalAudioRef.current.currentTime = ((e.clientX - rect.left) / rect.width) * dur;
     };
 
     // === Last seen formatter ===
+
+    const renderTextWithLinks = (text: string | null | undefined): React.ReactNode => {
+        if (!text) return null;
+        const re = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi;
+        const parts: React.ReactNode[] = [];
+        let lastIndex = 0;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(text)) !== null) {
+            if (m.index > lastIndex) parts.push(text.slice(lastIndex, m.index));
+            const url = m[0];
+            parts.push(<a key={m.index} href={url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline', wordBreak: 'break-all' }} onClick={e => e.stopPropagation()}>{url}</a>);
+            lastIndex = m.index + url.length;
+        }
+        if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+        return parts.length > 0 ? <>{parts}</> : text;
+    };
 
     const formatLastSeen = (lastSeen: string | null | undefined): string => {
         if (!lastSeen || lastSeen === 'hidden') return 'был(а) недавно';
@@ -364,10 +471,34 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         api.getFolders(token).then(res => { if (res.folders) setFolders(res.folders); }).catch(() => {});
     }, [loadUsers, loadGroups]);
 
+    // === In-chat search ===
+    const [chatSearchOpen, setChatSearchOpen] = useState(false);
+    const [chatSearchQuery, setChatSearchQuery] = useState('');
+    const [chatSearchIdx, setChatSearchIdx] = useState(0);
+    const chatSearchInputRef = useRef<HTMLInputElement>(null);
+
+    const chatSearchMatches = React.useMemo(() => {
+        if (!chatSearchQuery.trim()) return [];
+        const q = chatSearchQuery.toLowerCase();
+        return messages
+            .filter(msg => msg.message_text?.toLowerCase().includes(q))
+            .map(msg => msg.id);
+    }, [messages, chatSearchQuery]);
+
+    const goToChatSearchMatch = (idx: number) => {
+        if (!chatSearchMatches.length) return;
+        const safeIdx = ((idx % chatSearchMatches.length) + chatSearchMatches.length) % chatSearchMatches.length;
+        setChatSearchIdx(safeIdx);
+        goToMessage(chatSearchMatches[safeIdx]);
+    };
+
     useEffect(() => {
         activeChatRef.current = activeChat;
         setShowClearConfirm(false);
         setShowMediaPanel(false);
+        setChatSearchOpen(false);
+        setChatSearchQuery('');
+        setChatSearchIdx(0);
     }, [activeChat]);
 
     const goToMessage = (messageId: number) => {
@@ -404,6 +535,35 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         document.addEventListener('click', close);
         return () => document.removeEventListener('click', close);
     }, [menuMessageId]);
+
+    // Online/offline based on tab visibility and window focus
+    useEffect(() => {
+        let offlineTimer: ReturnType<typeof setTimeout> | null = null;
+        const goOnline = () => {
+            if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
+            wsService.sendSetOnline();
+        };
+        const scheduleOffline = () => {
+            if (offlineTimer) return;
+            offlineTimer = setTimeout(() => {
+                wsService.sendSetOffline();
+                offlineTimer = null;
+            }, 30000);
+        };
+        const handleVisibility = () => {
+            if (document.visibilityState === 'visible') goOnline();
+            else scheduleOffline();
+        };
+        document.addEventListener('visibilitychange', handleVisibility);
+        window.addEventListener('focus', goOnline);
+        window.addEventListener('blur', scheduleOffline);
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibility);
+            window.removeEventListener('focus', goOnline);
+            window.removeEventListener('blur', scheduleOffline);
+            if (offlineTimer) clearTimeout(offlineTimer);
+        };
+    }, []);
 
     // Keep notification handlers current (runs every render)
     useEffect(() => {
@@ -448,34 +608,42 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 // Show in-app toast
                 const senderUser = usersRef.current.find((u: User) => u.id === data.data.sender_id);
                 const isChatActive = activeChatRef.current?.type === 'private' && activeChatRef.current?.id === data.data.sender_id;
-                if (!isChatActive) {
+                if (!isChatActive && !mutedChatsRef.current.has(`private-${data.data.sender_id}`)) {
+                    const senderDisplayName = senderUser?.username || data.data.sender_name || 'Новое сообщение';
                     showInAppToast({
-                        title: senderUser?.username || 'Новое сообщение',
+                        title: senderDisplayName,
                         body: getMsgPreview(data.data),
                         chatType: 'private',
                         chatId: data.data.sender_id,
                         senderId: data.data.sender_id,
-                        avatarLetter: (senderUser?.username?.[0] || '?').toUpperCase(),
+                        avatarLetter: (senderUser?.username?.[0] || data.data.sender_name?.[0] || '?').toUpperCase(),
                         avatarColor: senderUser?.avatar_color || '#1a73e8',
                         avatarSrc: senderUser?.avatar,
                     });
-                    // Also native notification when window not focused (Electron)
+                    // Native notification when window not focused
                     if (!document.hasFocus()) {
                         (window as any).electronAPI?.showNotification?.(
-                            senderUser?.username || 'Новое сообщение',
+                            senderDisplayName,
                             getMsgPreview(data.data),
                             { chatType: 'private', chatId: data.data.sender_id, senderId: data.data.sender_id }
                         );
+                        if ('Notification' in window && Notification.permission === 'granted' && !(window as any).electronAPI) {
+                            new Notification(senderDisplayName, {
+                                body: getMsgPreview(data.data),
+                                icon: '/logo192.png',
+                            });
+                        }
                     }
                 }
-                // Add sender to contacts if not present
+                // Add sender to contacts if not present, update last message
                 const senderId = data.data.sender_id;
                 if (senderId && senderId !== currentUserId) {
                     setUsers(prev => {
                         if (!prev.some(u => u.id === senderId)) { loadUsers(); return prev; }
-                        // Bring sender to top
                         const u = prev.find(u => u.id === senderId)!;
-                        return [u, ...prev.filter(x => x.id !== senderId)];
+                        const _f0 = data.data.files?.[0];
+                        const updated = { ...u, last_msg_text: data.data.message_text || null, last_msg_file: data.data.file_path || _f0?.file_path || null, last_msg_filename: data.data.filename || _f0?.filename || null, last_msg_time: data.data.timestamp, last_msg_sender_id: data.data.sender_id };
+                        return [updated, ...prev.filter(x => x.id !== senderId)];
                     });
                 }
 
@@ -486,13 +654,15 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     );
                     scrollToBottom(true);
                 }
-                // Bring receiver to top when we send a message
+                // Bring receiver to top, update last message
                 const recvId = data.data.receiver_id;
                 if (recvId && recvId !== currentUserId) {
                     setUsers(prev => {
                         if (!prev.some(u => u.id === recvId)) return prev;
                         const u = prev.find(u => u.id === recvId)!;
-                        return [u, ...prev.filter(x => x.id !== recvId)];
+                        const _f0s = data.data.files?.[0];
+                        const updated = { ...u, last_msg_text: data.data.message_text || null, last_msg_file: data.data.file_path || _f0s?.file_path || null, last_msg_filename: data.data.filename || _f0s?.filename || null, last_msg_time: data.data.timestamp, last_msg_sender_id: currentUserId };
+                        return [updated, ...prev.filter(x => x.id !== recvId)];
                     });
                 }
 
@@ -506,10 +676,18 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     const key = `group-${data.data.group_id}`;
                     setUnreadCounts(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
                 }
+                // Update group last message and bring to top
+                setGroups(prev => {
+                    const g = prev.find(g => g.id === data.data.group_id);
+                    if (!g) return prev;
+                    const _f0g = data.data.files?.[0];
+                    const updated = { ...g, last_msg_text: data.data.message_text || null, last_msg_file: data.data.file_path || _f0g?.file_path || null, last_msg_filename: data.data.filename || _f0g?.filename || null, last_msg_time: data.data.timestamp, last_msg_sender_id: data.data.sender_id, last_msg_sender_name: data.data.sender_name || null };
+                    return [updated, ...prev.filter(x => x.id !== data.data.group_id)];
+                });
                 // Show in-app toast for group messages not sent by self
                 if (data.data.sender_id !== currentUserId) {
                     const isChatActive = activeChatRef.current?.type === 'group' && activeChatRef.current?.id === data.data.group_id;
-                    if (!isChatActive) {
+                    if (!isChatActive && !mutedChatsRef.current.has(`group-${data.data.group_id}`)) {
                         const groupObj = groupsRef.current.find((g: Group) => g.id === data.data.group_id);
                         const groupName = groupObj?.name || 'Группа';
                         const senderName = data.data.sender_name || 'Участник';
@@ -530,6 +708,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 `${senderName}: ${getMsgPreview(data.data)}`,
                                 { chatType: 'group', chatId: data.data.group_id, senderId: data.data.sender_id, groupId: data.data.group_id }
                             );
+                            if ('Notification' in window && Notification.permission === 'granted' && !(window as any).electronAPI) {
+                                new Notification(groupName, {
+                                    body: `${senderName}: ${getMsgPreview(data.data)}`,
+                                    icon: '/logo192.png',
+                                });
+                            }
                         }
                     }
                 }
@@ -540,13 +724,36 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         ? { ...msg, message_text: data.data.new_text, edited_at: new Date().toISOString() }
                         : msg
                 ));
+                // Update sidebar if this was the last message
+                const editedInGroup = data.data.group_id as number | undefined;
+                if (editedInGroup) {
+                    setGroups(prev => prev.map(g => g.id === editedInGroup && g.last_msg_sender_id === data.data.sender_id
+                        ? { ...g, last_msg_text: data.data.new_text }
+                        : g
+                    ));
+                } else {
+                    const editSenderId = data.data.sender_id as number | undefined;
+                    const editReceiverId = data.data.receiver_id as number | undefined;
+                    const editOther = editSenderId === currentUserId ? editReceiverId : editSenderId;
+                    if (editOther) {
+                        setUsers(prev => prev.map(u => u.id === editOther && u.last_msg_sender_id === data.data.sender_id
+                            ? { ...u, last_msg_text: data.data.new_text }
+                            : u
+                        ));
+                    }
+                }
 
             } else if (data.type === 'message_deleted') {
                 const deletedId = data.data.message_id;
+                const isGroup = data.data.is_group;
+                const groupId = data.data.group_id as number | undefined;
+                const otherUserId = data.data.other_user_id as number | undefined;
                 setDeletingMsgIds(prev => new Set(prev).add(deletedId));
                 setTimeout(() => {
                     setMessages(prev => prev.filter(msg => msg.id !== deletedId));
                     setDeletingMsgIds(prev => { const s = new Set(prev); s.delete(deletedId); return s; });
+                    // Reload sidebar to reflect the new last message
+                    if (isGroup) loadGroups(); else loadUsers();
                 }, 320);
 
             } else if (data.type === 'typing') {
@@ -706,6 +913,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const selectPrivateChat = (user: User) => {
         saveDraft(activeChatRef.current);
         setReplyTo(null);
+        setCommentPostId(null);
+        setPreviewGroup(null);
         setActiveChat({ type: 'private', id: user.id, name: user.username });
         setUnreadCounts(prev => { const next = { ...prev }; delete next[`private-${user.id}`]; return next; });
         restoreDraft(`private-${user.id}`);
@@ -717,11 +926,22 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const selectGroupChat = (group: Group) => {
         saveDraft(activeChatRef.current);
         setReplyTo(null);
+        setCommentPostId(null);
+        setPreviewGroup(null);
         setActiveChat({ type: 'group', id: group.id, name: group.name });
         setUnreadCounts(prev => { const next = { ...prev }; delete next[`group-${group.id}`]; return next; });
         restoreDraft(`group-${group.id}`);
         wsService.send({ type: 'group_mark_read', group_id: group.id });
         loadGroupMessages(group.id);
+    };
+
+    const openChannelPreview = (channel: any) => {
+        saveDraft(activeChatRef.current);
+        setReplyTo(null);
+        setCommentPostId(null);
+        setPreviewGroup({ ...channel, is_channel: 1, channel_type: 'public', my_role: null } as any);
+        setActiveChat({ type: 'group', id: channel.id, name: channel.name });
+        loadGroupMessages(channel.id);
     };
 
     // === Отправка ===
@@ -735,8 +955,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         const targetChat = { ...activeChat };
         const targetReplyTo = replyTo;
 
-        // Send text immediately
-        if (text) {
+        if (inputRef.current) inputRef.current.value = '';
+        setReplyTo(null);
+
+        // Text only — send immediately via WS
+        if (text && !hasFiles) {
             if (targetChat.type === 'private') {
                 wsService.sendMessage(targetChat.id, text, undefined, undefined, undefined,
                     targetReplyTo?.id, targetReplyTo?.message_text, targetReplyTo?.sender_name);
@@ -744,12 +967,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 wsService.sendGroupMessage(targetChat.id, text, undefined, undefined, undefined,
                     targetReplyTo?.id, targetReplyTo?.message_text, targetReplyTo?.sender_name);
             }
-            if (inputRef.current) inputRef.current.value = '';
-            setReplyTo(null);
             if (targetChat.type === 'private') loadUsers();
+            return;
         }
 
-        // Upload files in background
+        // Files (possibly with text) — upload then send combined in one message
         if (hasFiles) {
             const filesToUpload = [...pendingFiles];
             setPendingFiles([]);
@@ -776,16 +998,14 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         .filter(r => r.success)
                         .map(r => ({ file_path: r.file_path, filename: r.filename, file_size: r.file_size }));
                     if (uploadedFiles.length > 0) {
-                        const replyId = text ? undefined : targetReplyTo?.id;
-                        const replyText = text ? undefined : targetReplyTo?.message_text;
-                        const replyName = text ? undefined : targetReplyTo?.sender_name;
                         if (targetChat.type === 'private') {
-                            wsService.sendMessage(targetChat.id, '', undefined, undefined, undefined,
-                                replyId, replyText, replyName, uploadedFiles);
+                            wsService.sendMessage(targetChat.id, text, undefined, undefined, undefined,
+                                targetReplyTo?.id, targetReplyTo?.message_text, targetReplyTo?.sender_name, uploadedFiles);
                         } else {
-                            wsService.sendGroupMessage(targetChat.id, '', undefined, undefined, undefined,
-                                replyId, replyText, replyName, uploadedFiles);
+                            wsService.sendGroupMessage(targetChat.id, text, undefined, undefined, undefined,
+                                targetReplyTo?.id, targetReplyTo?.message_text, targetReplyTo?.sender_name, uploadedFiles);
                         }
+                        if (targetChat.type === 'private') loadUsers();
                     }
                 } catch (e: any) {
                     if (e?.message !== 'Upload cancelled') {
@@ -806,7 +1026,14 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             if (f.size > 1 * 1024 * 1024 * 1024) { alert(`Файл "${f.name}" больше 1 ГБ`); return false; }
             return true;
         });
-        setPendingFiles(prev => [...prev, ...arr]);
+        setPendingFiles(prev => {
+            const combined = [...prev, ...arr];
+            if (combined.length > 10) {
+                showInAppToast({ title: 'Лимит файлов', body: 'Можно выбрать не более 10 файлов', chatType: 'private', chatId: 0, avatarLetter: '📎', avatarColor: '#6366f1' });
+                return combined.slice(0, 10);
+            }
+            return combined;
+        });
     };
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -851,6 +1078,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     // === Меню сообщения ===
 
     const handleContextMenu = (e: React.MouseEvent, msg: any) => {
+        if (selectionMode) { toggleMsgSelection(msg.id); return; }
         e.preventDefault();
         e.stopPropagation();
         setMenuMessageId(msg.id);
@@ -891,14 +1119,53 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         setDeleteConfirmId(messageId);
     };
 
-    const confirmDelete = () => {
+    const confirmDelete = (forSelf: boolean) => {
         if (deleteConfirmId === null) return;
         wsService.sendRaw({
             type: 'delete_message',
             message_id: deleteConfirmId,
             is_group: activeChatRef.current?.type === 'group',
+            for_self: forSelf,
         });
         setDeleteConfirmId(null);
+    };
+
+    const toggleMsgSelection = (id: number) => {
+        setSelectedMsgIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    };
+
+    const enterSelectionMode = (msg: any) => {
+        setMenuMessageId(null);
+        setSelectionMode(true);
+        setSelectedMsgIds(new Set([msg.id]));
+    };
+
+    const exitSelectionMode = () => {
+        setSelectionMode(false);
+        setSelectedMsgIds(new Set());
+    };
+
+    const handleBulkDelete = (forSelf: boolean) => {
+        selectedMsgIds.forEach(id => {
+            wsService.sendRaw({
+                type: 'delete_message',
+                message_id: id,
+                is_group: activeChatRef.current?.type === 'group',
+                for_self: forSelf,
+            });
+        });
+        setBulkDeleteConfirm(false);
+        exitSelectionMode();
+    };
+
+    const handleBulkForward = () => {
+        const msgs = messages.filter(m => selectedMsgIds.has(m.id));
+        setForwardingMessages(msgs);
+        exitSelectionMode();
     };
 
     const handleGroupAvatarUpdated = (groupId: number, avatar: string) => {
@@ -940,6 +1207,63 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         if (!files.length) return text || '...';
         if (files.length === 1) return text ? `📎 ${text}` : `📎 ${files[0].filename || 'Файл'}`;
         return text ? `📎 ${text}` : `📎 ${files.length} файла(-ов)`;
+    };
+
+
+    const isImageFile = (filename: string | null | undefined, filePath: string | null | undefined): boolean => {
+        const name = filename || filePath?.split('/').pop() || '';
+        return /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(name);
+    };
+
+    const renderSidebarSub = (
+        typingText: string | undefined,
+        text: string | null | undefined,
+        file: string | null | undefined,
+        filename: string | null | undefined,
+        fallback: string,
+        prefix?: string
+    ) => {
+        const subColor = dm ? '#5a5a8a' : '#9ca3af';
+        const subStyle: React.CSSProperties = { fontSize: 13, color: subColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 };
+        if (typingText) return <span style={{ ...subStyle, color: '#6366f1', fontStyle: 'italic' }}>{typingText}</span>;
+        if (file && !text?.trim()) {
+            const isImg = isImageFile(filename, file);
+            const isVideo = /\.(mp4|webm|mov)$/i.test(filename || file.split('/').pop() || '');
+            const isAudio = /\.(ogg|mp3|wav|weba|opus|m4a|aac|flac)$/i.test(filename || file.split('/').pop() || '');
+            const rawLabel = filename || file.split('/').pop() || 'Файл';
+            const fileLabel = isAudio && /^voice_/i.test(rawLabel) ? 'Голосовое сообщение' : rawLabel;
+            return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden', minWidth: 0 }}>
+                    {prefix && <span style={{ color: subColor, fontSize: 13, flexShrink: 0 }}>{prefix}</span>}
+                    {isImg ? (
+                        <img src={config.fileUrl(file) ?? undefined} alt="" style={{ width: 22, height: 22, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
+                    ) : isVideo ? (
+                        <span style={{ fontSize: 14, flexShrink: 0 }}>🎬</span>
+                    ) : isAudio ? (
+                        <span style={{ fontSize: 14, flexShrink: 0 }}>🎤</span>
+                    ) : (
+                        <span style={{ fontSize: 14, flexShrink: 0 }}>📎</span>
+                    )}
+                    <span style={subStyle}>{fileLabel}</span>
+                </div>
+            );
+        }
+        const preview = text?.trim() || fallback;
+        return <span style={subStyle}>{prefix ? `${prefix}${preview}` : preview}</span>;
+    };
+
+    const formatSidebarTime = (timestamp: string | null | undefined): string => {
+        if (!timestamp) return '';
+        const d = new Date(timestamp);
+        if (isNaN(d.getTime())) return '';
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        const diffDays = Math.floor((today.getTime() - msgDay.getTime()) / 86400000);
+        if (diffDays === 0) return d.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
+        if (diffDays === 1) return 'вчера';
+        if (diffDays < 7) return d.toLocaleDateString('ru', { weekday: 'short' });
+        return d.toLocaleDateString('ru', { day: 'numeric', month: 'short' });
     };
 
     // Returns true if the hex color is "dark" (luminance < 0.35)
@@ -1015,30 +1339,33 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     };
 
     // Check if current user is group admin
-    const isGroupAdmin = activeChat?.type === 'group'
-        ? groups.find(g => g.id === activeChat.id)?.creator_id === currentUserId
-        : false;
+    const activeGroup = activeChat?.type === 'group'
+        ? (groups.find(g => g.id === activeChat.id) ?? (previewGroup?.id === activeChat.id ? previewGroup : null))
+        : null;
+    const isGroupAdmin = activeGroup ? (activeGroup.my_role === 'admin' || activeGroup.creator_id === currentUserId) : false;
+    const isChannelChat = !!(activeGroup?.is_channel);
+    const isChannelMember = isChannelChat && groups.some(g => g.id === activeChat?.id);
 
     // === Рендер ===
 
     const dm = theme.darkMode;
     const darkStyles = {
-        sidebar: { ...styles.sidebar, backgroundColor: dm ? '#13131f' : 'white', boxShadow: dm ? '2px 0 16px rgba(0,0,0,0.3)' : styles.sidebar.boxShadow },
-        chatArea: { ...styles.chatArea, backgroundColor: dm ? '#0f0f1a' : '#f8f9ff' },
-        chatHeader: { ...styles.chatHeader, borderBottom: `1px solid ${dm ? 'rgba(99,102,241,0.15)' : '#ede9fe'}`, background: dm ? 'linear-gradient(135deg, #13131f 0%, #1a1830 100%)' : 'white', boxShadow: dm ? '0 2px 24px rgba(99,102,241,0.08)' : styles.chatHeader.boxShadow },
-        inputArea: { ...styles.inputArea, backgroundColor: dm ? '#13131f' : 'white', borderTop: `1px solid ${dm ? '#2a2a3d' : '#ede9fe'}` },
-        input: { ...styles.input, backgroundColor: dm ? '#1e1e30' : '#f5f3ff', border: `1.5px solid ${dm ? '#3a3a55' : '#ede9fe'}`, color: dm ? '#e2e8f0' : 'inherit' },
+        sidebar: { ...styles.sidebar, backgroundColor: dm ? '#13131f' : '#f7f8fc', boxShadow: dm ? '2px 0 16px rgba(0,0,0,0.3)' : styles.sidebar.boxShadow },
+        chatArea: { ...styles.chatArea, backgroundColor: dm ? '#0f0f1a' : '#f2f4f8' },
+        chatHeader: { ...styles.chatHeader, borderBottom: `1px solid ${dm ? 'rgba(99,102,241,0.15)' : '#e8e8ef'}`, background: dm ? 'linear-gradient(135deg, #13131f 0%, #1a1830 100%)' : '#f7f8fc', boxShadow: dm ? '0 2px 24px rgba(99,102,241,0.08)' : styles.chatHeader.boxShadow },
+        inputArea: { ...styles.inputArea, backgroundColor: dm ? '#13131f' : '#f7f8fc', borderTop: `1px solid ${dm ? '#2a2a3d' : '#e8e8ef'}` },
+        input: { ...styles.input, backgroundColor: dm ? '#1e1e30' : '#eef0f8', border: `1.5px solid ${dm ? '#3a3a55' : '#dddde8'}`, color: dm ? '#e2e8f0' : 'inherit' },
         chatName: { ...styles.chatName, color: dm ? '#e2e8f0' : '#1e1b4b' },
         chatItem: { ...styles.chatItem },
         sectionTitle: { ...styles.sectionTitle, color: dm ? '#4c4c7a' : '#a5b4fc' },
         headerText: { color: dm ? '#e2e8f0' : 'inherit' },
-        profileCard: { ...styles.profileCard, backgroundColor: dm ? '#161625' : '#fafbff', borderTop: `1px solid ${dm ? '#2a2a3d' : '#f0f0f8'}` },
+        profileCard: { ...styles.profileCard, backgroundColor: dm ? '#161625' : '#f0f1f8', borderTop: `1px solid ${dm ? '#2a2a3d' : '#e4e5ef'}` },
         profileName: { ...styles.profileName, color: dm ? '#e2e8f0' : '#1e1b4b' },
-        sidebarScroll: { ...styles.sidebarScroll, backgroundColor: dm ? '#13131f' : 'white' },
+        sidebarScroll: { ...styles.sidebarScroll, backgroundColor: dm ? '#13131f' : '#f7f8fc' },
         noChat: { ...styles.noChat, color: dm ? '#3a3a55' : '#c4b5fd' },
         activeChatItem: { background: dm ? 'linear-gradient(90deg, #1e1a3d 0%, #2a2545 100%)' : styles.activeChatItem.background, boxShadow: 'inset 3px 0 0 #6366f1' },
         iconBtn: { ...styles.iconBtn, background: dm ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.04)', border: `1px solid ${dm ? 'rgba(99,102,241,0.22)' : '#ede9fe'}`, color: dm ? '#a5b4fc' : '#6366f1', borderRadius: 12, padding: '8px 12px', boxShadow: dm ? '0 0 8px rgba(99,102,241,0.08)' : 'none' },
-        fileBtn: { ...styles.fileBtn, backgroundColor: dm ? '#1e1e30' : '#f5f3ff', border: `1.5px solid ${dm ? '#3a3a55' : '#ede9fe'}`, color: dm ? '#7c7caa' : '#6366f1' },
+        fileBtn: { ...styles.fileBtn, backgroundColor: dm ? '#1e1e30' : '#eef0f8', border: `1.5px solid ${dm ? '#3a3a55' : '#dddde8'}`, color: dm ? '#7c7caa' : '#6366f1' },
     };
 
     return (
@@ -1046,46 +1373,83 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             {/* Persistent audio element */}
             <audio
                 ref={globalAudioRef}
+                preload="auto"
                 onPlay={() => setGlobalPlaying(true)}
                 onPause={() => setGlobalPlaying(false)}
                 onEnded={() => { setGlobalPlaying(false); setGlobalCurrentTime(0); }}
-                onLoadedMetadata={e => setGlobalDuration((e.target as HTMLAudioElement).duration)}
-                onTimeUpdate={e => setGlobalCurrentTime((e.target as HTMLAudioElement).currentTime)}
+                onLoadedMetadata={e => {
+                    const a = e.target as HTMLAudioElement;
+                    if (isFinite(a.duration) && a.duration > 0) setGlobalDuration(a.duration);
+                }}
+                onDurationChange={e => {
+                    const a = e.target as HTMLAudioElement;
+                    if (isFinite(a.duration) && a.duration > 0) setGlobalDuration(a.duration);
+                }}
+                onTimeUpdate={e => {
+                    const a = e.target as HTMLAudioElement;
+                    setGlobalCurrentTime(a.currentTime);
+                    if (isFinite(a.duration) && a.duration > 0) setGlobalDuration(a.duration);
+                }}
             />
 
+            {/* Кнопка-ручка на краю сайдбара */}
+            <button
+                onClick={cycleSidebar}
+                title={sidebarState === 'full' ? 'Компактный режим' : sidebarState === 'compact' ? 'Скрыть панель' : 'Показать панель'}
+                style={{ position: 'absolute', left: sidebarHidden ? 0 : sidebarCompact ? 64 : 320, top: '50%', transform: 'translateY(-50%)', zIndex: 30, width: 16, height: 48, borderRadius: '0 8px 8px 0', border: `1px solid ${dm ? 'rgba(99,102,241,0.3)' : '#ede9fe'}`, borderLeft: 'none', background: dm ? '#1e1a3d' : 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: dm ? '#a5b4fc' : '#6366f1', fontSize: 9, boxShadow: dm ? '2px 0 8px rgba(0,0,0,0.3)' : '2px 0 8px rgba(99,102,241,0.1)', padding: 0, transition: 'left 0.22s cubic-bezier(0.4,0,0.2,1)' }}
+            >
+                {sidebarState === 'full' ? '◀' : sidebarState === 'compact' ? '⊟' : '▶'}
+            </button>
+
             {/* Боковая панель */}
-            <div style={{ ...darkStyles.sidebar, display: sidebarHidden ? 'none' : 'flex' }}>
+            <div style={{ ...darkStyles.sidebar, width: sidebarCompact ? 64 : 320, display: sidebarHidden ? 'none' : 'flex', transition: 'width 0.22s cubic-bezier(0.4,0,0.2,1)', overflow: 'hidden' }}>
                 <div style={{
                     ...styles.sidebarHeader,
                     background: dm ? 'linear-gradient(135deg, #1e1a3d 0%, #2d2060 100%)' : 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                    justifyContent: sidebarCompact ? 'center' : undefined,
+                    padding: sidebarCompact ? '16px 0' : '16px',
                 }}>
                     <img src={dm ? '/logo-dark.png' : '/logo-light.png'} alt="Aurora" style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, objectFit: 'cover' }} />
-                    <div style={{ flex: 1, lineHeight: 1.1 }}>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 0 }}>
-                            <span style={dm ? {
-                                fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px',
-                                background: 'linear-gradient(90deg, #e0c4ff 0%, #a78bfa 55%, #818cf8 100%)',
-                                WebkitBackgroundClip: 'text',
-                                WebkitTextFillColor: 'transparent',
-                            } : {
-                                fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px',
-                                color: 'white',
-                            }}>Aurora</span>
+                    {!sidebarCompact && <>
+                        <div style={{ flex: 1, lineHeight: 1.1 }}>
+                            <span style={dm ? { fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px', background: 'linear-gradient(90deg, #e0c4ff 0%, #a78bfa 55%, #818cf8 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' } : { fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px', color: 'white' }}>Aurora</span>
                         </div>
-                    </div>
-                    <button onClick={() => setShowCreateGroup(true)} style={{
-                        padding: '6px 12px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600,
-                        backgroundColor: dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)',
-                        color: dm ? '#c4b5fd' : 'white',
-                        border: dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)',
-                        backdropFilter: 'blur(8px)',
-                    }}>
-                        + Группа
-                    </button>
+                        <div style={{ position: 'relative' }}>
+                            <button
+                                onClick={() => setShowCreateDropdown(v => !v)}
+                                style={{ padding: '6px 12px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)', color: dm ? '#c4b5fd' : 'white', border: dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 4 }}
+                            >
+                                + <span style={{ fontSize: 10, marginTop: 1, opacity: 0.7 }}>▾</span>
+                            </button>
+                            {showCreateDropdown && (
+                                <div
+                                    style={{ position: 'absolute', top: '110%', right: 0, zIndex: 300, background: dm ? '#1a1a2e' : 'white', border: `1px solid ${dm ? '#3a3a5e' : '#ede9fe'}`, borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.22)', minWidth: 170, overflow: 'hidden' }}
+                                    onMouseLeave={() => setShowCreateDropdown(false)}
+                                >
+                                    {[
+                                        { icon: '👥', label: 'Создать группу', action: () => { setShowCreateDropdown(false); setShowCreateGroup(true); } },
+                                        { icon: '📢', label: 'Создать канал', action: () => { setShowCreateDropdown(false); setShowCreateChannel(true); } },
+                                        { icon: theme.darkMode ? '☀️' : '🌙', label: theme.darkMode ? 'Светлая тема' : 'Тёмная тема', action: () => { setShowCreateDropdown(false); onThemeChange({ ...theme, darkMode: !theme.darkMode }); } },
+                                    ].map(item => (
+                                        <div
+                                            key={item.label}
+                                            onClick={item.action}
+                                            style={{ padding: '10px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: dm ? '#e0e0f0' : '#1e1b4b', fontWeight: 500 }}
+                                            onMouseEnter={e => (e.currentTarget.style.background = dm ? 'rgba(99,102,241,0.1)' : '#f5f3ff')}
+                                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                                        >
+                                            <span style={{ fontSize: 15 }}>{item.icon}</span>
+                                            {item.label}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </>}
                 </div>
 
                 {/* Sidebar search */}
-                <div style={{ padding: '8px 10px', borderBottom: `1px solid ${dm ? 'rgba(99,102,241,0.15)' : '#ede9fe'}`, position: 'relative' }}>
+                {!sidebarCompact && <div style={{ padding: '8px 10px', borderBottom: `1px solid ${dm ? 'rgba(99,102,241,0.15)' : '#ede9fe'}`, position: 'relative' }}>
                     <input
                         type="text"
                         placeholder="🔍 Поиск пользователей..."
@@ -1101,41 +1465,76 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             const q = e.target.value;
                             setSidebarSearchQuery(q);
                             if (sidebarSearchTimerRef.current) clearTimeout(sidebarSearchTimerRef.current);
-                            if (!q.trim()) { setSidebarSearchResults([]); return; }
+                            if (!q.trim()) { setSidebarSearchResults([]); setSidebarChannelResults([]); return; }
                             sidebarSearchTimerRef.current = setTimeout(async () => {
                                 setSidebarSearchLoading(true);
                                 try {
-                                    const res = await api.searchUsers(token, q.trim());
-                                    setSidebarSearchResults(res.users || []);
-                                } catch { setSidebarSearchResults([]); }
+                                    const [userRes, chanRes] = await Promise.all([
+                                        api.searchUsers(token, q.trim()),
+                                        api.searchChannels(token, q.trim()),
+                                    ]);
+                                    setSidebarSearchResults(userRes.users || []);
+                                    setSidebarChannelResults(chanRes.channels || []);
+                                } catch { setSidebarSearchResults([]); setSidebarChannelResults([]); }
                                 finally { setSidebarSearchLoading(false); }
                             }, 300);
                         }}
                         style={{ width: '100%', boxSizing: 'border-box', padding: '7px 12px', borderRadius: 10, border: `1px solid ${dm ? '#3a3a5e' : '#ede9fe'}`, background: dm ? '#1e1e3a' : '#f5f3ff', color: dm ? '#e0e0f0' : '#1e1b4b', fontSize: 13, outline: 'none' }}
                     />
-                    {sidebarSearchFocused && (sidebarSearchResults.length > 0 || sidebarSearchLoading || (!sidebarSearchQuery && (searchHistory.length > 0 || recentUsers.length > 0))) && (
-                        <div style={{ position: 'absolute', top: '100%', left: 10, right: 10, zIndex: 200, background: dm ? '#1a1a2e' : 'white', border: `1px solid ${dm ? '#3a3a5e' : '#ede9fe'}`, borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.18)', overflow: 'hidden' }}>
+                    {sidebarSearchFocused && (sidebarSearchResults.length > 0 || sidebarChannelResults.length > 0 || sidebarSearchLoading || (!sidebarSearchQuery && (searchHistory.length > 0 || recentUsers.length > 0))) && (
+                        <div style={{ position: 'absolute', top: '100%', left: 10, right: 10, zIndex: 200, background: dm ? '#1a1a2e' : 'white', border: `1px solid ${dm ? '#3a3a5e' : '#ede9fe'}`, borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.18)', overflow: 'hidden', maxHeight: 420, overflowY: 'auto' }}>
                             {sidebarSearchQuery ? (
                                 <>
                                     {sidebarSearchLoading && (
                                         <div style={{ padding: '10px 12px', fontSize: 13, color: dm ? '#5a5a8a' : '#9ca3af', textAlign: 'center' }}>Поиск...</div>
                                     )}
-                                    {!sidebarSearchLoading && sidebarSearchResults.length === 0 && (
+                                    {!sidebarSearchLoading && sidebarSearchResults.length === 0 && sidebarChannelResults.length === 0 && (
                                         <div style={{ padding: '10px 12px', fontSize: 13, color: dm ? '#5a5a8a' : '#9ca3af', textAlign: 'center' }}>Не найдено</div>
                                     )}
-                                    {sidebarSearchResults.map(u => (
-                                        <div key={u.id} onMouseDown={() => { addToSearchHistory(u); setSelectedUserForProfile(u); setSidebarSearchQuery(''); setSidebarSearchResults([]); setSidebarSearchFocused(false); }}
-                                            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
-                                            className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
-                                            <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? 'transparent' : (u.avatar_color || '#6366f1'), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
-                                                {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
-                                            </div>
-                                            <div style={{ minWidth: 0, flex: 1 }}>
-                                                <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
-                                                <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{u.tag ? `@${u.tag}` : (u.is_online ? '🟢 в сети' : 'не в сети')}</div>
-                                            </div>
-                                        </div>
-                                    ))}
+                                    {sidebarChannelResults.length > 0 && (
+                                        <>
+                                            <div style={{ padding: '6px 12px 4px', fontSize: 11, fontWeight: 600, color: dm ? '#5a5a8a' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Каналы</div>
+                                            {sidebarChannelResults.map(ch => (
+                                                <div key={ch.id} onMouseDown={() => { openChannelPreview(ch); setSidebarSearchQuery(''); setSidebarSearchResults([]); setSidebarChannelResults([]); setSidebarSearchFocused(false); }}
+                                                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
+                                                    className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
+                                                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: ch.avatar ? (dm ? '#13131f' : '#f7f8fc') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
+                                                        {ch.avatar ? <img src={config.fileUrl(ch.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : (ch.name?.[0]?.toUpperCase() || '📢')}
+                                                    </div>
+                                                    <div style={{ minWidth: 0, flex: 1 }}>
+                                                        <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                            {ch.name}
+                                                            {ch.channel_tag === 'auroramessenger' && (
+                                                                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 13, height: 13, borderRadius: '50%', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', flexShrink: 0 }}>
+                                                                    <svg width="7" height="7" viewBox="0 0 12 12" fill="none"><path d="M2 6.5L4.5 9L10 3" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{ch.channel_tag ? `@${ch.channel_tag}` : ''}{ch.member_count ? ` · ${ch.member_count} подписчиков` : ''}</div>
+                                                    </div>
+                                                    {ch.is_member ? <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 600 }}>✓</span> : null}
+                                                </div>
+                                            ))}
+                                        </>
+                                    )}
+                                    {sidebarSearchResults.length > 0 && (
+                                        <>
+                                            {sidebarChannelResults.length > 0 && <div style={{ padding: '6px 12px 4px', fontSize: 11, fontWeight: 600, color: dm ? '#5a5a8a' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Пользователи</div>}
+                                            {sidebarSearchResults.map(u => (
+                                                <div key={u.id} onMouseDown={() => { addToSearchHistory(u); setSelectedUserForProfile(u); setSidebarSearchQuery(''); setSidebarSearchResults([]); setSidebarChannelResults([]); setSidebarSearchFocused(false); }}
+                                                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
+                                                    className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
+                                                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? (dm ? '#13131f' : '#f7f8fc') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
+                                                        {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
+                                                    </div>
+                                                    <div style={{ minWidth: 0, flex: 1 }}>
+                                                        <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
+                                                        <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{u.tag ? `@${u.tag}` : ((users.find(lu => lu.id === u.id) ?? u).is_online ? '🟢 в сети' : 'не в сети')}</div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </>
+                                    )}
                                 </>
                             ) : (
                                 <>
@@ -1150,12 +1549,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 <div key={u.id} onMouseDown={() => { addToSearchHistory(u); setSelectedUserForProfile(u); setSidebarSearchFocused(false); }}
                                                     style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
                                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
-                                                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? 'transparent' : (u.avatar_color || '#6366f1'), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
+                                                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? (dm ? '#13131f' : '#f7f8fc') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
                                                         {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
                                                     </div>
                                                     <div style={{ minWidth: 0, flex: 1 }}>
                                                         <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
-                                                        <div style={{ fontSize: 11, color: u.is_online ? '#22c55e' : (dm ? '#5a5a8a' : '#9ca3af') }}>{u.is_online ? '🟢 в сети' : 'не в сети'}</div>
+                                                        <div style={{ fontSize: 11, color: (users.find(lu => lu.id === u.id) ?? u).is_online ? '#22c55e' : (dm ? '#5a5a8a' : '#9ca3af') }}>{(users.find(lu => lu.id === u.id) ?? u).is_online ? '🟢 в сети' : 'не в сети'}</div>
                                                     </div>
                                                 </div>
                                             ))}
@@ -1168,12 +1567,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 <div key={u.id} onMouseDown={() => { addToSearchHistory(u); setSelectedUserForProfile(u); setSidebarSearchFocused(false); }}
                                                     style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
                                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
-                                                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? 'transparent' : (u.avatar_color || '#6366f1'), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
+                                                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? (dm ? '#13131f' : '#f7f8fc') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
                                                         {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
                                                     </div>
                                                     <div style={{ minWidth: 0, flex: 1 }}>
                                                         <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
-                                                        <div style={{ fontSize: 11, color: u.is_online ? '#22c55e' : (dm ? '#5a5a8a' : '#9ca3af') }}>{u.is_online ? '🟢 в сети' : 'не в сети'}</div>
+                                                        <div style={{ fontSize: 11, color: (users.find(lu => lu.id === u.id) ?? u).is_online ? '#22c55e' : (dm ? '#5a5a8a' : '#9ca3af') }}>{(users.find(lu => lu.id === u.id) ?? u).is_online ? '🟢 в сети' : 'не в сети'}</div>
                                                     </div>
                                                 </div>
                                             ))}
@@ -1183,10 +1582,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             )}
                         </div>
                     )}
-                </div>
+                </div>}
 
                 {/* Folder tabs */}
-                {folders.length > 0 && (
+                {!sidebarCompact && folders.length > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${dm ? 'rgba(99,102,241,0.15)' : '#ede9fe'}` }}>
                         <button onClick={() => { if (folderTabsRef.current) folderTabsRef.current.scrollLeft -= 120; }}
                             style={{ flexShrink: 0, width: 24, height: '100%', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', fontSize: 14, padding: '0 2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
@@ -1202,6 +1601,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             return (
                             <button key={f.id}
                                 onClick={() => setActiveFolder(f.id)}
+                                onContextMenu={e => { e.preventDefault(); setFolderCtxMenu({ x: e.clientX, y: e.clientY, folderId: f.id }); }}
                                 style={{ flexShrink: 0, padding: '4px 12px', borderRadius: 20, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
                                     background: activeFolder === f.id ? f.color : (dm ? 'rgba(99,102,241,0.12)' : '#f0f0ff'),
                                     color: activeFolder === f.id ? 'white' : (dm ? '#a5b4fc' : '#6366f1'),
@@ -1219,51 +1619,6 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 )}
 
                 <div style={darkStyles.sidebarScroll} onClick={() => pinMenu && setPinMenu(null)}>
-                    {/* Pinned chats */}
-                    {pinnedChats.size > 0 && (() => {
-                        const pinnedArr = Array.from(pinnedChats);
-                        const pinnedItems = [
-                            ...pinnedArr.filter(k => k.startsWith('private-')).map(k => {
-                                const id = parseInt(k.split('-')[1]);
-                                if (id === currentUserId) return { key: k, type: 'private' as const, id: currentUserId, name: '⭐ Избранные', avatar: null as string | null, color: null as string | null };
-                                const u = users.find(u => u.id === id);
-                                return u ? { key: k, type: 'private' as const, id: u.id, name: u.username, avatar: u.avatar || null, color: u.avatar_color || null } : null;
-                            }),
-                            ...pinnedArr.filter(k => k.startsWith('group-')).map(k => {
-                                const id = parseInt(k.split('-')[1]);
-                                const g = groups.find(g => g.id === id);
-                                return g ? { key: k, type: 'group' as const, id: g.id, name: g.name, avatar: g.avatar || null, color: '#6366f1' } : null;
-                            }),
-                        ].filter(Boolean) as any[];
-                        if (!pinnedItems.length) return null;
-                        return (
-                            <div>
-                                <div style={darkStyles.sectionTitle} className="sidebar-section-title">📌 Закреплённые</div>
-                                {pinnedItems.map((item: any) => (
-                                    <div key={item.key}
-                                        onClick={() => {
-                                            if (item.type === 'private') {
-                                                if (item.id === currentUserId) { saveDraft(activeChatRef.current); restoreDraft(`private-${currentUserId}`); setReplyTo(null); setActiveChat({ type: 'private', id: currentUserId, name: '⭐ Избранные' }); loadPrivateMessages(currentUserId); }
-                                                else { const u = users.find(u => u.id === item.id); if (u) selectPrivateChat(u); }
-                                            } else { const g = groups.find(g => g.id === item.id); if (g) selectGroupChat(g); }
-                                        }}
-                                        onContextMenu={e => { e.preventDefault(); setPinMenu({ x: e.clientX, y: e.clientY, key: item.key }); }}
-                                        className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}
-                                        style={{ ...darkStyles.chatItem, ...((activeChat?.type === item.type && activeChat?.id === item.id) ? darkStyles.activeChatItem : {}) }}
-                                    >
-                                        <div style={{ ...styles.avatar, background: item.avatar ? 'transparent' : (item.key === `private-${currentUserId}` ? (dm ? 'linear-gradient(135deg,#312e81,#6c47d4)' : 'linear-gradient(135deg,#6366f1,#a78bfa)') : (item.color || '#6366f1')), overflow: 'hidden', flexShrink: 0, fontSize: 16 }}>
-                                            {item.avatar ? <img src={config.fileUrl(item.avatar) ?? undefined} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : item.key === `private-${currentUserId}` ? '⭐' : item.name[0]?.toUpperCase()}
-                                        </div>
-                                        <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
-                                            <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                📌 {item.name}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        );
-                    })()}
 
                     {/* Saved Messages */}
                     <div
@@ -1278,25 +1633,30 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}
                         style={{
                             ...darkStyles.chatItem,
-                            ...(activeChat?.type === 'private' && activeChat.id === currentUserId ? darkStyles.activeChatItem : {})
+                            ...(activeChat?.type === 'private' && activeChat.id === currentUserId ? darkStyles.activeChatItem : {}),
+                            ...(sidebarCompact ? { justifyContent: 'center', padding: '6px 0' } : {}),
                         }}
                     >
                         <div style={{ ...styles.avatar, background: dm ? 'linear-gradient(135deg, #312e81 0%, #6c47d4 100%)' : 'linear-gradient(135deg, #6366f1 0%, #a78bfa 100%)', fontSize: 18, flexShrink: 0 }}>⭐</div>
-                        <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                        {!sidebarCompact && <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
                             <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Избранные</div>
                             <div style={styles.chatSub}>Сохранённые сообщения</div>
-                        </div>
+                        </div>}
                     </div>
 
                     {(() => {
                         const folder = activeFolder !== null ? folders.find(f => f.id === activeFolder) : null;
                         const folderGroupIds = folder ? new Set(folder.chats.filter(c => c.chat_type === 'group').map(c => c.chat_id)) : null;
                         const visibleGroups = folderGroupIds ? groups.filter(g => folderGroupIds.has(g.id)) : groups;
-                        if (visibleGroups.length === 0) return null;
+                        const sortedGroups = [...visibleGroups].sort((a, b) => {
+                            const ap = pinnedChats.has(`group-${a.id}`) ? 1 : 0;
+                            const bp = pinnedChats.has(`group-${b.id}`) ? 1 : 0;
+                            return bp - ap;
+                        });
+                        if (sortedGroups.length === 0) return null;
                         return (
                         <div>
-                            <div style={darkStyles.sectionTitle} className="sidebar-section-title">Группы</div>
-                            {visibleGroups.map(group => (
+                            {sortedGroups.map(group => (
                                 <div
                                     key={`g-${group.id}`}
                                     onClick={() => selectGroupChat(group)}
@@ -1304,25 +1664,63 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}
                                     style={{
                                         ...darkStyles.chatItem,
-                                        ...(activeChat?.type === 'group' && activeChat.id === group.id ? darkStyles.activeChatItem : {})
+                                        ...(activeChat?.type === 'group' && activeChat.id === group.id ? darkStyles.activeChatItem : {}),
+                                        ...(sidebarCompact ? { justifyContent: 'center', padding: '6px 0' } : {}),
+                                        position: 'relative',
                                     }}
                                 >
-                                    <div style={{ ...styles.avatar, backgroundColor: group.avatar ? 'transparent' : '#6366f1', overflow: 'hidden', flexShrink: 0 }}>
-                                        {group.avatar
-                                            ? <img src={config.fileUrl(group.avatar) ?? undefined} alt={group.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                            : <span style={{ fontSize: 18, color: 'white', fontWeight: 700 }}>{group.name[0]?.toUpperCase()}</span>
+                                    <div style={{ position: 'relative', flexShrink: 0 }}>
+                                        <div style={{ ...styles.avatar, backgroundColor: group.avatar ? (dm ? '#13131f' : '#f7f8fc') : '#6366f1', overflow: 'hidden' }}>
+                                            {group.avatar
+                                                ? <img src={config.fileUrl(group.avatar) ?? undefined} alt={group.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                : <span style={{ fontSize: 18, color: 'white', fontWeight: 700 }}>{group.name[0]?.toUpperCase()}</span>
+                                            }
+                                        </div>
+                                        {pinnedChats.has(`group-${group.id}`) && (
+                                            <div style={{ position: 'absolute', top: -1, right: -1, width: 14, height: 14, borderRadius: '50%', background: dm ? '#1e1e30' : 'white', border: `1.5px solid ${dm ? '#13131f' : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, lineHeight: 1, zIndex: 2 }}>📌</div>
+                                        )}
+                                        {mutedChats.has(`group-${group.id}`)
+                                            ? <div style={{ position: 'absolute', bottom: 1, right: 1, width: 13, height: 13, borderRadius: '50%', background: dm ? '#2a2a3a' : '#e0e0e0', border: `1.5px solid ${dm ? '#13131f' : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, lineHeight: 1 }}>🔕</div>
+                                            : group.is_channel
+                                                ? <div style={{ position: 'absolute', bottom: 1, right: 1, width: 14, height: 14, borderRadius: '50%', background: dm ? '#1e1e30' : 'white', border: `1.5px solid ${dm ? '#13131f' : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, lineHeight: 1 }}>📢</div>
+                                                : <div style={{ position: 'absolute', bottom: 1, right: 1, width: 14, height: 14, borderRadius: '50%', background: dm ? '#1e1e30' : 'white', border: `1.5px solid ${dm ? '#13131f' : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                    <svg width="9" height="9" viewBox="0 0 16 16" fill={dm ? '#a5b4fc' : '#6366f1'}><path d="M8 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-5 6a5 5 0 0 1 10 0H3zm10-9a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm2 5a3 3 0 0 0-4-2.83A6 6 0 0 1 14 16h2a4 4 0 0 0-1-2.71z"/></svg>
+                                                </div>
                                         }
                                     </div>
-                                    <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
-                                        <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.name}</div>
-                                        <div style={{ ...styles.chatSub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...(typingChats[`group-${group.id}`] ? { color: '#6366f1', fontStyle: 'italic' } : {}) }}>
-                                            {typingChats[`group-${group.id}`] ? `✍️ ${typingChats[`group-${group.id}`]} печатает...` : `${group.member_count} участников`}
+                                    {!sidebarCompact && <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 4 }}>
+                                            <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.name}</span>
+                                                {!!group.is_channel && group.channel_tag === 'auroramessenger' && (
+                                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', flexShrink: 0 }}>
+                                                        <svg width="8" height="8" viewBox="0 0 12 12" fill="none"><path d="M2 6.5L4.5 9L10 3" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {group.last_msg_time && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', flexShrink: 0, whiteSpace: 'nowrap' }}>{formatSidebarTime(group.last_msg_time)}</div>}
                                         </div>
-                                    </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', minWidth: 0, height: 18 }}>
+                                            {(() => {
+                                                const typing = typingChats[`group-${group.id}`];
+                                                const senderLabel = group.is_channel ? '' : (group.last_msg_sender_id === currentUserId ? 'Вы: ' : group.last_msg_sender_name ? `${group.last_msg_sender_name}: ` : '');
+                                                return renderSidebarSub(
+                                                    typing ? `✍️ ${typing} печатает...` : undefined,
+                                                    group.last_msg_text, group.last_msg_file, group.last_msg_filename,
+                                                    group.last_msg_time ? '' : (group.member_count ? `${group.member_count} участников` : ''),
+                                                    group.last_msg_time ? senderLabel : undefined
+                                                );
+                                            })()}
+                                        </div>
+                                    </div>}
                                     {unreadCounts[`group-${group.id}`] > 0 && (
-                                        <div style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0 }}>
-                                            {unreadCounts[`group-${group.id}`] > 99 ? '99+' : unreadCounts[`group-${group.id}`]}
-                                        </div>
+                                        sidebarCompact
+                                            ? <div style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>
+                                                {unreadCounts[`group-${group.id}`] > 99 ? '99+' : unreadCounts[`group-${group.id}`]}
+                                            </div>
+                                            : <div style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0 }}>
+                                                {unreadCounts[`group-${group.id}`] > 99 ? '99+' : unreadCounts[`group-${group.id}`]}
+                                            </div>
                                     )}
                                 </div>
                             ))}
@@ -1331,21 +1729,15 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     })()}
 
                     <div>
-                        <div style={darkStyles.sectionTitle} className="sidebar-section-title">
-                            <span style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
-                                Контакты
-                                {users.length === 0 && (
-                                    <span style={{ fontWeight: 400, textTransform: 'none', fontSize: 10, opacity: 0.7 }}>
-                                        — «+ Чат»
-                                    </span>
-                                )}
-                            </span>
-                        </div>
                         {(() => {
                             const folder = activeFolder !== null ? folders.find(f => f.id === activeFolder) : null;
                             const folderUserIds = folder ? new Set(folder.chats.filter(c => c.chat_type === 'private').map(c => c.chat_id)) : null;
                             const visibleUsers = folderUserIds ? users.filter(u => folderUserIds.has(u.id)) : users;
-                            return visibleUsers;
+                            return [...visibleUsers].sort((a, b) => {
+                                const ap = pinnedChats.has(`private-${a.id}`) ? 1 : 0;
+                                const bp = pinnedChats.has(`private-${b.id}`) ? 1 : 0;
+                                return bp - ap;
+                            });
                         })().map(user => (
                             <div
                                 key={`u-${user.id}`}
@@ -1354,25 +1746,48 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}
                                 style={{
                                     ...darkStyles.chatItem,
-                                    ...(activeChat?.type === 'private' && activeChat.id === user.id ? darkStyles.activeChatItem : {})
+                                    ...(activeChat?.type === 'private' && activeChat.id === user.id ? darkStyles.activeChatItem : {}),
+                                    ...(sidebarCompact ? { justifyContent: 'center', padding: '6px 0' } : {}),
+                                    position: 'relative',
                                 }}
                             >
-                                <div style={{ ...styles.avatar, backgroundColor: user.avatar ? 'transparent' : (user.avatar_color || '#1a73e8'), overflow: 'hidden', flexShrink: 0 }}>
-                                    {user.avatar
-                                        ? <img src={config.fileUrl(user.avatar) ?? undefined} alt={user.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                        : user.username[0].toUpperCase()
-                                    }
-                                </div>
-                                <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
-                                    <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.username}</div>
-                                    <div style={{ ...styles.chatSub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...(typingChats[`private-${user.id}`] ? { color: '#6366f1', fontStyle: 'italic' } : {}) }}>
-                                        {typingChats[`private-${user.id}`] ? '✍️ печатает...' : user.is_online ? '🟢 в сети' : user.last_seen === 'hidden' ? 'был(а) недавно' : user.last_seen ? `был(а) ${formatLastSeen(user.last_seen)}` : user.status || 'личный чат'}
+                                <div style={{ position: 'relative', flexShrink: 0 }}>
+                                    <div style={{ ...styles.avatar, backgroundColor: user.avatar ? (dm ? '#13131f' : '#f7f8fc') : '#6366f1', overflow: 'hidden' }}>
+                                        {user.avatar
+                                            ? <img src={config.fileUrl(user.avatar) ?? undefined} alt={user.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            : user.username[0].toUpperCase()
+                                        }
                                     </div>
+                                    {pinnedChats.has(`private-${user.id}`) && (
+                                        <div style={{ position: 'absolute', top: -1, right: -1, width: 14, height: 14, borderRadius: '50%', background: dm ? '#1e1e30' : 'white', border: `1.5px solid ${dm ? '#13131f' : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, lineHeight: 1, zIndex: 2 }}>📌</div>
+                                    )}
+                                    {(users.find(lu => lu.id === user.id) ?? user).is_online && <div style={{ position: 'absolute', bottom: 1, right: 1, width: 11, height: 11, borderRadius: '50%', background: '#22c55e', border: `2px solid ${dm ? '#13131f' : 'white'}` }} />}
+                                    {mutedChats.has(`private-${user.id}`) && <div style={{ position: 'absolute', bottom: 1, right: 1, width: 13, height: 13, borderRadius: '50%', background: dm ? '#2a2a3a' : '#e0e0e0', border: `1.5px solid ${dm ? '#13131f' : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, lineHeight: 1 }}>🔕</div>}
                                 </div>
+                                {!sidebarCompact && <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 4 }}>
+                                        <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, display: 'flex', alignItems: 'center', gap: 3 }}>
+                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.username}</span>
+                                            {user.tag === 'kayano' && <span title="разработчик Aurora" style={{ fontSize: 12, flexShrink: 0, cursor: 'default', lineHeight: 1 }}>🔧</span>}
+                                        </div>
+                                        {user.last_msg_time && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', flexShrink: 0, whiteSpace: 'nowrap' }}>{formatSidebarTime(user.last_msg_time)}</div>}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', minWidth: 0, height: 18 }}>
+                                        {renderSidebarSub(
+                                            typingChats[`private-${user.id}`] ? '✍️ печатает...' : undefined,
+                                            user.last_msg_text, user.last_msg_file, user.last_msg_filename,
+                                            user.last_msg_time ? '' : (user.is_online ? '🟢 в сети' : user.last_seen === 'hidden' ? 'был(а) недавно' : user.last_seen ? `был(а) ${formatLastSeen(user.last_seen)}` : user.status || 'личный чат')
+                                        )}
+                                    </div>
+                                </div>}
                                 {unreadCounts[`private-${user.id}`] > 0 && (
-                                    <div style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0 }}>
-                                        {unreadCounts[`private-${user.id}`] > 99 ? '99+' : unreadCounts[`private-${user.id}`]}
-                                    </div>
+                                    sidebarCompact
+                                        ? <div style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>
+                                            {unreadCounts[`private-${user.id}`] > 99 ? '99+' : unreadCounts[`private-${user.id}`]}
+                                        </div>
+                                        : <div style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0 }}>
+                                            {unreadCounts[`private-${user.id}`] > 99 ? '99+' : unreadCounts[`private-${user.id}`]}
+                                        </div>
                                 )}
                             </div>
                         ))}
@@ -1380,20 +1795,24 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 </div>
 
                 {/* Profile card */}
-                <div style={darkStyles.profileCard}>
-                    <div style={{ ...styles.profileAvatar, backgroundColor: currentUserAvatar ? 'transparent' : avatarBg }} onClick={() => setShowSettings(true)}>
+                <div style={{ ...darkStyles.profileCard, ...(sidebarCompact ? { justifyContent: 'center', padding: '8px 0' } : {}) }}>
+                    <div style={{ ...styles.profileAvatar, backgroundColor: currentUserAvatar ? (dm ? '#13131f' : '#f7f8fc') : avatarBg }} onClick={() => setShowSettings(true)}>
                         {currentUserAvatar
                             ? <img src={config.fileUrl(currentUserAvatar) ?? undefined} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
                             : <span style={{ color: 'white', fontWeight: 700, fontSize: 16 }}>{currentUsername[0]?.toUpperCase()}</span>
                         }
                     </div>
-                    <div style={styles.profileInfo}>
-                        <div style={darkStyles.profileName}>{currentUsername}</div>
-                        {currentUserStatus && <div style={styles.profileStatus}>{currentUserStatus}</div>}
-                    </div>
-                    <button onClick={() => setShowHelp(true)} style={{ ...styles.settingsBtn, marginRight: 4 }} title="Справка">❓</button>
-                    <button onClick={() => setShowFolderManager(true)} style={{ ...styles.settingsBtn, marginRight: 4 }} title="Папки">📁</button>
-                    <button onClick={() => setShowSettings(true)} style={styles.settingsBtn} title="Настройки">⚙️</button>
+                    {!sidebarCompact && <>
+                        <div style={styles.profileInfo}>
+                            <div style={{ ...darkStyles.profileName, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                {currentUsername}
+                                {currentUserTag === 'kayano' && <span title="разработчик Aurora" style={{ fontSize: 12, cursor: 'default', lineHeight: 1 }}>🔧</span>}
+                            </div>
+                            {currentUserTag && <div style={styles.profileStatus}>@{currentUserTag}</div>}
+                        </div>
+                        <button onClick={() => setShowFolderManager(true)} style={{ ...styles.settingsBtn, marginRight: 4 }} title="Папки">📁</button>
+                        <button onClick={() => setShowSettings(true)} style={styles.settingsBtn} title="Настройки">⚙️</button>
+                    </>}
                 </div>
             </div>
 
@@ -1465,43 +1884,78 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         </div>
                                     );
                                 })()}
-                                <div style={{ minWidth: 0, overflow: 'hidden', cursor: 'pointer' }}
-                                    onClick={() => setShowMediaPanel(p => !p)}
-                                    title="Медиа и файлы">
-                                    <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: dm ? '#e2e8f0' : '#1e1b4b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                        {activeChat.name}
-                                    </h3>
-                                    <div style={{ fontSize: 12, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 2 }}>
-                                        {activeChat.type === 'group'
-                                            ? `${groups.find(g => g.id === activeChat.id)?.member_count ?? ''} участников`
-                                            : activeChat.id === currentUserId
-                                            ? 'сохранённые сообщения'
-                                            : (() => {
-                                                const u = users.find(u => u.id === activeChat.id);
-                                                if (!u) return 'личный чат';
-                                                if (u.is_online) return 'в сети';
-                                                if (u.last_seen === 'hidden') return 'был(а) недавно';
-                                                if (u.last_seen) return `был(а) ${formatLastSeen(u.last_seen)}`;
-                                                return u.status || 'личный чат';
-                                            })()
-                                        }
+                                {chatSearchOpen ? (
+                                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                        <input
+                                            ref={chatSearchInputRef}
+                                            autoFocus
+                                            value={chatSearchQuery}
+                                            onChange={e => { setChatSearchQuery(e.target.value); setChatSearchIdx(0); }}
+                                            onKeyDown={e => {
+                                                if (e.key === 'Enter') { e.preventDefault(); goToChatSearchMatch(chatSearchIdx + (e.shiftKey ? -1 : 1)); }
+                                                if (e.key === 'Escape') { setChatSearchOpen(false); setChatSearchQuery(''); }
+                                            }}
+                                            placeholder="Поиск в чате..."
+                                            style={{ flex: 1, padding: '7px 12px', borderRadius: 10, border: `1.5px solid ${dm ? '#3a3a55' : '#dddde8'}`, background: dm ? '#1e1e30' : '#eef0f8', color: dm ? '#e2e8f0' : '#1e1b4b', fontSize: 14, outline: 'none', minWidth: 0 }}
+                                        />
+                                        {chatSearchQuery.trim() && (
+                                            <span style={{ fontSize: 12, color: dm ? '#7c7caa' : '#9ca3af', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                                {chatSearchMatches.length > 0 ? `${chatSearchIdx + 1} / ${chatSearchMatches.length}` : '0 результатов'}
+                                            </span>
+                                        )}
+                                        <button onClick={() => goToChatSearchMatch(chatSearchIdx - 1)} disabled={chatSearchMatches.length === 0} style={{ ...darkStyles.iconBtn, fontSize: 11 }} title="Предыдущий (Shift+Enter)">▲</button>
+                                        <button onClick={() => goToChatSearchMatch(chatSearchIdx + 1)} disabled={chatSearchMatches.length === 0} style={{ ...darkStyles.iconBtn, fontSize: 11 }} title="Следующий (Enter)">▼</button>
+                                        <button onClick={() => { setChatSearchOpen(false); setChatSearchQuery(''); }} style={darkStyles.iconBtn} title="Закрыть поиск">✕</button>
                                     </div>
-                                </div>
-                                {typingUser && (
-                                    <span style={styles.typing}>
-                                        <span style={{ fontWeight: 600, fontStyle: 'normal' }}>{typingUser}</span> печатает...
-                                    </span>
+                                ) : (
+                                    <>
+                                        <div style={{ minWidth: 0, overflow: 'hidden', cursor: 'pointer' }}
+                                            onClick={() => setShowMediaPanel(p => !p)}
+                                            title="Медиа и файлы">
+                                            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: dm ? '#e2e8f0' : '#1e1b4b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                {activeChat.name}
+                                                {activeChat.type === 'private' && users.find(u => u.id === activeChat.id)?.tag === 'kayano' && (
+                                                    <span title="разработчик Aurora" style={{ fontSize: 15, flexShrink: 0, cursor: 'default' }}>🔧</span>
+                                                )}
+                                                {!!isChannelChat && activeGroup?.channel_tag === 'auroramessenger' && (
+                                                    <span title="Официальный канал Aurora" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', flexShrink: 0 }}>
+                                                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6.5L4.5 9L10 3" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                                    </span>
+                                                )}
+                                            </h3>
+                                            <div style={{ fontSize: 12, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 2 }}>
+                                                {activeChat.type === 'group'
+                                                    ? (() => { const cnt = activeGroup?.member_count; return cnt ? `${cnt} участников` : ''; })()
+                                                    : activeChat.id === currentUserId
+                                                    ? 'сохранённые сообщения'
+                                                    : (() => {
+                                                        const u = users.find(u => u.id === activeChat.id);
+                                                        if (!u) return 'личный чат';
+                                                        if (u.is_online) return 'в сети';
+                                                        if (u.last_seen === 'hidden') return 'был(а) недавно';
+                                                        if (u.last_seen) return `был(а) ${formatLastSeen(u.last_seen)}`;
+                                                        return u.status || 'личный чат';
+                                                    })()
+                                                }
+                                            </div>
+                                        </div>
+                                        {typingUser && (
+                                            <span style={styles.typing}>
+                                                <span style={{ fontWeight: 600, fontStyle: 'normal' }}>{typingUser}</span> печатает...
+                                            </span>
+                                        )}
+                                    </>
                                 )}
                             </div>
                             <div style={{ display: 'flex', gap: 8 }}>
-                                <button onClick={() => setSidebarHidden(p => !p)} style={darkStyles.iconBtn} title={sidebarHidden ? 'Показать боковую панель' : 'Скрыть боковую панель'}>
-                                    {sidebarHidden ? '▶' : '◀'}
+                                <button onClick={cycleSidebar} style={darkStyles.iconBtn} title={sidebarState === 'full' ? 'Компактный режим' : sidebarState === 'compact' ? 'Скрыть панель' : 'Показать панель'}>
+                                    {sidebarState === 'full' ? '◀' : sidebarState === 'compact' ? '⊟' : '▶'}
                                 </button>
-                                <button onClick={() => setShowSearch(true)} style={darkStyles.iconBtn} title="Поиск">🔍</button>
+                                <button onClick={() => { setChatSearchOpen(p => !p); setChatSearchQuery(''); setChatSearchIdx(0); }} style={{ ...darkStyles.iconBtn, ...(chatSearchOpen ? { background: dm ? 'rgba(99,102,241,0.2)' : '#ede9fe', color: '#6366f1' } : {}) }} title="Поиск в чате">🔍</button>
                                 {(activeChat.type === 'private' || isGroupAdmin) && (
                                     <button onClick={handleClearChat} style={darkStyles.iconBtn} title="Очистить чат">🗑️</button>
                                 )}
-                                {activeChat.type === 'group' && (
+                                {activeChat.type === 'group' && isGroupAdmin && !isChannelChat && (
                                     <button onClick={() => { setSelectedGroupId(activeChat.id); setShowInviteModal(true); }} style={darkStyles.iconBtn} title="Пригласить">➕</button>
                                 )}
                             </div>
@@ -1530,21 +1984,40 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     </button>
                                     <button onClick={nextTrack} style={{ background: 'none', border: 'none', color: mpBtnColor, cursor: 'pointer', fontSize: 15, padding: '0 2px' }}>⏭</button>
                                     <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={seekGlobal}>
-                                        <div style={{ fontSize: 12, fontWeight: 600, color: mpText, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3 }}>{nowPlaying.filename}</div>
+                                        <div style={{ fontSize: 12, fontWeight: 600, color: mpText, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3 }}>{/^voice_/i.test(nowPlaying.filename) ? '🎤 Голосовое сообщение' : nowPlaying.filename}</div>
                                         <div style={{ height: 3, borderRadius: 3, background: mpTrack, position: 'relative' }}>
                                             <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', borderRadius: 3, background: '#6366f1', width: globalDuration ? `${(globalCurrentTime / globalDuration) * 100}%` : '0%', transition: 'width 0.2s linear' }} />
                                         </div>
                                     </div>
                                     <span style={{ fontSize: 11, color: mpSub, whiteSpace: 'nowrap' }}>
                                         {`${Math.floor(globalCurrentTime / 60)}:${String(Math.floor(globalCurrentTime % 60)).padStart(2,'0')}`}
+                                        {globalDuration > 0 && ` / ${Math.floor(globalDuration / 60)}:${String(Math.floor(globalDuration % 60)).padStart(2,'0')}`}
                                     </span>
                                     <button onClick={stopGlobal} style={{ background: mpBtn, border: 'none', color: mpBtnColor, cursor: 'pointer', fontSize: 15, width: 28, height: 28, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
                                 </div>
                             );
                         })()}
 
+                        {/* Закреплённое сообщение */}
+                        {(() => {
+                            const chatKey = `${activeChat.type}-${activeChat.id}`;
+                            const pinned = pinnedMessages[chatKey];
+                            if (!pinned) return null;
+                            return (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 14px', background: dm ? '#181828' : '#f5f3ff', borderBottom: `1px solid ${dm ? 'rgba(99,102,241,0.18)' : '#ede9fe'}`, cursor: 'pointer', flexShrink: 0 }}
+                                    onClick={() => { const el = document.getElementById(`msg-${pinned.id}`); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.style.transition = 'background 0.3s'; el.style.background = 'rgba(99,102,241,0.18)'; setTimeout(() => { el.style.background = ''; }, 1500); } }}>
+                                    <div style={{ width: 3, height: 32, borderRadius: 2, background: '#6366f1', flexShrink: 0 }} />
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 11, fontWeight: 600, color: '#6366f1' }}>📌 Закреплённое</div>
+                                        <div style={{ fontSize: 12, color: dm ? '#9090b0' : '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pinned.text}</div>
+                                    </div>
+                                    <button onClick={e => { e.stopPropagation(); togglePinMessage(`${activeChat.type}-${activeChat.id}`, { id: pinned.id, message_text: pinned.text }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#aaa', fontSize: 16, lineHeight: 1, padding: '0 2px' }}>✕</button>
+                                </div>
+                            );
+                        })()}
+
                         {/* Сообщения */}
-                        <div key={`${activeChat.type}-${activeChat.id}`} className="panel-slide-in" style={{ ...styles.messagesArea, backgroundColor: dm ? '#0f0f1a' : '#f8f9ff' }}>
+                        <div key={`${activeChat.type}-${activeChat.id}`} className="panel-slide-in" style={{ ...styles.messagesArea, backgroundColor: dm ? '#0f0f1a' : '#f2f4f8', overflowAnchor: 'none', paddingRight: (isChannelChat && commentPostId !== null) ? 354 : 24 }}>
                             {(() => {
                                 const filtered = messages.filter(m => !m.is_deleted);
                                 let lastDay = '';
@@ -1573,26 +2046,175 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         );
                                         return;
                                     }
+
+                                    // === Channel post rendering ===
+                                    if (isChannelChat) {
+                                        if ((msg as any).reply_to_id) return; // skip comments, shown in panel
+                                        const commentCount = messages.filter(m => (m as any).reply_to_id === msg.id && !m.is_deleted).length;
+                                        const isActive = commentPostId === msg.id;
+                                        const senderName = activeGroup?.name || (msg as any).sender_name || currentUsername;
+                                        const avatarSrc = activeGroup?.avatar ? config.fileUrl(activeGroup.avatar) : null;
+                                        const filesArr: any[] = (() => { try { const f = (msg as any).files; return f ? (typeof f === 'string' ? JSON.parse(f) : f) : []; } catch { return []; } })();
+                                        const isImgFile = (n: string) => /\.(jpg|jpeg|png|gif|webp)$/i.test(n);
+                                        items.push(
+                                            <div key={msg.id} id={`msg-${msg.id}`} className="msg-in"
+                                                onMouseEnter={() => setHoveredMsgId(msg.id)}
+                                                onMouseLeave={() => setHoveredMsgId(null)}
+                                                style={{ position: 'relative', margin: '0 auto 10px auto', maxWidth: 600, background: dm ? (isActive ? '#1e1e40' : '#16162a') : (isActive ? '#f0eeff' : 'white'), borderRadius: 14, border: `1.5px solid ${isActive ? '#6366f1' : (dm ? 'rgba(99,102,241,0.15)' : '#ede9fe')}`, padding: '12px 14px', boxShadow: isActive ? '0 0 0 2px rgba(99,102,241,0.25)' : '0 2px 8px rgba(0,0,0,0.06)', transition: 'all 0.18s' }}>
+                                                {/* Post header */}
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                                                    <div style={{ width: 30, height: 30, borderRadius: '50%', background: avatarSrc ? (dm ? '#16162a' : 'white') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: 13, overflow: 'hidden', flexShrink: 0 }}>
+                                                        {avatarSrc ? <img src={avatarSrc} alt={senderName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : senderName[0]?.toUpperCase()}
+                                                    </div>
+                                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                                        <div style={{ fontWeight: 700, fontSize: 14, color: dm ? '#e0e0f0' : '#1e1b4b' }}>{senderName}</div>
+                                                        <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{new Date(msg.timestamp).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}{msg.edited_at && <span style={{ marginLeft: 6, color: dm ? '#5a5a8a' : '#bbb' }}>изм.</span>}</div>
+                                                    </div>
+                                                    {/* Hover action buttons */}
+                                                    {(isGroupAdmin || msg.sender_id === currentUserId) && hoveredMsgId === msg.id && editingMessageId !== msg.id && (
+                                                        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                                            {(isGroupAdmin || msg.sender_id === currentUserId) && (
+                                                                <button onClick={e => { e.stopPropagation(); handleEdit(msg.id, msg.message_text ?? ''); }}
+                                                                    style={{ background: dm ? 'rgba(99,102,241,0.15)' : '#f0eeff', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', color: '#6366f1', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Редактировать">✏️</button>
+                                                            )}
+                                                            {(isGroupAdmin || msg.sender_id === currentUserId) && (
+                                                                <button onClick={e => { e.stopPropagation(); handleDelete(msg.id); }}
+                                                                    style={{ background: dm ? 'rgba(239,68,68,0.1)' : '#fff0f0', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', color: '#f87171', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Удалить">🗑️</button>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                {/* Post content / edit mode */}
+                                                {editingMessageId === msg.id ? (
+                                                    <div onClick={e => e.stopPropagation()}>
+                                                        <textarea
+                                                            autoFocus
+                                                            value={editingText}
+                                                            onChange={e => setEditingText(e.target.value)}
+                                                            onKeyDown={e => {
+                                                                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEditSubmit(msg.id); }
+                                                                if (e.key === 'Escape') { setEditingMessageId(null); setEditingText(''); }
+                                                            }}
+                                                            rows={Math.min(8, (editingText.match(/\n/g)?.length || 0) + 2)}
+                                                            style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: `1.5px solid #6366f1`, fontSize: 14, outline: 'none', resize: 'none', fontFamily: 'inherit', backgroundColor: dm ? '#1e1e3a' : '#f5f3ff', color: dm ? '#e0e0f0' : '#1e1b4b', boxSizing: 'border-box' as const, marginBottom: 8 }}
+                                                        />
+                                                        <div style={{ display: 'flex', gap: 8 }}>
+                                                            <button onClick={() => handleEditSubmit(msg.id)} style={{ flex: 1, padding: '7px 0', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>✓ Сохранить</button>
+                                                            <button onClick={() => { setEditingMessageId(null); setEditingText(''); }} style={{ padding: '7px 14px', background: 'none', border: `1px solid ${dm ? '#3a3a5e' : '#ede9fe'}`, color: dm ? '#9090b0' : '#6b7280', borderRadius: 10, cursor: 'pointer', fontSize: 13 }}>Отмена</button>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <>
+                                                        {filesArr.length > 0 && (
+                                                            <div style={{ marginBottom: msg.message_text ? 8 : 0 }}>
+                                                                {filesArr.filter((f: any) => isImgFile(f.filename || '')).length > 0
+                                                                    ? <ImageGrid images={filesArr.filter((f: any) => isImgFile(f.filename || '')).map((f: any) => ({ url: f.file_path?.startsWith('http') ? f.file_path : `${BASE_URL}${f.file_path}`, name: f.filename || '' }))} />
+                                                                    : filesArr.map((f: any, i: number) => <FileMessage key={i} filePath={f.file_path} filename={f.filename || ''} fileSize={f.file_size} isOwn={false} isDark={dm} />)
+                                                                }
+                                                            </div>
+                                                        )}
+                                                        {!filesArr.length && msg.file_path && <FileMessage filePath={msg.file_path} filename={msg.filename || ''} fileSize={msg.file_size} isOwn={false} isDark={dm} />}
+                                                        {msg.message_text && <div style={{ fontSize: 14, color: dm ? '#d0d0e8' : '#374151', lineHeight: 1.55, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{msg.message_text}</div>}
+                                                    </>
+                                                )}
+                                                {/* Footer: reactions + comment button */}
+                                                {editingMessageId !== msg.id && (
+                                                    <div style={{ marginTop: 8, borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.15)' : '#ede9fe'}`, paddingTop: 8 }}>
+                                                        {/* Reaction bubbles */}
+                                                        {reactions[msg.id]?.length > 0 && (() => {
+                                                            const grouped: Record<string, number[]> = {};
+                                                            for (const r of reactions[msg.id]) {
+                                                                if (!grouped[r.emoji]) grouped[r.emoji] = [];
+                                                                grouped[r.emoji].push(r.user_id);
+                                                            }
+                                                            return (
+                                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
+                                                                    {Object.entries(grouped).map(([emoji, userIds]) => (
+                                                                        <button key={emoji} onClick={() => {
+                                                                            if (userIds.includes(currentUserId)) wsService.removeReaction(msg.id, true, emoji);
+                                                                            else wsService.addReaction(msg.id, true, emoji);
+                                                                        }} style={{ padding: '3px 8px', borderRadius: 12, border: `1px solid ${userIds.includes(currentUserId) ? '#6366f1' : (dm ? '#3a3a5e' : '#e0e0f0')}`, background: userIds.includes(currentUserId) ? (dm ? 'rgba(99,102,241,0.2)' : '#ede9fe') : (dm ? '#252540' : 'white'), cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                                            {emoji}<span style={{ fontSize: 11, color: dm ? '#a5b4fc' : '#6366f1', fontWeight: 600 }}>{userIds.length}</span>
+                                                                        </button>
+                                                                    ))}
+                                                                </div>
+                                                            );
+                                                        })()}
+                                                        {/* Action buttons row */}
+                                                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                                            <button
+                                                                onClick={() => setCommentPostId(isActive ? null : msg.id)}
+                                                                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 8, border: 'none', background: isActive ? 'rgba(99,102,241,0.15)' : (dm ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'), cursor: 'pointer', color: isActive ? '#6366f1' : (dm ? '#9090b0' : '#6b7280'), fontSize: 13, fontWeight: isActive ? 700 : 400, transition: 'all 0.15s' }}>
+                                                                💬 {commentCount > 0 ? `${commentCount} комментар${commentCount === 1 ? 'ий' : commentCount < 5 ? 'ия' : 'иев'}` : 'Комментировать'}
+                                                            </button>
+                                                            {/* Emoji picker button */}
+                                                            <div style={{ position: 'relative', marginLeft: 'auto' }}>
+                                                                <button
+                                                                    onClick={e => { e.stopPropagation(); setReactionPickerMsgId(p => p === msg.id ? null : msg.id); }}
+                                                                    style={{ background: dm ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                                    😊
+                                                                </button>
+                                                                {reactionPickerMsgId === msg.id && (
+                                                                    <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', bottom: 36, right: 0, background: dm ? '#1e1e30' : 'white', border: `1px solid ${dm ? '#3a3a5e' : '#ede9fe'}`, borderRadius: 12, padding: 6, display: 'flex', gap: 4, flexWrap: 'wrap', width: 200, zIndex: 200, boxShadow: '0 4px 16px rgba(0,0,0,0.18)' }}>
+                                                                        {['👍','❤️','😂','😮','😢','😡','🔥','👏','🎉','✅'].map(emoji => (
+                                                                            <button key={emoji} onClick={() => {
+                                                                                const myReaction = reactions[msg.id]?.find(r => r.user_id === currentUserId && r.emoji === emoji);
+                                                                                if (myReaction) wsService.removeReaction(msg.id, true, emoji);
+                                                                                else wsService.addReaction(msg.id, true, emoji);
+                                                                                setReactionPickerMsgId(null);
+                                                                            }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, padding: 2, borderRadius: 6, lineHeight: 1 }}>
+                                                                                {emoji}
+                                                                            </button>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                        return;
+                                    }
+
                                     const isOwn = msg.sender_id === currentUserId;
                                     const senderAvatar = 'sender_avatar' in msg ? (msg as any).sender_avatar : null;
+                                    const isSelected = selectedMsgIds.has(msg.id);
                                     items.push(
                                     <div
                                         key={msg.id}
                                         id={`msg-${msg.id}`}
                                         className={deletingMsgIds.has(msg.id) ? 'msg-delete' : 'msg-in'}
-                                        onMouseEnter={() => setHoveredMsgId(msg.id)}
+                                        onMouseEnter={() => !selectionMode && setHoveredMsgId(msg.id)}
                                         onMouseLeave={() => { setHoveredMsgId(null); setReactionPickerMsgId(null); }}
+                                        onClick={selectionMode ? () => toggleMsgSelection(msg.id) : undefined}
                                         style={{
                                             display: 'flex',
                                             justifyContent: isOwn ? 'flex-end' : 'flex-start',
-                                            alignItems: 'flex-end',
+                                            alignItems: selectionMode ? 'center' : 'flex-end',
                                             gap: 6,
                                             marginBottom: 12,
+                                            cursor: selectionMode ? 'pointer' : 'default',
+                                            backgroundColor: selectionMode && isSelected
+                                                ? (dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.07)')
+                                                : (chatSearchQuery.trim() && chatSearchMatches[chatSearchIdx] === msg.id)
+                                                ? (dm ? 'rgba(234,179,8,0.15)' : 'rgba(234,179,8,0.12)')
+                                                : (chatSearchQuery.trim() && chatSearchMatches.includes(msg.id))
+                                                ? (dm ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.05)')
+                                                : 'transparent',
+                                            borderRadius: 10,
+                                            padding: selectionMode ? '2px 6px' : '0',
+                                            transition: 'background-color 0.1s',
                                         }}
                                     >
+                                        {selectionMode && (
+                                            <div style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', border: `2px solid ${isSelected ? '#6366f1' : (dm ? '#5a5a8a' : '#c4b5fd')}`, backgroundColor: isSelected ? '#6366f1' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s', order: 0 }}>
+                                                {isSelected && <svg width="12" height="12" viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                                            </div>
+                                        )}
                                         {!isOwn && activeChat.type === 'group' && (
                                             <div
-                                                style={{ width: 28, height: 28, borderRadius: '50%', backgroundColor: (msg as any).sender_avatar_color || '#1a73e8', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 12, color: 'white', fontWeight: 700, cursor: 'pointer' }}
+                                                style={{ width: 28, height: 28, borderRadius: '50%', backgroundColor: senderAvatar ? (dm ? '#1a1a2e' : '#f3f4f6') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 12, color: 'white', fontWeight: 700, cursor: 'pointer' }}
                                                 onClick={() => setSelectedUserForProfile({ id: msg.sender_id, username: (msg as any).sender_name || '', email: '', created_at: '', avatar: senderAvatar || undefined, avatar_color: (msg as any).sender_avatar_color })}
                                                 title={`Профиль ${(msg as any).sender_name}`}
                                             >
@@ -1603,7 +2225,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             </div>
                                         )}
 
-                                        <div style={{ position: 'relative', display: 'inline-block', maxWidth: '62%' }}>
+                                        <div style={{ position: 'relative', display: 'inline-block', maxWidth: '62%', marginRight: isOwn ? 10 : 0 }}>
                                         <div
                                             onContextMenu={(e) => handleContextMenu(e, msg)}
                                             style={{
@@ -1614,7 +2236,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 fontSize: theme.fontSize,
                                                 boxShadow: isOwn ? '0 2px 10px rgba(99,102,241,0.25)' : `0 2px 8px rgba(0,0,0,${dm ? '0.2' : '0.07'})`,
                                                 ...(isOwn
-                                                    ? { background: `linear-gradient(135deg, ${theme.bubbleOwnColor}, #8b5cf6)`, color: 'white', textAlign: 'right' as const }
+                                                    ? { background: `linear-gradient(135deg, ${theme.bubbleOwnColor}, #8b5cf6)`, color: 'white' }
                                                     : {
                                                         backgroundColor: dm
                                                             ? (theme.bubbleOtherColor === '#e8e8e8' ? '#1e1e30' : theme.bubbleOtherColor)
@@ -1629,48 +2251,63 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     ? (theme.bubbleOtherColor === '#e8e8e8' ? '#1e1e30' : theme.bubbleOtherColor)
                                                     : theme.bubbleOtherColor;
                                                 const nameColor = isBgDark(bubbleBg) ? '#c4b5fd' : '#6366f1';
-                                                return <div style={{ ...styles.senderName, color: nameColor }}>{msg.sender_name}</div>;
+                                                return <div style={{ ...styles.senderName, color: nameColor, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                    {msg.sender_name}
+                                                    {(msg as any).sender_tag === 'kayano' && <span title="разработчик Aurora" style={{ fontSize: 12, lineHeight: 1, cursor: 'default' }}>🔧</span>}
+                                                </div>;
                                             })()}
 
-                                            {msg.reply_to_id && (
-                                                <div onClick={() => goToMessage(msg.reply_to_id!)} style={{
-                                                    borderLeft: `3px solid ${isOwn ? 'rgba(255,255,255,0.55)' : '#6366f1'}`,
-                                                    backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.07)'),
-                                                    borderRadius: 6,
-                                                    padding: '4px 10px',
-                                                    marginBottom: 6,
-                                                    fontSize: 12,
-                                                    cursor: 'pointer',
-                                                    transition: 'opacity 0.15s',
-                                                }} onMouseEnter={e => (e.currentTarget.style.opacity = '0.75')} onMouseLeave={e => (e.currentTarget.style.opacity = '1')}>
-                                                    <div style={{ fontSize: 11, fontWeight: 700, color: isOwn ? 'rgba(255,255,255,0.75)' : '#8b5cf6', marginBottom: 2 }}>
-                                                        {msg.reply_to_sender || 'кто-то'}
+                                            {msg.reply_to_id && (() => {
+                                                const rfp = (msg as any).reply_to_file_path;
+                                                const replyThumb = rfp && /\.(jpg|jpeg|png|gif|webp)$/i.test(rfp) ? config.fileUrl(rfp) : null;
+                                                return (
+                                                    <div onClick={() => goToMessage(msg.reply_to_id!)} style={{
+                                                        borderLeft: `3px solid ${isOwn ? 'rgba(255,255,255,0.55)' : '#6366f1'}`,
+                                                        backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.07)'),
+                                                        borderRadius: 6,
+                                                        padding: '4px 10px',
+                                                        marginBottom: 6,
+                                                        fontSize: 12,
+                                                        cursor: 'pointer',
+                                                        transition: 'opacity 0.15s',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: 8,
+                                                    }} onMouseEnter={e => (e.currentTarget.style.opacity = '0.75')} onMouseLeave={e => (e.currentTarget.style.opacity = '1')}>
+                                                        {replyThumb && <img src={replyThumb} alt="" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />}
+                                                        <div>
+                                                            <div style={{ fontSize: 11, fontWeight: 700, color: isOwn ? 'rgba(255,255,255,0.75)' : '#8b5cf6', marginBottom: 2 }}>
+                                                                {msg.reply_to_sender || 'кто-то'}
+                                                            </div>
+                                                            <div style={{ color: isOwn ? 'rgba(255,255,255,0.85)' : (dm ? '#9090b8' : '#6b7280'), fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}>
+                                                                {msg.reply_to_text ? msg.reply_to_text : '📎 вложение'}
+                                                            </div>
+                                                        </div>
                                                     </div>
-                                                    <div style={{ color: isOwn ? 'rgba(255,255,255,0.85)' : (dm ? '#9090b8' : '#6b7280'), fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}>
-                                                        {msg.reply_to_text ? msg.reply_to_text : '📎 вложение'}
-                                                    </div>
-                                                </div>
-                                            )}
+                                                );
+                                            })()}
 
                                             {editingMessageId === msg.id ? (
-                                                <div style={{ display: 'flex', gap: 4, marginTop: 2 }}>
-                                                    <input
+                                                <div style={{ marginTop: 4 }} onClick={e => e.stopPropagation()}>
+                                                    <div style={{ fontSize: 10, fontWeight: 700, color: isOwn ? 'rgba(255,255,255,0.6)' : '#8b5cf6', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>✏️ Редактирование</div>
+                                                    <textarea
                                                         autoFocus
                                                         value={editingText}
                                                         onChange={e => setEditingText(e.target.value)}
                                                         onKeyDown={e => {
-                                                            if (e.key === 'Enter') handleEditSubmit(msg.id);
+                                                            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEditSubmit(msg.id); }
                                                             if (e.key === 'Escape') { setEditingMessageId(null); setEditingText(''); }
                                                         }}
-                                                        style={{ flex: 1, padding: '4px 8px', borderRadius: 6, border: '1px solid #1a73e8', fontSize: theme.fontSize, outline: 'none', minWidth: 0 }}
-                                                        onClick={e => e.stopPropagation()}
+                                                        rows={Math.min(5, (editingText.match(/\n/g)?.length || 0) + 1)}
+                                                        style={{ width: '100%', padding: '8px 10px', borderRadius: 10, border: isOwn ? '1.5px solid rgba(255,255,255,0.4)' : `1.5px solid ${dm ? '#3a3a5e' : '#c4b5fd'}`, fontSize: theme.fontSize, outline: 'none', minWidth: 160, resize: 'none', fontFamily: 'inherit', backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (dm ? '#1e1e30' : '#f5f3ff'), color: isOwn ? 'white' : (dm ? '#e2e8f0' : '#1e1b4b'), boxSizing: 'border-box' as const }}
                                                     />
-                                                    <button onClick={() => handleEditSubmit(msg.id)} style={{ padding: '4px 10px', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12, flexShrink: 0 }}>✓</button>
-                                                    <button onClick={() => { setEditingMessageId(null); setEditingText(''); }} style={{ padding: '4px 10px', backgroundColor: '#f5f3ff', border: '1px solid #ede9fe', color: '#6366f1', borderRadius: 8, cursor: 'pointer', fontSize: 12, flexShrink: 0 }}>✕</button>
+                                                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                                                        <button onClick={() => handleEditSubmit(msg.id)} style={{ flex: 1, padding: '6px 0', background: isOwn ? 'rgba(255,255,255,0.25)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>✓ Сохранить</button>
+                                                        <button onClick={() => { setEditingMessageId(null); setEditingText(''); }} style={{ padding: '6px 10px', backgroundColor: 'transparent', border: isOwn ? '1px solid rgba(255,255,255,0.3)' : `1px solid ${dm ? '#3a3a5e' : '#ede9fe'}`, color: isOwn ? 'rgba(255,255,255,0.7)' : (dm ? '#9090b0' : '#6b7280'), borderRadius: 8, cursor: 'pointer', fontSize: 12 }}>✕</button>
+                                                    </div>
+                                                    <div style={{ fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.4)' : (dm ? '#5a5a8a' : '#c4b5fd'), marginTop: 4, textAlign: 'right' }}>Enter — сохранить, Esc — отмена</div>
                                                 </div>
-                                            ) : (
-                                                msg.message_text && <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{msg.message_text}</div>
-                                            )}
+                                            ) : null}
 
                                             {'file_path' in msg && msg.file_path && (
                                                 <FileMessage
@@ -1696,9 +2333,31 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 if (!filesRaw) return null;
                                                 const filesArr = typeof filesRaw === 'string' ? JSON.parse(filesRaw) : filesRaw;
                                                 if (!Array.isArray(filesArr) || filesArr.length === 0) return null;
+                                                const imgFiles = filesArr.filter((f: any) => /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(f.filename || ''));
+                                                const otherFiles = filesArr.filter((f: any) => !/\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(f.filename || ''));
                                                 return (
                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-                                                        {filesArr.map((f: any, i: number) => (
+                                                        {imgFiles.length > 1 ? (
+                                                            <ImageGrid images={imgFiles.map((f: any) => ({ url: f.file_path?.startsWith('http') ? f.file_path : `${BASE_URL}${f.file_path}`, name: f.filename || 'image' }))} />
+                                                        ) : imgFiles.length === 1 ? (
+                                                            <FileMessage
+                                                                filePath={imgFiles[0].file_path}
+                                                                filename={imgFiles[0].filename || 'file'}
+                                                                fileSize={imgFiles[0].file_size}
+                                                                isOwn={isOwn}
+                                                                isGroup={activeChat.type === 'group'}
+                                                                isDark={dm}
+                                                                onPlay={playGlobalAudio}
+                                                                onPlayVideo={(src, fn) => { setNowPlayingVideo({ src, filename: fn }); setTimeout(() => { if (floatingVideoRef.current) { floatingVideoRef.current.src = src; floatingVideoRef.current.play().catch(() => {}); } }, 100); }}
+                                                                nowPlayingSrc={nowPlaying?.src}
+                                                                globalPlaying={globalPlaying}
+                                                                globalCurrentTime={globalCurrentTime}
+                                                                globalDuration={globalDuration}
+                                                                onGlobalSeek={seekGlobal}
+                                                                onGlobalToggle={toggleGlobalPlay}
+                                                            />
+                                                        ) : null}
+                                                        {otherFiles.map((f: any, i: number) => (
                                                             <FileMessage
                                                                 key={i}
                                                                 filePath={f.file_path}
@@ -1721,12 +2380,25 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 );
                                             })()}
 
+                                            {editingMessageId !== msg.id && msg.message_text && (
+                                                <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', marginTop: (('file_path' in msg && msg.file_path) || (msg as any).files?.length) ? 6 : 0 }}>{renderTextWithLinks(msg.message_text)}</div>
+                                            )}
+
                                             <div style={{ ...styles.timestamp, display: 'flex', alignItems: 'center', gap: 4, justifyContent: isOwn ? 'flex-end' : 'flex-start' }}>
                                                 {msg.edited_at && <span style={{ opacity: 0.6, marginRight: 4 }}>изм.</span>}
                                                 {formatTime(msg.timestamp)}
                                                 {isOwn && (
-                                                    <span style={{ fontSize: 13, fontWeight: 700, color: (msg as any).is_read ? '#60a5fa' : 'rgba(255,255,255,0.65)', letterSpacing: (msg as any).is_read ? '-2px' : '0', textShadow: (msg as any).is_read ? '0 0 6px rgba(96,165,250,0.6)' : 'none' }} title={(msg as any).is_read ? 'Прочитано' : 'Доставлено'}>
-                                                        {(msg as any).is_read ? '✓✓' : '✓'}
+                                                    <span title={(msg as any).is_read ? 'Прочитано' : 'Доставлено'} style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+                                                        {(msg as any).is_read ? (
+                                                            <svg width="18" height="11" viewBox="0 0 18 11" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                                <path d="M1 5.5L4.5 9L11 2" stroke="rgba(255,255,255,0.55)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+                                                                <path d="M6 5.5L9.5 9L16 2" stroke="#93c5fd" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+                                                            </svg>
+                                                        ) : (
+                                                            <svg width="12" height="10" viewBox="0 0 12 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                                <path d="M1 5L4.5 8.5L11 1.5" stroke="rgba(255,255,255,0.65)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+                                                            </svg>
+                                                        )}
                                                     </span>
                                                 )}
                                             </div>
@@ -1787,30 +2459,178 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             <div ref={messagesEndRef} />
                         </div>
 
-
-                        {/* Панель ответа */}
-                        {replyTo && (
-                            <div style={{ padding: '10px 16px', backgroundColor: dm ? '#1a1a2e' : '#f5f3ff', borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.2)' : '#ede9fe'}`, borderLeft: `3px solid #6366f1`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-                                <div style={{ minWidth: 0 }}>
-                                    <div style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', marginBottom: 2 }}>Ответ для {replyTo.sender_name}</div>
-                                    <div style={{ fontSize: 12, color: dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                        {replyTo.message_text?.slice(0, 80) || (replyTo.filename ? `📎 ${replyTo.filename}` : replyTo.files ? '📎 файлы' : '📎 файл')}
+                        {/* Channel: Comments panel */}
+                        {isChannelChat && commentPostId !== null && (() => {
+                            const post = messages.find(m => m.id === commentPostId);
+                            const comments = messages.filter(m => (m as any).reply_to_id === commentPostId && !m.is_deleted);
+                            const border2 = dm ? 'rgba(99,102,241,0.2)' : '#ede9fe';
+                            return (
+                                <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 340, background: dm ? '#13132a' : '#ffffff', borderLeft: `1.5px solid ${border2}`, display: 'flex', flexDirection: 'column', zIndex: 50, boxShadow: '-4px 0 20px rgba(0,0,0,0.12)', animation: 'panel-slide-in 0.22s' }}>
+                                    {/* Header */}
+                                    <div style={{ padding: '14px 16px', borderBottom: `1px solid ${border2}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+                                        <span style={{ fontWeight: 700, fontSize: 15, color: dm ? '#e0e0f0' : '#1e1b4b' }}>Комментарии</span>
+                                        <button onClick={() => { setCommentPostId(null); setCommentReplyTo(null); setEditingCommentId(null); setEditingCommentText(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#9999bb' : '#9ca3af', fontSize: 18 }}>✕</button>
+                                    </div>
+                                    {/* Post preview */}
+                                    {post && (
+                                        <div style={{ padding: '12px 14px', borderBottom: `1px solid ${border2}`, background: dm ? '#1a1a2e' : '#f5f3ff', flexShrink: 0 }}>
+                                            <div style={{ fontSize: 12, color: dm ? '#7c7caa' : '#6b7280', marginBottom: 4 }}>Пост</div>
+                                            <div style={{ fontSize: 13, color: dm ? '#c0c0d8' : '#374151', maxHeight: 60, overflow: 'hidden', textOverflow: 'ellipsis' }}>{post.message_text || '📎 Файл'}</div>
+                                        </div>
+                                    )}
+                                    {/* Comments list */}
+                                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                        {comments.length === 0 && <div style={{ textAlign: 'center', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13, marginTop: 20 }}>Пока нет комментариев</div>}
+                                        {comments.map(c => {
+                                            const isOwn2 = c.sender_id === currentUserId;
+                                            const canEdit = isOwn2;
+                                            const canDelete = isOwn2 || isGroupAdmin;
+                                            const cName = (c as any).sender_name || (isOwn2 ? currentUsername : '?');
+                                            const cAvatar = (c as any).sender_avatar ? config.fileUrl((c as any).sender_avatar) : null;
+                                            const isEditingThis = editingCommentId === c.id;
+                                            return (
+                                                <div key={c.id}
+                                                    style={{ display: 'flex', gap: 8, alignItems: 'flex-start', position: 'relative' }}
+                                                    onMouseEnter={() => setHoveredCommentId(c.id)}
+                                                    onMouseLeave={() => setHoveredCommentId(null)}
+                                                >
+                                                    <div style={{ width: 30, height: 30, borderRadius: '50%', background: cAvatar ? (dm ? '#1a1a2e' : '#f3f4f6') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: 13, overflow: 'hidden', flexShrink: 0 }}>
+                                                        {cAvatar ? <img src={cAvatar} alt={cName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : cName[0]?.toUpperCase()}
+                                                    </div>
+                                                    <div style={{ flex: 1, minWidth: 0, background: dm ? '#1e1e3a' : '#f5f3ff', borderRadius: 12, padding: '8px 12px', borderTopLeftRadius: 4 }}>
+                                                        <div style={{ fontSize: 12, fontWeight: 700, color: dm ? '#a5b4fc' : '#6366f1', marginBottom: 3 }}>{isOwn2 ? 'Вы' : cName}</div>
+                                                        {isEditingThis ? (
+                                                            <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
+                                                                <input
+                                                                    autoFocus
+                                                                    value={editingCommentText}
+                                                                    onChange={e => setEditingCommentText(e.target.value)}
+                                                                    onKeyDown={e => {
+                                                                        if (e.key === 'Enter' && editingCommentText.trim()) {
+                                                                            wsService.sendRaw({ type: 'edit_message', message_id: c.id, new_text: editingCommentText.trim(), is_group: true });
+                                                                            setEditingCommentId(null); setEditingCommentText('');
+                                                                        }
+                                                                        if (e.key === 'Escape') { setEditingCommentId(null); setEditingCommentText(''); }
+                                                                    }}
+                                                                    style={{ flex: 1, padding: '5px 8px', borderRadius: 8, border: `1px solid ${dm ? '#4a4a7e' : '#c4b5fd'}`, background: dm ? '#13132a' : 'white', color: dm ? '#e0e0f0' : '#1e1b4b', fontSize: 13, outline: 'none' }}
+                                                                />
+                                                                <button onClick={() => { if (editingCommentText.trim()) { wsService.sendRaw({ type: 'edit_message', message_id: c.id, new_text: editingCommentText.trim(), is_group: true }); } setEditingCommentId(null); setEditingCommentText(''); }}
+                                                                    style={{ padding: '4px 10px', borderRadius: 8, background: 'linear-gradient(135deg,#6c47d4,#8b5cf6)', color: 'white', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>✓</button>
+                                                                <button onClick={() => { setEditingCommentId(null); setEditingCommentText(''); }}
+                                                                    style={{ padding: '4px 8px', borderRadius: 8, background: 'none', border: `1px solid ${dm ? '#3a3a5e' : '#ede9fe'}`, color: dm ? '#9090b0' : '#6b7280', cursor: 'pointer', fontSize: 12 }}>✕</button>
+                                                            </div>
+                                                        ) : (
+                                                            <>
+                                                                {c.message_text && <div style={{ fontSize: 13, color: dm ? '#d0d0e8' : '#374151', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{c.message_text}{(c as any).edited_at && <span style={{ fontSize: 10, color: dm ? '#5a5a8a' : '#bbb', marginLeft: 4 }}>изм.</span>}</div>}
+                                                                {c.file_path && <FileMessage filePath={c.file_path} filename={(c as any).filename || ''} fileSize={(c as any).file_size} isOwn={false} isDark={dm} />}
+                                                            </>
+                                                        )}
+                                                        <div style={{ fontSize: 10, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 4 }}>{new Date(c.timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</div>
+                                                    </div>
+                                                    {hoveredCommentId === c.id && !isEditingThis && (
+                                                        <div style={{ position: 'absolute', right: 0, top: -2, display: 'flex', gap: 2, background: dm ? '#1e1e3a' : 'white', border: `1px solid ${dm ? '#3a3a5e' : '#e0deff'}`, borderRadius: 8, padding: '2px 4px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)', zIndex: 5 }}>
+                                                            <button title="Ответить" onClick={() => setCommentReplyTo({ id: c.id, name: cName, text: c.message_text })}
+                                                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: '2px 5px', color: dm ? '#a5b4fc' : '#6366f1' }}>↩</button>
+                                                            {canEdit && <button title="Редактировать" onClick={() => { setEditingCommentId(c.id); setEditingCommentText(c.message_text || ''); }}
+                                                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: '2px 5px', color: dm ? '#a5b4fc' : '#6366f1' }}>✏️</button>}
+                                                            {canDelete && <button title="Удалить" onClick={() => { setDeleteConfirmId(c.id); setMenuMessageId(null); }}
+                                                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: '2px 5px', color: '#ef4444' }}>🗑</button>}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    {/* Comment reply preview */}
+                                    {commentReplyTo && (
+                                        <div style={{ padding: '6px 14px', borderTop: `1px solid ${border2}`, background: dm ? '#1a1a2e' : '#f0efff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderLeft: '3px solid #6366f1', flexShrink: 0 }}>
+                                            <div style={{ minWidth: 0 }}>
+                                                <div style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6' }}>↩ {commentReplyTo.name}</div>
+                                                <div style={{ fontSize: 12, color: dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{commentReplyTo.text?.slice(0, 80) || '📎 файл'}</div>
+                                            </div>
+                                            <button onClick={() => setCommentReplyTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', fontSize: 14, padding: '2px 4px', flexShrink: 0 }}>✕</button>
+                                        </div>
+                                    )}
+                                    {/* Comment input */}
+                                    <div style={{ padding: '10px 14px', borderTop: commentReplyTo ? 'none' : `1px solid ${border2}`, display: 'flex', gap: 8, flexShrink: 0 }}>
+                                        <input
+                                            value={commentText}
+                                            onChange={e => setCommentText(e.target.value)}
+                                            onKeyDown={e => {
+                                                if (e.key === 'Enter' && commentText.trim()) {
+                                                    const text = commentReplyTo ? `↩ ${commentReplyTo.name}: ${commentReplyTo.text?.slice(0, 60) || ''}...\n${commentText.trim()}` : commentText.trim();
+                                                    wsService.sendGroupMessage(activeChat!.id, text, undefined, undefined, undefined, commentPostId);
+                                                    setCommentText(''); setCommentReplyTo(null);
+                                                }
+                                            }}
+                                            placeholder="Написать комментарий..."
+                                            style={{ flex: 1, padding: '8px 12px', borderRadius: 10, border: `1px solid ${dm ? '#3a3a5e' : '#ede9fe'}`, background: dm ? '#1e1e3a' : '#f5f3ff', color: dm ? '#e0e0f0' : '#1e1b4b', fontSize: 13, outline: 'none' }}
+                                        />
+                                        <button
+                                            onClick={() => {
+                                                if (commentText.trim()) {
+                                                    const text = commentReplyTo ? `↩ ${commentReplyTo.name}: ${commentReplyTo.text?.slice(0, 60) || ''}...\n${commentText.trim()}` : commentText.trim();
+                                                    wsService.sendGroupMessage(activeChat!.id, text, undefined, undefined, undefined, commentPostId!);
+                                                    setCommentText(''); setCommentReplyTo(null);
+                                                }
+                                            }}
+                                            disabled={!commentText.trim()}
+                                            style={{ padding: '8px 14px', borderRadius: 10, background: commentText.trim() ? 'linear-gradient(135deg, #6c47d4, #8b5cf6)' : (dm ? '#2a2a3a' : '#e0e0e8'), color: commentText.trim() ? 'white' : (dm ? '#5a5a8a' : '#9ca3af'), border: 'none', cursor: commentText.trim() ? 'pointer' : 'not-allowed', fontWeight: 600, fontSize: 13 }}>→</button>
                                     </div>
                                 </div>
-                                <button onClick={() => setReplyTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', fontSize: 14, padding: '2px 4px', flexShrink: 0, lineHeight: 1 }}>✕</button>
-                            </div>
-                        )}
+                            );
+                        })()}
+
+                        {/* Панель ответа */}
+                        {replyTo && (() => {
+                            const replyFilePath = replyTo.file_path || (replyTo.files && (typeof replyTo.files === 'string' ? JSON.parse(replyTo.files) : replyTo.files)?.[0]?.file_path);
+                            const replyFilename = replyTo.filename || (replyTo.files && (typeof replyTo.files === 'string' ? JSON.parse(replyTo.files) : replyTo.files)?.[0]?.filename) || '';
+                            const replyIsImg = replyFilePath && /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(replyFilename || replyFilePath);
+                            const replyIsVoice = replyFilename && /^voice_/i.test(replyFilename);
+                            const replyIsAudio = replyFilename && /\.(mp3|ogg|wav|weba|opus|m4a|flac|aac)$/i.test(replyFilename);
+                            const replyIsVideo = replyFilename && /\.(mp4|webm|mov|avi)$/i.test(replyFilename);
+                            const replyImgSrc = replyIsImg ? (config.fileUrl(replyFilePath) ?? null) : null;
+                            let replyFileLabel = '';
+                            if (replyIsVoice) replyFileLabel = '🎤 Голосовое сообщение';
+                            else if (replyIsAudio) replyFileLabel = `🎵 ${replyFilename}`;
+                            else if (replyIsVideo) replyFileLabel = `🎬 ${replyFilename}`;
+                            else if (replyIsImg) replyFileLabel = '🖼️ Фото';
+                            else if (replyFilename) replyFileLabel = `📄 ${replyFilename}`;
+                            else if (replyFilePath) replyFileLabel = '📎 файл';
+                            return (
+                                <div style={{ padding: '8px 16px', backgroundColor: dm ? '#1a1a2e' : '#f0efff', borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.2)' : '#d9d6fe'}`, borderLeft: `3px solid #6366f1`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                        {replyImgSrc && <img src={replyImgSrc} alt="" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />}
+                                        <div style={{ minWidth: 0 }}>
+                                            <div style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', marginBottom: 2 }}>↩️ {replyTo.sender_name || 'Ответ'}</div>
+                                            <div style={{ fontSize: 12, color: dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                {replyTo.message_text?.slice(0, 80) || replyFileLabel || '📎 файл'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button onClick={() => setReplyTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', fontSize: 14, padding: '2px 4px', flexShrink: 0, lineHeight: 1 }}>✕</button>
+                                </div>
+                            );
+                        })()}
 
                         {/* Staging area */}
                         {pendingFiles.length > 0 && (
-                            <div style={{ padding: '8px 16px', backgroundColor: dm ? '#1a1a2e' : '#f5f3ff', borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.2)' : '#ede9fe'}`, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                                {pendingFiles.map((f, i) => (
-                                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', backgroundColor: dm ? '#252540' : 'white', border: `1px solid ${dm ? '#3a3a5e' : '#ede9fe'}`, borderRadius: 10, fontSize: 12, maxWidth: 180 }}>
-                                        <span style={{ fontSize: 16 }}>{/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(f.name) ? '🖼️' : /\.(mp4|webm|mov)$/i.test(f.name) ? '🎬' : /\.(mp3|ogg|wav|flac|aac|m4a)$/i.test(f.name) ? '🎵' : '📄'}</span>
-                                        <span style={{ color: dm ? '#c0c0d8' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{f.name}</span>
-                                        <button onClick={() => setPendingFiles(prev => prev.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', fontSize: 14, padding: 0, lineHeight: 1, flexShrink: 0 }}>✕</button>
-                                    </div>
-                                ))}
+                            <div style={{ padding: '8px 16px', backgroundColor: dm ? '#1a1a2e' : '#f5f3ff', borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.2)' : '#ede9fe'}` }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                                    <span style={{ fontSize: 11, color: dm ? '#7c7caa' : '#9ca3af', fontWeight: 500 }}>
+                                        📎 {pendingFiles.length} / 10 файл{pendingFiles.length === 1 ? '' : pendingFiles.length < 5 ? 'а' : 'ов'}
+                                    </span>
+                                    <button onClick={() => setPendingFiles([])} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', fontSize: 12, padding: 0 }}>Убрать все</button>
+                                </div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                    {pendingFiles.map((f, i) => (
+                                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', backgroundColor: dm ? '#252540' : 'white', border: `1px solid ${dm ? '#3a3a5e' : '#ede9fe'}`, borderRadius: 10, fontSize: 12, maxWidth: 180 }}>
+                                            <span style={{ fontSize: 16 }}>{/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(f.name) ? '🖼️' : /\.(mp4|webm|mov)$/i.test(f.name) ? '🎬' : /\.(mp3|ogg|wav|flac|aac|m4a)$/i.test(f.name) ? '🎵' : '📄'}</span>
+                                            <span style={{ color: dm ? '#c0c0d8' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{f.name}</span>
+                                            <button onClick={() => setPendingFiles(prev => prev.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', fontSize: 14, padding: 0, lineHeight: 1, flexShrink: 0 }}>✕</button>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
 
@@ -1832,8 +2652,54 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             </div>
                         )}
 
+                        {/* Режим выбора сообщений */}
+                        {selectionMode && (
+                            <div style={{ ...darkStyles.inputArea, justifyContent: 'space-between', padding: '10px 16px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                    <button onClick={exitSelectionMode} style={{ background: 'none', border: `1.5px solid ${dm ? '#3a3a5e' : '#ede9fe'}`, borderRadius: 10, padding: '7px 14px', cursor: 'pointer', color: dm ? '#c0c0d8' : '#6b7280', fontSize: 13 }}>✕ Отмена</button>
+                                    <span style={{ fontSize: 13, color: dm ? '#a0a0c0' : '#6b7280', fontWeight: 500 }}>Выбрано: {selectedMsgIds.size}</span>
+                                </div>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <button
+                                        onClick={handleBulkForward}
+                                        disabled={selectedMsgIds.size === 0}
+                                        style={{ padding: '8px 14px', background: dm ? '#1e1e3a' : '#f5f3ff', color: '#6366f1', border: `1.5px solid ${dm ? '#3a3a5e' : '#ede9fe'}`, borderRadius: 10, cursor: selectedMsgIds.size === 0 ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: selectedMsgIds.size === 0 ? 0.5 : 1 }}
+                                    >↪️ Переслать</button>
+                                    <button
+                                        onClick={() => setBulkDeleteConfirm(true)}
+                                        disabled={selectedMsgIds.size === 0}
+                                        style={{ padding: '8px 14px', background: 'none', color: '#ef4444', border: '1.5px solid #fca5a5', borderRadius: 10, cursor: selectedMsgIds.size === 0 ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: selectedMsgIds.size === 0 ? 0.5 : 1 }}
+                                    >🗑️ Удалить</button>
+                                </div>
+                            </div>
+                        )}
+
                         {/* Ввод */}
-                        <div style={{ ...darkStyles.inputArea, position: 'relative' }}>
+                        {!selectionMode && isChannelChat && !isChannelMember && (
+                            <div style={{ padding: '14px 18px', borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.15)' : '#ede9fe'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, background: dm ? '#13131f' : '#f7f8fc' }}>
+                                <button
+                                    onClick={async () => {
+                                        if (!activeChat) return;
+                                        const res = await api.joinGroup(token, activeChat.id);
+                                        if (res.success || res.already_member) {
+                                            await loadGroups();
+                                            setPreviewGroup(null);
+                                        }
+                                    }}
+                                    style={{ padding: '10px 28px', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white', border: 'none', borderRadius: 14, cursor: 'pointer', fontSize: 14, fontWeight: 700, boxShadow: '0 2px 12px rgba(99,102,241,0.35)', transition: 'opacity 0.15s' }}
+                                    onMouseEnter={e => (e.currentTarget.style.opacity = '0.88')}
+                                    onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+                                >
+                                    📢 Подписаться
+                                </button>
+                            </div>
+                        )}
+                        {!selectionMode && isChannelChat && isChannelMember && !isGroupAdmin && (
+                            <div style={{ padding: '14px 18px', textAlign: 'center', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13, borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}` }}>
+                                🔒 Только администраторы могут публиковать
+                            </div>
+                        )}
+                        {!selectionMode && (!isChannelChat || isGroupAdmin) && <div style={{ ...darkStyles.inputArea, position: 'relative' }}>
                             {showEmojiPicker && (
                                 <EmojiPicker
                                     onSelect={emoji => { if (inputRef.current) { inputRef.current.value += emoji; inputRef.current.focus(); } }}
@@ -1856,7 +2722,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         addPendingFiles(imgs.map(i => i.getAsFile()!).filter(Boolean));
                                     }
                                 }}
-                                placeholder="Введите сообщение..."
+                                placeholder={isChannelChat ? 'Написать пост...' : 'Введите сообщение...'}
                                 style={darkStyles.input}
                             />
                             <button onClick={() => setShowEmojiPicker(p => !p)} style={darkStyles.fileBtn} title="Эмодзи">😊</button>
@@ -1874,7 +2740,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 Отправить
                             </button>
                             <input type="file" multiple ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
-                        </div>
+                        </div>}
                     </>
                 ) : (
                     <div style={darkStyles.noChat}>Выберите чат</div>
@@ -1888,6 +2754,18 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     onClick={(e) => e.stopPropagation()}
                 >
                     <div style={{ ...styles.menu, backgroundColor: dm ? '#1e1e2e' : 'white', border: `1px solid ${dm ? '#3a3a4a' : '#ede9fe'}` }}>
+                        {activeChat && (() => {
+                            const chatKey = `${activeChat.type}-${activeChat.id}`;
+                            const isPinned = pinnedMessages[chatKey]?.id === menuMessage.id;
+                            return (
+                                <button onClick={() => togglePinMessage(chatKey, menuMessage)} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit' }}>
+                                    📌 {isPinned ? 'Открепить' : 'Закрепить'}
+                                </button>
+                            );
+                        })()}
+                        <button onClick={() => enterSelectionMode(menuMessage)} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit' }}>
+                            ☑️ Выбрать
+                        </button>
                         <button onClick={() => { setReplyTo(menuMessage); setMenuMessageId(null); }} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit' }}>
                             ↩️ Ответить
                         </button>
@@ -1964,6 +2842,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             {showCreateGroup && (
                 <CreateGroupModal token={token} isDark={theme.darkMode} onClose={() => setShowCreateGroup(false)} onGroupCreated={loadGroups} />
             )}
+            {showCreateChannel && (
+                <CreateChannelModal token={token} isDark={theme.darkMode} onClose={() => setShowCreateChannel(false)} onChannelCreated={loadGroups} />
+            )}
             {showInviteModal && selectedGroupId && activeChat?.type === 'group' && (
                 <InviteToGroupModal
                     token={token}
@@ -1985,7 +2866,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     messages={activeChat?.type === 'group' ? messages : []}
                     onClose={() => setShowGroupInfo(false)}
                     onInvite={() => { setShowGroupInfo(false); setShowInviteModal(true); }}
-                    onUserClick={user => { setShowGroupInfo(false); setSelectedUserForProfile(user as any); }}
+                    onUserClick={user => { setShowGroupInfo(false); setSelectedUserForProfile(user as any); setProfileFromGroupInfo(true); }}
                     onGroupAvatarUpdated={handleGroupAvatarUpdated}
                     onGroupUpdated={handleGroupUpdated}
                     onGroupDeleted={handleGroupDeleted}
@@ -2022,7 +2903,62 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     onClose={() => setShowSettings(false)}
                 />
             )}
-            {showHelp && <HelpModal isDark={dm} onClose={() => setShowHelp(false)} />}
+            {/* Bulk delete confirmation modal */}
+            {bulkDeleteConfirm && (
+                <div style={{ position: 'fixed', inset: 0, zIndex: 5000, backgroundColor: dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setBulkDeleteConfirm(false)}>
+                    <div style={{ background: dm ? '#13132a' : '#ffffff', borderRadius: 20, width: 320, padding: '28px 28px 22px', boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)', border: dm ? '1px solid rgba(99,102,241,0.25)' : '1px solid #ede9fe', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ fontSize: 17, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', marginBottom: 8 }}>Удалить {selectedMsgIds.size} сообщ.</div>
+                        <div style={{ fontSize: 14, color: dm ? '#9090b0' : '#6b7280', marginBottom: 20 }}>Выберите способ удаления</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <button onClick={() => handleBulkDelete(false)} style={{ width: '100%', padding: '11px 0', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #e53935, #ef5350)', color: 'white', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Удалить у всех</button>
+                            <button onClick={() => handleBulkDelete(true)} style={{ width: '100%', padding: '11px 0', borderRadius: 12, border: dm ? '1.5px solid #3a3a5e' : '1.5px solid #ede9fe', background: dm ? '#1e1e3a' : '#f5f3ff', color: dm ? '#c0c0d8' : '#374151', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Удалить у себя</button>
+                            <button onClick={() => setBulkDeleteConfirm(false)} style={{ width: '100%', padding: '9px 0', borderRadius: 12, border: 'none', background: 'none', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13, cursor: 'pointer' }}>Отмена</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Bulk forward modal */}
+            {forwardingMessages && (
+                <div style={{ position: 'fixed', inset: 0, zIndex: 4000, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setForwardingMessages(null)}>
+                    <div style={{ background: dm ? '#13132a' : 'white', borderRadius: 20, width: 360, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', border: dm ? '1px solid rgba(99,102,241,0.2)' : '1px solid #ede9fe' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${dm ? '#2a2a3d' : '#ede9fe'}` }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontWeight: 700, fontSize: 15, color: dm ? '#e2e8f0' : '#1e1b4b' }}>Переслать {forwardingMessages.length} сообщ.</span>
+                                <button onClick={() => setForwardingMessages(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 18 }}>✕</button>
+                            </div>
+                        </div>
+                        <div style={{ overflowY: 'auto', flex: 1 }}>
+                            {groups.map(g => (
+                                <div key={`fg-${g.id}`} onClick={() => {
+                                    forwardingMessages.forEach(msg => {
+                                        const senderName = (msg as any).sender_name || users.find((u: any) => u.id === msg.sender_id)?.username || 'Неизвестно';
+                                        wsService.sendGroupMessage(g.id, `↪️ Переслано от ${senderName}\n${(msg as any).message_text || ''}`);
+                                    });
+                                    setForwardingMessages(null);
+                                }} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px', cursor: 'pointer', borderBottom: `1px solid ${dm ? '#1e1e2e' : '#f3f3f8'}` }}>
+                                    <div style={{ width: 38, height: 38, borderRadius: '50%', background: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 15, flexShrink: 0 }}>{g.name[0]?.toUpperCase()}</div>
+                                    <span style={{ fontSize: 14, color: dm ? '#e0e0e0' : '#1e1b4b', fontWeight: 500 }}>{g.name}</span>
+                                </div>
+                            ))}
+                            {users.map(u => (
+                                <div key={`fu-${u.id}`} onClick={() => {
+                                    forwardingMessages.forEach(msg => {
+                                        const senderName = (msg as any).sender_name || users.find((uu: any) => uu.id === msg.sender_id)?.username || 'Неизвестно';
+                                        wsService.sendMessage(u.id, `↪️ Переслано от ${senderName}\n${(msg as any).message_text || ''}`);
+                                    });
+                                    setForwardingMessages(null);
+                                }} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px', cursor: 'pointer', borderBottom: `1px solid ${dm ? '#1e1e2e' : '#f3f3f8'}` }}>
+                                    <div style={{ width: 38, height: 38, borderRadius: '50%', backgroundColor: u.avatar ? (dm ? '#1a1a2e' : 'white') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+                                        {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ color: 'white', fontWeight: 700, fontSize: 15 }}>{u.username[0]?.toUpperCase()}</span>}
+                                    </div>
+                                    <span style={{ fontSize: 14, color: dm ? '#e0e0e0' : '#1e1b4b', fontWeight: 500 }}>{u.username}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Clear chat confirmation modal */}
             {showClearConfirm && (
@@ -2052,17 +2988,21 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         className="modal-enter"
                         onClick={e => e.stopPropagation()}
                     >
-                        <div style={{ fontSize: 17, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', marginBottom: 8 }}>Это нельзя будет отменить</div>
-                        <div style={{ fontSize: 14, color: dm ? '#9090b0' : '#6b7280', marginBottom: 24 }}>Удалить это сообщение у всех?</div>
-                        <div style={{ display: 'flex', gap: 10 }}>
+                        <div style={{ fontSize: 17, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', marginBottom: 8 }}>Удалить сообщение</div>
+                        <div style={{ fontSize: 14, color: dm ? '#9090b0' : '#6b7280', marginBottom: 20 }}>Выберите способ удаления</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+                            <button
+                                onClick={() => confirmDelete(false)}
+                                style={{ width: '100%', padding: '11px 0', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #e53935, #ef5350)', color: 'white', fontSize: 14, fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 14px rgba(229,57,53,0.35)' }}
+                            >Удалить у всех</button>
+                            <button
+                                onClick={() => confirmDelete(true)}
+                                style={{ width: '100%', padding: '11px 0', borderRadius: 12, border: dm ? '1.5px solid #3a3a5e' : '1.5px solid #ede9fe', background: dm ? '#1e1e3a' : '#f5f3ff', color: dm ? '#c0c0d8' : '#374151', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
+                            >Удалить у себя</button>
                             <button
                                 onClick={() => setDeleteConfirmId(null)}
-                                style={{ flex: 1, padding: '11px 0', borderRadius: 12, border: dm ? '1.5px solid #3a3a5e' : '1.5px solid #ede9fe', background: dm ? '#1e1e3a' : '#f5f3ff', color: dm ? '#c0c0d8' : '#374151', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
+                                style={{ width: '100%', padding: '9px 0', borderRadius: 12, border: 'none', background: 'none', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13, cursor: 'pointer' }}
                             >Отмена</button>
-                            <button
-                                onClick={confirmDelete}
-                                style={{ flex: 1, padding: '11px 0', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #e53935, #ef5350)', color: 'white', fontSize: 14, fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 14px rgba(229,57,53,0.35)' }}
-                            >Удалить</button>
                         </div>
                     </div>
                 </div>
@@ -2094,6 +3034,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     user={selectedUserForProfile}
                     token={token}
                     isDark={theme.darkMode}
+                    isOnline={users.find(u => u.id === selectedUserForProfile.id)?.is_online ?? selectedUserForProfile.is_online}
                     messages={
                         activeChat?.type === 'private' && activeChat.id === selectedUserForProfile.id
                             ? messages
@@ -2101,7 +3042,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 ? messages.filter((m: any) => m.sender_id === selectedUserForProfile.id)
                                 : []
                     }
-                    onClose={() => setSelectedUserForProfile(null)}
+                    onClose={() => {
+                        setSelectedUserForProfile(null);
+                        if (profileFromGroupInfo) { setProfileFromGroupInfo(false); setShowGroupInfo(true); }
+                    }}
                     onStartChat={() => {
                         selectPrivateChat(selectedUserForProfile);
                         setSelectedUserForProfile(null);
@@ -2148,7 +3092,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     setForwardingMessage(null);
                                 }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', cursor: 'pointer' }}
                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
-                                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: g.avatar ? 'transparent' : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700 }}>
+                                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: g.avatar ? (dm ? '#1a1a2e' : 'white') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700 }}>
                                         {g.avatar ? <img src={config.fileUrl(g.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : g.name[0]?.toUpperCase()}
                                     </div>
                                     <span style={{ fontSize: 14, color: dm ? '#e2e8f0' : '#1e1b4b' }}>{g.name}</span>
@@ -2170,7 +3114,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     setForwardingMessage(null);
                                 }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', cursor: 'pointer' }}
                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
-                                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: u.avatar ? 'transparent' : (u.avatar_color || '#1a73e8'), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700 }}>
+                                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: u.avatar ? (dm ? '#1a1a2e' : 'white') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700 }}>
                                         {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
                                     </div>
                                     <span style={{ fontSize: 14, color: dm ? '#e2e8f0' : '#1e1b4b' }}>{u.username}</span>
@@ -2181,17 +3125,64 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 </div>
             )}
 
-            {/* Pin context menu */}
+            {/* Chat context menu (right-click on sidebar item) */}
             {pinMenu && (
-                <div style={{ position: 'fixed', top: pinMenu.y, left: pinMenu.x, zIndex: 9999, background: dm ? '#1e1e2e' : 'white', border: `1px solid ${dm ? '#3a3a4a' : '#ede9fe'}`, borderRadius: 12, padding: 4, boxShadow: '0 4px 20px rgba(0,0,0,0.18)', minWidth: 160 }}
+                <div style={{ position: 'fixed', top: pinMenu.y, left: pinMenu.x, zIndex: 9999, background: dm ? '#1e1e2e' : 'white', border: `1px solid ${dm ? '#3a3a4a' : '#ede9fe'}`, borderRadius: 12, padding: 4, boxShadow: '0 4px 24px rgba(0,0,0,0.22)', minWidth: 192 }}
                     onClick={e => e.stopPropagation()}>
-                    <button onClick={() => togglePin(pinMenu.key)}
-                        style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#e0e0e0' : '#1e1b4b', fontSize: 13, borderRadius: 8, textAlign: 'left' as const }}>
-                        {pinnedChats.has(pinMenu.key) ? '📌 Открепить' : '📌 Закрепить'}
-                    </button>
+                    {(() => {
+                        const btnStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#e0e0e0' : '#1e1b4b', fontSize: 13, borderRadius: 8, textAlign: 'left' as const };
+                        const key = pinMenu.key;
+                        const isMuted = mutedChats.has(key);
+                        if (addToFolderKey === key) {
+                            return (
+                                <>
+                                    <button onClick={() => setAddToFolderKey(null)} style={{ ...btnStyle, color: '#6366f1' }}>← Назад</button>
+                                    {folders.length === 0 && <div style={{ padding: '6px 14px', fontSize: 12, color: dm ? '#7070a0' : '#aaa' }}>Нет папок</div>}
+                                    {folders.map(f => (
+                                        <button key={f.id} onClick={() => addChatToFolder(f.id, key)} style={{ ...btnStyle }}>
+                                            <span style={{ width: 10, height: 10, borderRadius: '50%', background: f.color, display: 'inline-block', flexShrink: 0 }} />
+                                            {f.name}
+                                        </button>
+                                    ))}
+                                </>
+                            );
+                        }
+                        return (
+                            <>
+                                <button onClick={() => togglePin(key)} style={btnStyle}>{pinnedChats.has(key) ? '📌 Открепить' : '📌 Закрепить'}</button>
+                                <button onClick={() => toggleMute(key)} style={btnStyle}>{isMuted ? '🔔 Включить уведомления' : '🔕 Выключить уведомления'}</button>
+                                <button onClick={() => { setAddToFolderKey(key); }} style={btnStyle}>📁 Добавить в папку</button>
+                                <div style={{ height: 1, background: dm ? '#2a2a3a' : '#f0f0f0', margin: '4px 0' }} />
+                                <button onClick={() => handleDeleteChat(key)} style={{ ...btnStyle, color: '#ef4444' }}>🗑️ Удалить чат</button>
+                            </>
+                        );
+                    })()}
                 </div>
             )}
-            {pinMenu && <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setPinMenu(null)} />}
+            {pinMenu && <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => { setPinMenu(null); setAddToFolderKey(null); }} />}
+
+            {/* Folder context menu */}
+            {folderCtxMenu && (
+                <div style={{ position: 'fixed', top: folderCtxMenu.y, left: folderCtxMenu.x, zIndex: 9999, background: dm ? '#1e1e2e' : 'white', border: `1px solid ${dm ? '#3a3a4a' : '#ede9fe'}`, borderRadius: 12, padding: 4, boxShadow: '0 4px 24px rgba(0,0,0,0.22)', minWidth: 180 }}
+                    onClick={e => e.stopPropagation()}>
+                    {(() => {
+                        const btnStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#e0e0e0' : '#1e1b4b', fontSize: 13, borderRadius: 8, textAlign: 'left' as const };
+                        return (
+                            <>
+                                <button onClick={() => { setShowFolderManager(true); setFolderCtxMenu(null); }} style={btnStyle}>⚙️ Настроить</button>
+                                <button onClick={async () => {
+                                    try { await api.deleteFolder(token, folderCtxMenu.folderId); } catch {}
+                                    const res = await api.getFolders(token);
+                                    if (res.folders) setFolders(res.folders);
+                                    if (activeFolder === folderCtxMenu.folderId) setActiveFolder(null);
+                                    setFolderCtxMenu(null);
+                                }} style={{ ...btnStyle, color: '#ef4444' }}>🗑️ Удалить папку</button>
+                            </>
+                        );
+                    })()}
+                </div>
+            )}
+            {folderCtxMenu && <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setFolderCtxMenu(null)} />}
 
             {/* In-app toast notifications */}
             {toasts.length > 0 && (
@@ -2223,7 +3214,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     dismissToast(toast.id);
                                 }}
                             >
-                                <div style={{ width: 36, height: 36, borderRadius: '50%', backgroundColor: toast.avatarSrc ? 'transparent' : toast.avatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 15, color: 'white', fontWeight: 700 }}>
+                                <div style={{ width: 36, height: 36, borderRadius: '50%', backgroundColor: toast.avatarSrc ? (dm ? '#1a1a2e' : 'white') : toast.avatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 15, color: 'white', fontWeight: 700 }}>
                                     {toast.avatarSrc
                                         ? <img src={config.fileUrl(toast.avatarSrc) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                         : toast.avatarLetter
@@ -2308,13 +3299,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 };
 
 const styles: { [key: string]: React.CSSProperties } = {
-    container: { display: 'flex', height: '100vh', backgroundColor: '#f0f2ff' },
-    sidebar: { width: 320, backgroundColor: 'white', boxShadow: '2px 0 16px rgba(99,102,241,0.08)', display: 'flex', flexDirection: 'column', overflow: 'hidden', zIndex: 1 },
-    sidebarScroll: { flex: 1, overflowY: 'auto' as const, backgroundColor: 'white' },
+    container: { display: 'flex', height: '100vh', backgroundColor: '#eef0f5' },
+    sidebar: { width: 320, backgroundColor: '#f7f8fc', boxShadow: '2px 0 16px rgba(99,102,241,0.07)', display: 'flex', flexDirection: 'column', overflow: 'hidden', zIndex: 1 },
+    sidebarScroll: { flex: 1, overflowY: 'auto' as const, backgroundColor: '#f7f8fc' },
     sidebarHeader: { padding: '16px', background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', color: 'white', display: 'flex', alignItems: 'center', gap: 8 },
     newChatBtn: { padding: '6px 10px', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 10, cursor: 'pointer', fontSize: 14, backdropFilter: 'blur(4px)' },
     createGroupBtn: { padding: '6px 10px', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 10, cursor: 'pointer', fontSize: 12, backdropFilter: 'blur(4px)' },
-    profileCard: { padding: '12px 16px', borderTop: '1px solid #f0f0f8', display: 'flex', alignItems: 'center', gap: 10, backgroundColor: '#fafbff' },
+    profileCard: { padding: '12px 16px', borderTop: '1px solid #e4e5ef', display: 'flex', alignItems: 'center', gap: 10, backgroundColor: '#f0f1f8' },
     profileAvatar: { width: 40, height: 40, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer', overflow: 'hidden', boxShadow: '0 2px 8px rgba(99,102,241,0.3)' },
     profileInfo: { flex: 1, minWidth: 0 },
     profileName: { fontSize: 13, fontWeight: 600, color: '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
@@ -2322,15 +3313,15 @@ const styles: { [key: string]: React.CSSProperties } = {
     settingsBtn: { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', padding: '6px', borderRadius: 10, color: '#9ca3af', flexShrink: 0 },
     sectionTitle: { padding: '14px 20px 6px', fontSize: 10, fontWeight: 700 as const, color: '#a5b4fc', textTransform: 'uppercase' as const, letterSpacing: 1.5 },
     chatItem: { display: 'flex', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', gap: 10, transition: 'background 0.15s', borderRadius: 12, margin: '1px 8px' },
-    activeChatItem: { background: 'linear-gradient(90deg, #ede9fe 0%, #f5f3ff 100%)', boxShadow: 'inset 3px 0 0 #6366f1' },
+    activeChatItem: { background: 'linear-gradient(90deg, #e6e4f5 0%, #eceaf8 100%)', boxShadow: 'inset 3px 0 0 #6366f1' },
     avatar: { width: 40, height: 40, borderRadius: '50%', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 'bold' as const, flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' },
     chatName: { fontSize: 14, fontWeight: 600 as const, color: '#1e1b4b', textAlign: 'left' as const },
     chatSub: { fontSize: 11, color: '#9ca3af', marginTop: 2, textAlign: 'left' as const },
-    chatArea: { flex: 1, display: 'flex', flexDirection: 'column' as const, backgroundColor: '#f8f9ff', minWidth: 0 },
-    chatHeader: { padding: '12px 20px', borderBottom: '1px solid #ede9fe', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', boxShadow: '0 1px 8px rgba(99,102,241,0.06)', minHeight: 68 },
+    chatArea: { flex: 1, display: 'flex', flexDirection: 'column' as const, backgroundColor: '#f2f4f8', minWidth: 0 },
+    chatHeader: { padding: '12px 20px', borderBottom: '1px solid #e8e8ef', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f7f8fc', boxShadow: '0 1px 6px rgba(0,0,0,0.05)', minHeight: 68 },
     typing: { fontSize: 12, color: '#a5b4fc', fontStyle: 'italic' },
     iconBtn: { background: 'none', border: '1px solid #ede9fe', fontSize: 18, cursor: 'pointer', padding: '6px 10px', borderRadius: 10, color: '#6366f1', transition: 'all 0.15s' },
-    messagesArea: { flex: 1, overflowY: 'auto' as const, padding: '20px 24px', backgroundColor: '#f8f9ff' },
+    messagesArea: { flex: 1, overflowY: 'auto' as const, paddingTop: 20, paddingBottom: 20, paddingLeft: 24, paddingRight: 24, backgroundColor: '#f2f4f8' },
     senderName: { fontSize: 11, fontWeight: 700 as const, color: '#6366f1', marginBottom: 4 },
     replyBlock: { backgroundColor: 'rgba(99,102,241,0.08)', borderLeft: '3px solid #6366f1', borderRadius: 8, padding: '5px 10px', marginBottom: 6, fontSize: 12 },
     replyBlockOwn: { borderLeftColor: 'rgba(255,255,255,0.6)', backgroundColor: 'rgba(255,255,255,0.15)' },
@@ -2339,9 +3330,9 @@ const styles: { [key: string]: React.CSSProperties } = {
     timestamp: { fontSize: 10, marginTop: 5, opacity: 0.55 },
     replyBar: { padding: '10px 16px', background: 'linear-gradient(90deg, #ede9fe, #f5f3ff)', borderTop: '1px solid #ede9fe', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
     replyClose: { background: 'none', border: 'none', fontSize: 16, cursor: 'pointer', color: '#a5b4fc', padding: '0 4px' },
-    inputArea: { padding: '12px 16px', borderTop: '1px solid #ede9fe', display: 'flex', gap: 8, alignItems: 'center', backgroundColor: 'white' },
-    input: { flex: 1, padding: '11px 16px', fontSize: 14, border: '1.5px solid #ede9fe', borderRadius: 24, outline: 'none', backgroundColor: '#f5f3ff', transition: 'border-color 0.2s' },
-    fileBtn: { padding: '10px 13px', backgroundColor: '#f5f3ff', border: '1.5px solid #ede9fe', borderRadius: 12, cursor: 'pointer', fontSize: 16, color: '#6366f1', transition: 'all 0.15s' },
+    inputArea: { padding: '12px 16px', borderTop: '1px solid #e8e8ef', display: 'flex', gap: 8, alignItems: 'center', backgroundColor: '#f7f8fc' },
+    input: { flex: 1, padding: '11px 16px', fontSize: 14, border: '1.5px solid #dddde8', borderRadius: 24, outline: 'none', backgroundColor: '#eef0f8', transition: 'border-color 0.2s' },
+    fileBtn: { padding: '10px 13px', backgroundColor: '#eef0f8', border: '1.5px solid #dddde8', borderRadius: 12, cursor: 'pointer', fontSize: 16, color: '#6366f1', transition: 'all 0.15s' },
     sendBtn: { padding: '10px 20px', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white', border: 'none', borderRadius: 24, cursor: 'pointer', fontSize: 14, fontWeight: 600 as const, boxShadow: '0 2px 10px rgba(99,102,241,0.35)', transition: 'all 0.15s' },
     noChat: { flex: 1, display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', color: '#c4b5fd', fontSize: 16, gap: 12 },
     menu: { backgroundColor: 'white', borderRadius: 14, boxShadow: '0 8px 30px rgba(99,102,241,0.15)', padding: '6px 0', minWidth: 170, border: '1px solid #ede9fe' },

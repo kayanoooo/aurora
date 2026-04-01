@@ -151,7 +151,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         </div>
                         <h2 style={{ fontSize: 22, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', margin: '0 0 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
                             {fullUser.username}
-                            {fullUser.tag === 'kayano' && <span title="разработчик Aurora" style={{ fontSize: 18, cursor: 'default' }}>🔧</span>}
+                            {fullUser.tag === 'kayano' || fullUser.tag === 'durov' && <span title="разработчик Aurora" style={{ fontSize: 18, cursor: 'default' }}>🔧</span>}
                         </h2>
                         {fullUser.tag && <p style={{ fontSize: 13, color: '#6366f1', margin: '0 0 4px', fontWeight: 600 }}>@{fullUser.tag}</p>}
                         {(isOnline ?? fullUser.is_online)

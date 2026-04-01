@@ -12,7 +12,7 @@ const THEMES = [
     { id: 'midnight', label: 'Полночь', bg: '#0f0c29', accent: '#8b5cf6' },
     { id: 'forest', label: 'Лес', bg: '#1a2e1a', accent: '#22c55e' },
     { id: 'ocean', label: 'Океан', bg: '#0c1a2e', accent: '#06b6d4' },
-    { id: 'rose', label: 'Розовая', bg: '#2e1a1a', accent: '#f43f5e' },
+    { id: 'sunset', label: 'Закат', bg: '#2e1a1a', accent: '#f43f5e' },
 ];
 
 const SetupModal: React.FC<SetupModalProps> = ({ token, onComplete }) => {
@@ -42,7 +42,7 @@ const SetupModal: React.FC<SetupModalProps> = ({ token, onComplete }) => {
             if (res?.success) {
                 onComplete(res.token, res.username, selectedTheme);
             } else {
-                setError(res?.detail || 'Ошибка при настройке профиля');
+                setError(Array.isArray(res?.detail) ? res.detail.map((e: any) => e.msg).join('; ') : (res?.detail || 'Ошибка при настройке профиля'));
                 setStep(1);
             }
         } catch (err: any) {

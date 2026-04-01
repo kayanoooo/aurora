@@ -31,6 +31,7 @@ interface AuthState {
     username: string;
     avatar?: string;
     status?: string;
+    tag?: string;
 }
 
 function App() {
@@ -50,6 +51,7 @@ function App() {
             if (res.success && res.user) {
                 const avatar = res.user.avatar || undefined;
                 const status = res.user.status || undefined;
+                const tag = res.user.tag || undefined;
                 if (res.user.avatar_color) {
                     setTheme(prev => {
                         const updated = { ...prev, avatarColor: res.user.avatar_color };
@@ -57,7 +59,7 @@ function App() {
                         return updated;
                     });
                 }
-                setAuth({ token, userId, username: res.user.username || username, avatar, status });
+                setAuth({ token, userId, username: res.user.username || username, avatar, status, tag });
             } else {
                 sessionStorage.removeItem('chat_auth');
             }
@@ -88,11 +90,13 @@ function App() {
         }
         let avatar: string | undefined;
         let status: string | undefined;
+        let tag: string | undefined;
         try {
             const res = await api.getProfile(token);
             if (res.success && res.user) {
                 avatar = res.user.avatar || undefined;
                 status = res.user.status || undefined;
+                tag = res.user.tag || undefined;
                 if (res.user.avatar_color) {
                     setTheme(prev => {
                         const updated = { ...prev, avatarColor: res.user.avatar_color };
@@ -103,7 +107,7 @@ function App() {
             }
         } catch {}
         sessionStorage.setItem('chat_auth', JSON.stringify({ token, userId, username }));
-        setAuth({ token, userId, username, avatar, status });
+        setAuth({ token, userId, username, avatar, status, tag });
     }, []);
 
     const handleSetupComplete = useCallback(async (newToken: string, username: string, selectedTheme: string) => {
@@ -114,7 +118,7 @@ function App() {
 
         setSetupToken(null);
         let avatar: string | undefined;
-        let userId = 0;
+        let userId: number | null = null;
         try {
             const res = await api.getProfile(newToken);
             if (res.success && res.user) {
@@ -122,6 +126,11 @@ function App() {
                 userId = res.user.id;
             }
         } catch {}
+        if (!userId) {
+            // getProfile failed — cannot continue without a valid userId
+            console.error('Failed to fetch profile after setup');
+            return;
+        }
         sessionStorage.setItem('chat_auth', JSON.stringify({ token: newToken, userId, username }));
         setAuth({ token: newToken, userId, username, avatar });
     }, []);
@@ -171,6 +180,7 @@ function App() {
                     currentUsername={auth.username}
                     currentUserAvatar={auth.avatar}
                     currentUserStatus={auth.status}
+                    currentUserTag={auth.tag}
                     theme={theme}
                     onThemeChange={handleThemeChange}
                     onProfileUpdate={handleProfileUpdate}

@@ -17,17 +17,98 @@ interface SettingsModalProps {
 
 const BASE_URL = config.BASE_URL;
 
+// ── About Tab ──
+const AboutTab: React.FC<{ dm: boolean; col: string; subCol: string; cardBg: string; borderCol: string; inputBg: string; inputBorder: string }> = ({ dm, col, subCol, cardBg, borderCol, inputBg, inputBorder }) => {
+    const [contactName, setContactName] = useState('');
+    const [contactEmail, setContactEmail] = useState('');
+    const [contactMsg, setContactMsg] = useState('');
+    const [sent, setSent] = useState(false);
+
+    const handleSend = () => {
+        if (!contactMsg.trim()) return;
+        const subject = encodeURIComponent(`Aurora — обращение${contactName ? ` от ${contactName}` : ''}`);
+        const body = encodeURIComponent(
+            `${contactName ? `Имя: ${contactName}\n` : ''}${contactEmail ? `Email: ${contactEmail}\n` : ''}\n${contactMsg}`
+        );
+        window.open(`mailto:bender.rodrigez2016@gmail.com?subject=${subject}&body=${body}`, '_blank');
+        setSent(true);
+        setTimeout(() => setSent(false), 4000);
+    };
+
+    const inp: React.CSSProperties = { width: '100%', padding: '10px 12px', border: inputBorder, borderRadius: 10, fontSize: 13, outline: 'none', backgroundColor: inputBg, color: col, boxSizing: 'border-box', fontFamily: 'inherit' };
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18, paddingTop: 16 }}>
+            <img src="/logo192.png" alt="Aurora" style={{ width: 88, height: 88, borderRadius: 24, boxShadow: '0 8px 28px rgba(99,102,241,0.3)' }} />
+            <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 36, fontWeight: 900, color: col, letterSpacing: -1 }}>Aurora</div>
+                <div style={{ marginTop: 6, display: 'inline-block', padding: '3px 14px', borderRadius: 20, background: dm ? '#2a2a3d' : '#ede9fe', color: '#6366f1', fontSize: 13, fontWeight: 700, letterSpacing: '0.5px' }}>beta v0.5</div>
+            </div>
+            <div style={{ fontSize: 13, color: subCol, textAlign: 'center', maxWidth: 300, lineHeight: 1.6 }}>Современный мессенджер с открытым исходным кодом</div>
+
+            <a href="https://github.com/kayanoooo/aurora" target="_blank" rel="noopener noreferrer"
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 14, backgroundColor: cardBg, border: `1px solid ${borderCol}`, textDecoration: 'none', color: col, fontSize: 14, fontWeight: 600, width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill={col}><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.38-1.33-1.75-1.33-1.75-1.09-.74.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.8 1.3 3.48 1 .11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.94 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 3-.4c1.02.01 2.04.14 3 .4 2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.62-2.81 5.63-5.49 5.93.43.37.82 1.1.82 2.22v3.29c0 .32.22.7.83.58C20.57 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z" /></svg>
+                GitHub — kayanoooo/aurora
+            </a>
+
+            <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+                <a href="https://github.com/kayanoooo/aurora#features" target="_blank" rel="noopener noreferrer"
+                    style={{ flex: 1, padding: '11px 0', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600, textAlign: 'center', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 14px rgba(99,102,241,0.35)' }}>
+                    ✨ Возможности
+                </a>
+                <a href="https://github.com/kayanoooo/aurora/releases" target="_blank" rel="noopener noreferrer"
+                    style={{ flex: 1, padding: '11px 0', backgroundColor: inputBg, color: col, border: inputBorder, borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600, textAlign: 'center', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    📋 Патчноуты
+                </a>
+            </div>
+
+            {/* Contact form */}
+            <div style={{ width: '100%', padding: '16px', backgroundColor: cardBg, border: `1px solid ${borderCol}`, borderRadius: 16, boxSizing: 'border-box' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: col, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    ✉️ Написать разработчику
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    <input value={contactName} onChange={e => setContactName(e.target.value)} placeholder="Ваше имя (необязательно)" style={{ ...inp, flex: 1 }} />
+                    <input value={contactEmail} onChange={e => setContactEmail(e.target.value)} placeholder="Email для ответа" style={{ ...inp, flex: 1 }} />
+                </div>
+                <textarea
+                    value={contactMsg}
+                    onChange={e => setContactMsg(e.target.value)}
+                    placeholder="Сообщение, баг-репорт, предложение..."
+                    rows={4}
+                    style={{ ...inp, resize: 'none', marginBottom: 10 }}
+                />
+                <button
+                    onClick={handleSend}
+                    disabled={!contactMsg.trim()}
+                    style={{ width: '100%', padding: '10px 0', background: contactMsg.trim() ? 'linear-gradient(135deg, #6366f1, #8b5cf6)' : (dm ? '#2a2a3d' : '#e5e7eb'), color: contactMsg.trim() ? 'white' : subCol, border: 'none', borderRadius: 10, cursor: contactMsg.trim() ? 'pointer' : 'not-allowed', fontSize: 14, fontWeight: 600, transition: 'all 0.2s', boxShadow: contactMsg.trim() ? '0 4px 14px rgba(99,102,241,0.3)' : 'none' }}
+                >
+                    {sent ? '✓ Открыто в почтовом клиенте' : '📨 Отправить'}
+                </button>
+                <div style={{ marginTop: 6, fontSize: 11, color: subCol, textAlign: 'center' }}>
+                    Откроет ваш почтовый клиент · bender.rodrigez2016@gmail.com
+                </div>
+            </div>
+
+            <div style={{ fontSize: 11, color: subCol }}>© 2026 Aurora. MIT License</div>
+        </div>
+    );
+};
+
 const SettingsModal: React.FC<SettingsModalProps> = ({
     token, currentUsername, currentAvatar, currentStatus,
     theme, onThemeChange, onProfileUpdate, onLogout, onClose
 }) => {
-    type Tab = 'account' | 'profile' | 'privacy' | 'appearance' | 'server';
+    type Tab = 'account' | 'profile' | 'privacy' | 'appearance' | 'server' | 'about';
     const [activeTab, setActiveTab] = useState<Tab>('account');
     const [closing, setClosing] = useState(false);
     const close = () => { setClosing(true); setTimeout(onClose, 180); };
 
     const [username, setUsername] = useState(currentUsername);
     const [status, setStatus] = useState(currentStatus || '');
+    const [tag, setTag] = useState('');
+    const [email, setEmail] = useState('');
     const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
@@ -66,6 +147,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 const u = res.user;
                 setBirthday(u.birthday || '');
                 setPhone(u.phone || '');
+                setTag(u.tag || '');
+                setEmail(u.email || '');
                 if (u.avatar_color) setLocalTheme(t => ({ ...t, avatarColor: u.avatar_color }));
                 try {
                     const priv = JSON.parse(u.privacy_settings || '{}');
@@ -116,6 +199,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             if (username !== currentUsername) profileData.username = username;
             profileData.status = status;
             if (localTheme.avatarColor) profileData.avatar_color = localTheme.avatarColor;
+            if (tag) profileData.tag = tag;
             if (Object.keys(profileData).length > 0 || avatarFile) {
                 if (Object.keys(profileData).length > 0) {
                     const res = await api.updateProfile(token, profileData);
@@ -205,6 +289,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         { key: 'privacy', label: 'Приватность', icon: '🔒' },
         { key: 'appearance', label: 'Вид', icon: '🎨' },
         ...(config.isElectron() ? [{ key: 'server' as Tab, label: 'Сервер', icon: '🖥️' }] : []),
+        { key: 'about', label: 'О программе', icon: 'ℹ️' },
     ];
 
     return (
@@ -249,7 +334,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                             {/* Avatar */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '16px', backgroundColor: cardBg, borderRadius: 16, border: `1px solid ${borderCol}`, marginBottom: 16 }}>
                                 <div
-                                    style={{ width: 76, height: 76, borderRadius: '50%', backgroundColor: avatarUrl ? 'transparent' : (localTheme.avatarColor || '#6366f1'), cursor: 'pointer', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', boxShadow: '0 4px 16px rgba(99,102,241,0.35)', flexShrink: 0 }}
+                                    style={{ width: 76, height: 76, borderRadius: '50%', backgroundColor: avatarUrl ? (dm ? '#13131f' : '#f7f8fc') : '#6366f1', cursor: 'pointer', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', boxShadow: '0 4px 16px rgba(99,102,241,0.35)', flexShrink: 0 }}
                                     onClick={() => fileRef.current?.click()}
                                     onMouseEnter={e => (e.currentTarget.querySelector('[data-ov]') as HTMLElement)?.style.setProperty('opacity', '1')}
                                     onMouseLeave={e => (e.currentTarget.querySelector('[data-ov]') as HTMLElement)?.style.setProperty('opacity', '0')}
@@ -287,18 +372,21 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                 </div>
                             )}
 
-                            <label style={labelStyle}>Цвет аватарки</label>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', backgroundColor: cardBg, borderRadius: 12, border: `1px solid ${borderCol}` }}>
-                                <div style={{ width: 38, height: 38, borderRadius: '50%', backgroundColor: localTheme.avatarColor || '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 16, flexShrink: 0 }}>{initials}</div>
-                                <input type="color" value={localTheme.avatarColor || '#6366f1'} onChange={e => setLocalTheme(t => ({ ...t, avatarColor: e.target.value }))} style={{ padding: 2, border: inputBorder, borderRadius: 8, cursor: 'pointer', height: 36, width: 52 }} />
-                                <span style={{ fontSize: 12, color: subCol }}>Видна другим пользователям</span>
-                            </div>
+                            <label style={labelStyle}>Почта</label>
+                            <div style={{ ...inputStyle, color: subCol, userSelect: 'text', cursor: 'default' }}>{email || '—'}</div>
 
                             <label style={labelStyle}>Имя пользователя</label>
                             <input style={inputStyle} value={username} onChange={e => setUsername(e.target.value)} maxLength={50} placeholder="Введите имя" />
 
-                            <label style={labelStyle}>Статус</label>
-                            <input style={inputStyle} value={status} onChange={e => setStatus(e.target.value)} placeholder="Что у вас нового?" maxLength={150} />
+                            <label style={labelStyle}>Тег</label>
+                            <div style={{ position: 'relative' }}>
+                                <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: subCol, fontSize: 14, pointerEvents: 'none' }}>@</span>
+                                <input style={{ ...inputStyle, paddingLeft: 26 }} value={tag} onChange={e => setTag(e.target.value.replace(/^@/, '').toLowerCase())} maxLength={30} placeholder="ваш_тег" />
+                            </div>
+                            <div style={{ fontSize: 11, color: subCol, marginTop: 4, paddingLeft: 2 }}>Только латиница, цифры и _. Минимум 3 символа.</div>
+
+                            <label style={labelStyle}>О себе</label>
+                            <textarea style={{ ...inputStyle, resize: 'vertical', minHeight: 72, fontFamily: 'inherit' }} value={status} onChange={e => setStatus(e.target.value)} placeholder="Расскажите о себе..." maxLength={150} />
 
                             <button onClick={handleSaveAccount} disabled={saving} style={saveBtn}>
                                 {saving ? '⏳ Сохранение...' : '💾 Сохранить изменения'}
@@ -424,6 +512,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                             {saveMsg && <div style={{ marginTop: 10, fontSize: 13, color: '#10b981', textAlign: 'center', fontWeight: 600 }}>{saveMsg}</div>}
                         </>
                     )}
+                    {/* ABOUT */}
+                    {activeTab === 'about' && (
+                        <AboutTab dm={dm} col={col} subCol={subCol} cardBg={cardBg} borderCol={borderCol} inputBg={inputBg} inputBorder={inputBorder} />
+                    )}
+
                     {/* SERVER (Electron only) */}
                     {activeTab === 'server' && (
                         <>

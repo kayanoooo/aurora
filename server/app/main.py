@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List
 import os
+import re
 import uuid
 import json
 import mimetypes
@@ -19,6 +20,11 @@ cloudinary.config(
     api_key=os.getenv("CLOUDINARY_API_KEY"),
     api_secret=os.getenv("CLOUDINARY_API_SECRET"),
 )
+
+def _cloudinary_configured() -> bool:
+    name = os.getenv("CLOUDINARY_CLOUD_NAME", "")
+    key = os.getenv("CLOUDINARY_API_KEY", "")
+    return bool(name and key and name not in ("ваш_cloud_name",) and key not in ("ваш_api_key",))
 
 from .config import config
 from .models import DatabasePool, UserModel, MessageModel, GroupModel, GroupMessageModel, ReactionModel, FolderModel, GroupReadModel
@@ -42,7 +48,8 @@ class LoginRequest(BaseModel):
 
 class PasswordResetRequest(BaseModel):
     email: str
-    username: str
+    tag: str
+    old_password: str
     new_password: str
 
 class CreateGroupRequest(BaseModel):
@@ -50,7 +57,7 @@ class CreateGroupRequest(BaseModel):
     description: str = ""
 
 class InviteToGroupRequest(BaseModel):
-    username: str
+    tag: str
 
 class UpdateProfileRequest(BaseModel):
     username: Optional[str] = None
@@ -59,6 +66,7 @@ class UpdateProfileRequest(BaseModel):
     birthday: Optional[str] = None
     phone: Optional[str] = None
     privacy_settings: Optional[str] = None
+    tag: Optional[str] = None
 
 class AddTagRequest(BaseModel):
     tag: str
@@ -66,6 +74,16 @@ class AddTagRequest(BaseModel):
 class UpdateGroupRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+
+class CreateChannelRequest(BaseModel):
+    name: str
+    description: str = ""
+    channel_type: str = "public"
+    channel_tag: Optional[str] = None
+
+class UpdateChannelSettingsRequest(BaseModel):
+    channel_type: Optional[str] = None
+    channel_tag: Optional[str] = None
 
 app = FastAPI(title="Messenger API", version="2.0.0")
 
@@ -79,6 +97,8 @@ app.add_middleware(
         "http://127.0.0.1:8000",
         "http://192.168.1.2:3000",
         "http://192.168.1.2:8000",
+        "http://192.168.1.9:3000",
+        "http://192.168.1.9:8000",
         "https://aurora-messenger.vercel.app",
     ],
     allow_credentials=True,
@@ -134,6 +154,10 @@ async def startup():
                     chat_id INT NOT NULL,
                     UNIQUE KEY unique_folder_chat (folder_id, chat_type, chat_id)
                 )""",
+                "ALTER TABLE `groups` ADD COLUMN `is_channel` TINYINT(1) NOT NULL DEFAULT 0",
+                "ALTER TABLE `groups` ADD COLUMN `channel_type` VARCHAR(10) NOT NULL DEFAULT 'public'",
+                "ALTER TABLE `groups` ADD COLUMN `channel_tag` VARCHAR(64) NULL DEFAULT NULL",
+                "ALTER TABLE `groups` ADD COLUMN `invite_link` VARCHAR(64) NULL DEFAULT NULL",
             ]:
                 try:
                     await cur.execute(sql)
@@ -204,6 +228,16 @@ async def setup_profile(request: SetupRequest, token: str):
                 "UPDATE users SET tag = %s, username = %s, setup_complete = 1 WHERE id = %s",
                 (tag, request.username, payload['user_id'])
             )
+            # Auto-subscribe new user to the official Aurora channel
+            await cur.execute(
+                "SELECT id FROM groups WHERE channel_tag = 'auroramessenger' AND is_channel = 1 LIMIT 1"
+            )
+            aurora_channel = await cur.fetchone()
+            if aurora_channel:
+                await cur.execute(
+                    "INSERT IGNORE INTO group_members (group_id, user_id, role) VALUES (%s, %s, 'member')",
+                    (aurora_channel['id'], payload['user_id'])
+                )
 
     new_token = create_jwt_token(payload['user_id'], request.username)
     return {"success": True, "token": new_token, "username": request.username, "tag": tag}
@@ -236,25 +270,48 @@ async def login(request: LoginRequest):
 
 @app.post("/api/password-reset")
 async def password_reset(request: PasswordResetRequest):
-    """Сброс пароля по email + нику"""
+    """Сброс пароля по email + нику + старому паролю"""
     pool = await DatabasePool.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                "SELECT id FROM users WHERE email = %s AND username = %s",
-                (request.email, request.username)
+                "SELECT id, password_hash FROM users WHERE email = %s AND tag = %s",
+                (request.email, request.tag)
             )
             user = await cur.fetchone()
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь с таким email и именем не найден")
-    new_hash = hash_password(request.new_password)
-    pool = await DatabasePool.get_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cur:
+            if not user:
+                raise HTTPException(status_code=404, detail="Пользователь с таким email и тегом не найден")
+            if not verify_password(request.old_password, user['password_hash']):
+                raise HTTPException(status_code=400, detail="Неверный текущий пароль")
+            new_hash = hash_password(request.new_password)
             await cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (new_hash, user['id']))
     return {"success": True}
 
 # ========== Пользователи ==========
+
+async def _get_related_user_ids(user_id: int) -> set:
+    """Получить ID пользователей, с которыми user_id переписывался или состоит в общих группах"""
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            # Контакты из личных сообщений
+            await cur.execute("""
+                SELECT DISTINCT receiver_id FROM messages WHERE sender_id = %s AND is_deleted = 0
+                UNION
+                SELECT DISTINCT sender_id FROM messages WHERE receiver_id = %s AND is_deleted = 0
+            """, (user_id, user_id))
+            rows = await cur.fetchall()
+            ids = {r[0] for r in rows}
+            # Участники общих групп
+            await cur.execute("""
+                SELECT DISTINCT gm2.user_id FROM group_members gm1
+                JOIN group_members gm2 ON gm1.group_id = gm2.group_id
+                WHERE gm1.user_id = %s AND gm2.user_id != %s
+            """, (user_id, user_id))
+            rows2 = await cur.fetchall()
+            ids.update(r[0] for r in rows2)
+    ids.discard(user_id)
+    return ids
 
 @app.get("/api/users/recent")
 async def get_recent_users(token: str):
@@ -391,6 +448,19 @@ async def update_profile(request: UpdateProfileRequest, token: str):
         existing = await UserModel.get_user_by_username(request.username)
         if existing and existing['id'] != payload['user_id']:
             raise HTTPException(status_code=400, detail="Username already taken")
+    new_tag = None
+    if request.tag is not None:
+        new_tag = request.tag.lstrip('@').lower().strip()
+        if not new_tag or len(new_tag) < 3 or len(new_tag) > 30:
+            raise HTTPException(status_code=400, detail="Тег должен быть от 3 до 30 символов")
+        if not re.match(r'^[a-z0-9_]+$', new_tag):
+            raise HTTPException(status_code=400, detail="Тег может содержать только латиницу, цифры и _")
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute("SELECT id FROM users WHERE tag = %s AND id != %s", (new_tag, payload['user_id']))
+                if await cur.fetchone():
+                    raise HTTPException(status_code=400, detail="Этот тег уже занят")
     success = await UserModel.update_profile(
         payload['user_id'],
         username=request.username,
@@ -398,7 +468,8 @@ async def update_profile(request: UpdateProfileRequest, token: str):
         avatar_color=request.avatar_color,
         birthday=request.birthday,
         phone=request.phone,
-        privacy_settings=request.privacy_settings
+        privacy_settings=request.privacy_settings,
+        tag=new_tag
     )
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update profile")
@@ -411,18 +482,20 @@ async def update_profile(request: UpdateProfileRequest, token: str):
     except Exception:
         priv = {}
     broadcast_status = user.get('status') if priv.get('show_status', True) else None
-    # Broadcast to all connected users
-    for uid in list(manager.active_connections.keys()):
-        await manager.send_message_to_user(uid, {
-            "type": "profile_updated",
-            "data": {
-                "user_id": payload['user_id'],
-                "username": user.get('username'),
-                "avatar": user.get('avatar'),
-                "status": broadcast_status,
-                "avatar_color": user.get('avatar_color', '#1a73e8')
-            }
-        })
+    related_ids = await _get_related_user_ids(payload['user_id'])
+    profile_event = {
+        "type": "profile_updated",
+        "data": {
+            "user_id": payload['user_id'],
+            "username": user.get('username'),
+            "avatar": user.get('avatar'),
+            "status": broadcast_status,
+            "avatar_color": user.get('avatar_color', '#1a73e8')
+        }
+    }
+    # Broadcast only to contacts and group-mates (+ self)
+    for uid in related_ids | {payload['user_id']}:
+        await manager.send_message_to_user(uid, profile_event)
     user_data = dict(user)
     user_data.pop('password_hash', None)
     user_data['tags'] = tags
@@ -437,25 +510,36 @@ async def update_avatar(token: str = Form(...), file: UploadFile = File(...)):
     if file.content_type not in allowed:
         raise HTTPException(status_code=400, detail="Only images allowed")
     content = await file.read()
-    result = cloudinary.uploader.upload(content, folder="avatars", resource_type="image")
-    avatar_url = result["secure_url"]
+    ext_map = {'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp'}
+    if _cloudinary_configured():
+        result = cloudinary.uploader.upload(content, folder="avatars", resource_type="image")
+        avatar_url = result["secure_url"]
+    else:
+        ext = ext_map.get(file.content_type, '.jpg')
+        local_filename = f"avatar_{uuid.uuid4().hex}{ext}"
+        local_path = os.path.join("uploads", local_filename)
+        with open(local_path, "wb") as f:
+            f.write(content)
+        avatar_url = f"/files/{local_filename}"
     await UserModel.update_avatar(payload['user_id'], avatar_url)
     user = await UserModel.get_user_by_id(payload['user_id'])
     try:
         _priv = json.loads(user.get('privacy_settings') or '{}')
     except Exception:
         _priv = {}
-    for uid in list(manager.active_connections.keys()):
-        await manager.send_message_to_user(uid, {
-            "type": "profile_updated",
-            "data": {
-                "user_id": payload['user_id'],
-                "username": user.get('username'),
-                "avatar": avatar_url,
-                "status": user.get('status') if _priv.get('show_status', True) else None,
-                "avatar_color": user.get('avatar_color', '#1a73e8')
-            }
-        })
+    related_ids = await _get_related_user_ids(payload['user_id'])
+    avatar_event = {
+        "type": "profile_updated",
+        "data": {
+            "user_id": payload['user_id'],
+            "username": user.get('username'),
+            "avatar": avatar_url,
+            "status": user.get('status') if _priv.get('show_status', True) else None,
+            "avatar_color": user.get('avatar_color', '#1a73e8')
+        }
+    }
+    for uid in related_ids | {payload['user_id']}:
+        await manager.send_message_to_user(uid, avatar_event)
     return {"success": True, "avatar": avatar_url}
 
 @app.delete("/api/profile/avatar")
@@ -470,17 +554,19 @@ async def remove_avatar(token: str):
         _priv2 = json.loads(user.get('privacy_settings') or '{}')
     except Exception:
         _priv2 = {}
-    for uid in list(manager.active_connections.keys()):
-        await manager.send_message_to_user(uid, {
-            "type": "profile_updated",
-            "data": {
-                "user_id": payload['user_id'],
-                "username": user.get('username'),
-                "avatar": None,
-                "status": user.get('status') if _priv2.get('show_status', True) else None,
-                "avatar_color": user.get('avatar_color', '#1a73e8')
-            }
-        })
+    related_ids = await _get_related_user_ids(payload['user_id'])
+    remove_event = {
+        "type": "profile_updated",
+        "data": {
+            "user_id": payload['user_id'],
+            "username": user.get('username'),
+            "avatar": None,
+            "status": user.get('status') if _priv2.get('show_status', True) else None,
+            "avatar_color": user.get('avatar_color', '#1a73e8')
+        }
+    }
+    for uid in related_ids | {payload['user_id']}:
+        await manager.send_message_to_user(uid, remove_event)
     return {"success": True}
 
 @app.get("/api/profile/tags")
@@ -520,12 +606,24 @@ async def update_group_avatar(group_id: int, token: str = Form(...), file: Uploa
     payload = decode_jwt_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
+    role = await GroupModel.get_member_role(group_id, payload['user_id'])
+    if role != 'admin':
+        raise HTTPException(status_code=403, detail="Only admins can change group avatar")
     allowed = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
     if file.content_type not in allowed:
         raise HTTPException(status_code=400, detail="Only images allowed")
     content = await file.read()
-    result = cloudinary.uploader.upload(content, folder="group_avatars", resource_type="image")
-    avatar_url = result["secure_url"]
+    ext_map = {'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp'}
+    if _cloudinary_configured():
+        result = cloudinary.uploader.upload(content, folder="group_avatars", resource_type="image")
+        avatar_url = result["secure_url"]
+    else:
+        ext = ext_map.get(file.content_type, '.jpg')
+        local_filename = f"group_avatar_{uuid.uuid4().hex}{ext}"
+        local_path = os.path.join("uploads", local_filename)
+        with open(local_path, "wb") as f:
+            f.write(content)
+        avatar_url = f"/files/{local_filename}"
     await GroupModel.update_group_avatar(group_id, avatar_url)
     # Notify group members
     members = await GroupModel.get_members(group_id)
@@ -609,8 +707,12 @@ async def invite_to_group(group_id: int, request: InviteToGroupRequest, token: s
     payload = decode_jwt_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
-    
-    user = await UserModel.get_user_by_username(request.username)
+
+    my_role = await GroupModel.get_member_role(group_id, payload['user_id'])
+    if my_role != 'admin':
+        raise HTTPException(status_code=403, detail="Only admins can invite members")
+
+    user = await UserModel.get_user_by_tag(request.tag)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
@@ -637,12 +739,13 @@ async def invite_to_group(group_id: int, request: InviteToGroupRequest, token: s
         }
     })
 
-    # Сохраняем системное сообщение
-    await GroupMessageModel.save_message(
-        group_id=group_id,
-        message_text=f"{user['username']} вступил в группу",
-        is_system=True
-    )
+    # Сохраняем системное сообщение (только для обычных групп, не каналов)
+    if not group.get('is_channel'):
+        await GroupMessageModel.save_message(
+            group_id=group_id,
+            message_text=f"{user['username']} вступил в группу",
+            is_system=True
+        )
 
     # Отправляем всем существующим участникам группы (кроме нового) уведомление об обновлении
     for member in members:
@@ -655,7 +758,7 @@ async def invite_to_group(group_id: int, request: InviteToGroupRequest, token: s
             }
         })
 
-    return {"success": True, "message": f"{request.username} added to group"}
+    return {"success": True, "message": f"@{request.tag} added to group"}
 
 @app.get("/api/groups/{group_id}/messages")
 async def get_group_messages(group_id: int, token: str, limit: int = 10000):
@@ -736,12 +839,14 @@ async def remove_group_member(group_id: int, user_id: int, token: str):
     })
     removed_user = await UserModel.get_user_by_id(user_id)
     username = removed_user['username'] if removed_user else str(user_id)
-    # Сохраняем системное сообщение
-    await GroupMessageModel.save_message(
-        group_id=group_id,
-        message_text=f"{username} покинул группу",
-        is_system=True
-    )
+    group_info = await GroupModel.get_group(group_id)
+    # Сохраняем системное сообщение только для обычных групп
+    if not (group_info and group_info.get('is_channel')):
+        await GroupMessageModel.save_message(
+            group_id=group_id,
+            message_text=f"{username} покинул группу",
+            is_system=True
+        )
     remaining = await GroupModel.get_members(group_id)
     for member in remaining:
         await manager.send_message_to_user(member['id'], {
@@ -769,6 +874,184 @@ async def clear_group_messages(group_id: int, token: str):
             "data": {"group_id": group_id, "is_group": True}
         })
     return {"success": True}
+
+# ========== Каналы ==========
+
+@app.post("/api/channels")
+async def create_channel(request: CreateChannelRequest, token: str):
+    """Создать канал"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    invite_link = None
+    if request.channel_type == 'private':
+        invite_link = str(uuid.uuid4()).replace('-', '')[:16]
+
+    channel_tag = None
+    if request.channel_type == 'public' and request.channel_tag:
+        channel_tag = request.channel_tag.lstrip('@').lower()
+
+    channel_id = await GroupModel.create_channel(
+        request.name, request.description, payload['user_id'],
+        request.channel_type, channel_tag, invite_link
+    )
+    if not channel_id:
+        raise HTTPException(status_code=500, detail="Failed to create channel")
+
+    await manager.send_message_to_user(payload['user_id'], {
+        "type": "new_group",
+        "data": {"group_id": channel_id, "name": request.name}
+    })
+
+    return {"success": True, "channel_id": channel_id, "name": request.name, "invite_link": invite_link, "channel_tag": channel_tag}
+
+@app.get("/api/channels/search")
+async def search_channels(token: str, query: str):
+    """Поиск публичных каналов по тегу или названию"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    clean = query.lstrip('@').lower()
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                """SELECT g.id, g.name, g.avatar, g.channel_tag, g.description,
+                          (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS member_count,
+                          EXISTS(SELECT 1 FROM group_members gm2
+                                 WHERE gm2.group_id = g.id AND gm2.user_id = %s) AS is_member
+                   FROM groups g
+                   WHERE g.is_channel = 1 AND g.channel_type = 'public'
+                     AND (g.channel_tag LIKE %s OR g.name LIKE %s)
+                   ORDER BY member_count DESC LIMIT 10""",
+                (payload['user_id'], f"{clean}%", f"%{clean}%")
+            )
+            rows = await cur.fetchall()
+    return {"channels": [dict(r) for r in rows]}
+
+@app.get("/api/channels/tag/{tag}")
+async def get_channel_by_tag(tag: str, token: str):
+    """Найти публичный канал по тегу"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    group = await GroupModel.get_channel_by_tag(tag.lstrip('@').lower())
+    if not group:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    return {"group": group}
+
+@app.post("/api/groups/{group_id}/join")
+async def join_public_channel(group_id: int, token: str):
+    """Подписаться на публичный канал"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    group = await GroupModel.get_group(group_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    if not group.get('is_channel') or group.get('channel_type') != 'public':
+        raise HTTPException(status_code=403, detail="Can only join public channels this way")
+    members = await GroupModel.get_members(group_id)
+    if any(m['id'] == payload['user_id'] for m in members):
+        return {"success": True, "already_member": True}
+    success = await GroupModel.add_member(group_id, payload['user_id'])
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to join")
+    await manager.send_message_to_user(payload['user_id'], {
+        "type": "new_group",
+        "data": {"group_id": group_id, "name": group['name'], "member_count": len(members) + 1}
+    })
+    return {"success": True, "group_id": group_id, "name": group['name']}
+
+@app.post("/api/groups/{group_id}/invite-link")
+async def generate_invite_link(group_id: int, token: str):
+    """Сгенерировать ссылку-приглашение"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    role = await GroupModel.get_member_role(group_id, payload['user_id'])
+    if role != 'admin':
+        raise HTTPException(status_code=403, detail="Only admins can generate invite links")
+    invite_link = str(uuid.uuid4()).replace('-', '')[:16]
+    await GroupModel.update_channel_settings(group_id, invite_link=invite_link)
+    return {"success": True, "invite_link": invite_link}
+
+@app.get("/api/groups/join/{invite_link}")
+async def join_via_invite_link(invite_link: str, token: str):
+    """Вступить в группу/канал по ссылке"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    group = await GroupModel.get_group_by_invite_link(invite_link)
+    if not group:
+        raise HTTPException(status_code=404, detail="Invite link not found or expired")
+
+    members = await GroupModel.get_members(group['id'])
+    if any(m['id'] == payload['user_id'] for m in members):
+        return {"success": True, "group_id": group['id'], "already_member": True}
+
+    success = await GroupModel.add_member(group['id'], payload['user_id'])
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to join")
+
+    await manager.send_message_to_user(payload['user_id'], {
+        "type": "new_group",
+        "data": {"group_id": group['id'], "name": group['name'], "member_count": group.get('member_count', 0)}
+    })
+
+    if not group.get('is_channel'):
+        await GroupMessageModel.save_message(
+            group_id=group['id'],
+            message_text=f"Новый участник вступил",
+            is_system=True
+        )
+
+    return {"success": True, "group_id": group['id'], "name": group['name']}
+
+@app.put("/api/groups/{group_id}/members/{user_id}/role")
+async def set_member_role(group_id: int, user_id: int, token: str, role: str):
+    """Изменить роль участника (admin/member)"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    my_role = await GroupModel.get_member_role(group_id, payload['user_id'])
+    if my_role != 'admin':
+        raise HTTPException(status_code=403, detail="Only admins can change roles")
+    if role not in ('admin', 'member'):
+        raise HTTPException(status_code=400, detail="Invalid role")
+    success = await GroupModel.set_member_role(group_id, user_id, role)
+    if not success:
+        raise HTTPException(status_code=400, detail="User not found in group")
+    return {"success": True}
+
+@app.put("/api/groups/{group_id}/channel-settings")
+async def update_channel_settings_endpoint(group_id: int, request: UpdateChannelSettingsRequest, token: str):
+    """Обновить настройки канала"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    role = await GroupModel.get_member_role(group_id, payload['user_id'])
+    if role != 'admin':
+        raise HTTPException(status_code=403, detail="Only admins can change settings")
+
+    channel_tag = None
+    if request.channel_tag is not None:
+        channel_tag = request.channel_tag.lstrip('@').lower() if request.channel_tag else ''
+
+    invite_link_val = None
+    # If switching to private, generate new invite link
+    if request.channel_type == 'private':
+        invite_link_val = str(uuid.uuid4()).replace('-', '')[:16]
+
+    await GroupModel.update_channel_settings(
+        group_id,
+        channel_type=request.channel_type,
+        channel_tag=channel_tag if channel_tag != '' else None,
+        invite_link=invite_link_val
+    )
+    group = await GroupModel.get_group(group_id)
+    return {"success": True, "group": group}
 
 @app.delete("/api/conversation/{user_id}")
 async def clear_conversation(user_id: int, token: str):
@@ -806,19 +1089,28 @@ async def upload_file(token: str = Form(...), file: UploadFile = File(...)):
     if total_size > MAX_UPLOAD_SIZE:
         raise HTTPException(status_code=413, detail="Файл превышает лимит 1 ГБ")
 
-    try:
-        resource_type = "video" if file.content_type and file.content_type.startswith("video") else \
-                        "image" if file.content_type and file.content_type.startswith("image") else "raw"
-        result = cloudinary.uploader.upload(
-            content,
-            folder="chat_files",
-            resource_type=resource_type,
-            use_filename=True,
-            unique_filename=True,
-        )
-        file_url = result["secure_url"]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    if _cloudinary_configured():
+        try:
+            resource_type = "video" if file.content_type and file.content_type.startswith("video") else \
+                            "image" if file.content_type and file.content_type.startswith("image") else "raw"
+            result = cloudinary.uploader.upload(
+                content,
+                folder="chat_files",
+                resource_type=resource_type,
+                use_filename=True,
+                unique_filename=True,
+            )
+            file_url = result["secure_url"]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    else:
+        # Local storage fallback
+        ext = os.path.splitext(file.filename or "")[1] if file.filename else ""
+        local_filename = f"{uuid.uuid4().hex}{ext}"
+        local_path = os.path.join("uploads", local_filename)
+        with open(local_path, "wb") as f:
+            f.write(content)
+        file_url = f"/files/{local_filename}"
 
     return {
         "success": True,
@@ -1035,7 +1327,7 @@ async def websocket_endpoint(websocket: WebSocket):
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                "SELECT id FROM messages WHERE sender_id = %s AND is_read = 1",
+                "SELECT id FROM messages WHERE sender_id = %s AND is_read = 1 ORDER BY id DESC LIMIT 500",
                 (user_id,)
             )
             read_msgs = await cur.fetchall()
@@ -1066,6 +1358,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Получаем информацию об ответе
                 reply_to_text = None
                 reply_to_sender = None
+                reply_to_file_path = None
                 if reply_to_id:
                     reply_msg = await MessageModel.get_message_by_id(reply_to_id)
                     if reply_msg:
@@ -1079,10 +1372,19 @@ async def websocket_endpoint(websocket: WebSocket):
                                 reply_to_text = f"📎 {fl[0]['filename']}" if fl else ''
                             except Exception:
                                 reply_to_text = ''
+                        # Extract file path for thumbnail
+                        if reply_msg.get('file_path'):
+                            reply_to_file_path = reply_msg['file_path']
+                        elif reply_msg.get('files'):
+                            try:
+                                fl = json.loads(reply_msg['files']) if isinstance(reply_msg['files'], str) else reply_msg['files']
+                                reply_to_file_path = fl[0]['file_path'] if fl else None
+                            except Exception:
+                                pass
                         reply_sender = await UserModel.get_user_by_id(reply_msg['sender_id'])
                         reply_to_sender = reply_sender['username'] if reply_sender else ''
                         print(f"📝 Reply found: id={reply_to_id}, text='{reply_to_text}', sender='{reply_to_sender}'")
-                
+
                 # Сохраняем
                 message_id = await MessageModel.save_message(
                     sender_id=user_id,
@@ -1094,7 +1396,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     reply_to_id=reply_to_id,
                     reply_to_text=reply_to_text,
                     reply_to_sender=reply_to_sender,
-                    files=files_json
+                    files=files_json,
+                    reply_to_file_path=reply_to_file_path
                 )
                 
                 print(f"💾 Saved message {message_id} with reply_to_text='{reply_to_text}'")
@@ -1118,6 +1421,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "reply_to_id": reply_to_id,
                     "reply_to_text": reply_to_text,
                     "reply_to_sender": reply_to_sender,
+                    "reply_to_file_path": reply_to_file_path,
                     "timestamp": current_timestamp
                 }
                 
@@ -1152,9 +1456,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 files_list = data.get("files")
                 files_json = json.dumps(files_list) if files_list else None
                 current_timestamp = datetime.now(timezone.utc).isoformat()
+
+                # Каналы: только администраторы могут создавать посты (сообщения без reply_to_id)
+                if reply_to_id is None:
+                    grp_info = await GroupModel.get_group(group_id)
+                    if grp_info and grp_info.get('is_channel'):
+                        sender_role = await GroupModel.get_member_role(group_id, user_id)
+                        if sender_role != 'admin':
+                            continue
                 # Получаем информацию о сообщении, на которое отвечаем
                 reply_to_text = None
                 reply_to_sender = None
+                reply_to_file_path = None
                 if reply_to_id:
                     reply_msg = await GroupMessageModel.get_message_by_id(reply_to_id)
                     if reply_msg:
@@ -1168,9 +1481,17 @@ async def websocket_endpoint(websocket: WebSocket):
                                 reply_to_text = f"📎 {fl[0]['filename']}" if fl else ''
                             except Exception:
                                 reply_to_text = ''
+                        if reply_msg.get('file_path'):
+                            reply_to_file_path = reply_msg['file_path']
+                        elif reply_msg.get('files'):
+                            try:
+                                fl = json.loads(reply_msg['files']) if isinstance(reply_msg['files'], str) else reply_msg['files']
+                                reply_to_file_path = fl[0]['file_path'] if fl else None
+                            except Exception:
+                                pass
                         reply_sender = await UserModel.get_user_by_id(reply_msg['sender_id'])
                         reply_to_sender = reply_sender['username'] if reply_sender else ''
-                
+
                 # Сохраняем сообщение
                 message_id = await GroupMessageModel.save_message(
                     group_id=group_id,
@@ -1180,7 +1501,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     filename=filename,
                     file_size=file_size,
                     reply_to_id=reply_to_id,
-                    files=files_json
+                    files=files_json,
+                    reply_to_file_path=reply_to_file_path
                 )
                 
                 # Получаем отправителя
@@ -1191,6 +1513,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "group_id": group_id,
                     "sender_id": user_id,
                     "sender_name": sender['username'],
+                    "sender_tag": sender.get('tag'),
                     "sender_avatar": sender.get('avatar'),
                     "sender_avatar_color": sender.get('avatar_color'),
                     "message_text": message_text,
@@ -1201,6 +1524,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "reply_to_id": reply_to_id,
                     "reply_to_text": reply_to_text or '',
                     "reply_to_sender": reply_to_sender or '',
+                    "reply_to_file_path": reply_to_file_path,
                     "timestamp": current_timestamp,
                     "is_read": False
                 }
@@ -1375,52 +1699,83 @@ async def websocket_endpoint(websocket: WebSocket):
                             await manager.send_message_to_user(msg['sender_id'], event)
                             await manager.send_message_to_user(msg['receiver_id'], event)
 
+            elif data.get("type") == "set_offline":
+                manager.set_manual_offline(user_id)
+                await UserModel.update_last_seen(user_id)
+                for uid in list(manager.active_connections.keys()):
+                    await manager.send_message_to_user(uid, {"type": "user_status", "data": {"user_id": user_id, "is_online": False}})
+
+            elif data.get("type") == "set_online":
+                manager.set_manual_online(user_id)
+                for uid in list(manager.active_connections.keys()):
+                    await manager.send_message_to_user(uid, {"type": "user_status", "data": {"user_id": user_id, "is_online": True}})
+
             elif data.get("type") == "delete_message":
                 message_id = data.get("message_id")
                 is_group = data.get("is_group", False)
-                
-                print(f"🗑️ DELETE MESSAGE RECEIVED: id={message_id}, is_group={is_group}")
-                
+                for_self = data.get("for_self", False)
+
+                print(f"🗑️ DELETE MESSAGE RECEIVED: id={message_id}, is_group={is_group}, for_self={for_self}")
+
                 try:
                     if is_group:
                         msg = await GroupMessageModel.get_message_by_id(message_id)
-                        if not msg or msg['sender_id'] != user_id:
-                            await manager.send_message_to_user(user_id, {"type": "error", "data": {"message": "Нет прав для удаления этого сообщения"}})
-                        else:
-                            success = await GroupMessageModel.delete_message(message_id)
-                            print(f"🗑️ Group delete result: {success}")
+                        if not msg:
+                            pass
+                        elif for_self:
+                            # Hide only for current user — no need to check ownership
+                            success = await GroupMessageModel.delete_message(message_id, for_self=True, current_user_id=user_id)
                             if success:
-                                members = await GroupModel.get_members(msg['group_id'])
-                                print(f"👥 Sending delete to {len(members)} members")
-                                for member in members:
-                                    await manager.send_message_to_user(member['id'], {
-                                        "type": "message_deleted",
-                                        "data": {
-                                            "message_id": message_id,
-                                            "is_group": True
-                                        }
-                                    })
+                                await manager.send_message_to_user(user_id, {
+                                    "type": "message_deleted",
+                                    "data": {"message_id": message_id, "is_group": True, "for_self": True, "group_id": msg['group_id']}
+                                })
+                        else:
+                            admin_role = await GroupModel.get_member_role(msg['group_id'], user_id)
+                            can_delete = msg['sender_id'] == user_id or admin_role == 'admin'
+                            if not can_delete:
+                                await manager.send_message_to_user(user_id, {"type": "error", "data": {"message": "Нет прав для удаления этого сообщения"}})
+                            else:
+                                success = await GroupMessageModel.delete_message(message_id)
+                                print(f"🗑️ Group delete result: {success}")
+                                if success:
+                                    members = await GroupModel.get_members(msg['group_id'])
+                                    print(f"👥 Sending delete to {len(members)} members")
+                                    for member in members:
+                                        await manager.send_message_to_user(member['id'], {
+                                            "type": "message_deleted",
+                                            "data": {"message_id": message_id, "is_group": True, "group_id": msg['group_id']}
+                                        })
                     else:
                         msg = await MessageModel.get_message_by_id(message_id)
-                        if not msg or msg['sender_id'] != user_id:
+                        if not msg:
+                            pass
+                        elif for_self:
+                            # Any participant can delete for themselves
+                            if user_id not in (msg['sender_id'], msg['receiver_id']):
+                                await manager.send_message_to_user(user_id, {"type": "error", "data": {"message": "Нет прав"}})
+                            else:
+                                success = await MessageModel.delete_message(message_id, for_self=True, current_user_id=user_id)
+                                if success:
+                                    other_id = msg['receiver_id'] if msg['sender_id'] == user_id else msg['sender_id']
+                                    await manager.send_message_to_user(user_id, {
+                                        "type": "message_deleted",
+                                        "data": {"message_id": message_id, "is_group": False, "for_self": True, "other_user_id": other_id}
+                                    })
+                        elif msg['sender_id'] != user_id:
                             await manager.send_message_to_user(user_id, {"type": "error", "data": {"message": "Нет прав для удаления этого сообщения"}})
                         else:
                             success = await MessageModel.delete_message(message_id)
                             print(f"🗑️ Private delete result: {success}")
                             if success:
+                                other_id = msg['receiver_id']
                                 await manager.send_message_to_user(msg['sender_id'], {
                                     "type": "message_deleted",
-                                    "data": {
-                                        "message_id": message_id,
-                                        "is_group": False
-                                    }
+                                    "data": {"message_id": message_id, "is_group": False, "other_user_id": other_id}
                                 })
                                 await manager.send_message_to_user(msg['receiver_id'], {
                                     "type": "message_deleted",
-                                    "data": {
-                                        "message_id": message_id,
-                                        "is_group": False
-                                    }
+                                    "data": {"message_id": message_id, "is_group": False, "other_user_id": msg['sender_id']}
                                 })
                 except Exception as e:
                     print(f"❌ Error deleting message: {e}")

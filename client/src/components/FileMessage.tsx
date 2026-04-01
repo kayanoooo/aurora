@@ -212,7 +212,8 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
     const [localDuration, setLocalDuration] = useState(0);
     const [localCurrentTime, setLocalCurrentTime] = useState(0);
 
-    // Whether this player is the globally active track
+    const isVoice = /^voice_/i.test(name) || /\.weba$/i.test(name);
+    const voiceDisplayName = 'Голосовое сообщение';
     const isActive = !!onPlay && url === nowPlayingSrc;
 
     const dispPlaying = isActive ? (globalPlaying ?? false) : playing;
@@ -227,13 +228,27 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
         return `${m}:${sec.toString().padStart(2, '0')}`;
     };
 
+    const handleEnded = () => {
+        setPlaying(false);
+        setLocalCurrentTime(0);
+        if (audioRef.current) audioRef.current.currentTime = 0;
+    };
+
+    const handleDurationChange = (e: React.SyntheticEvent<HTMLAudioElement>) => {
+        const a = e.target as HTMLAudioElement;
+        if (isFinite(a.duration) && a.duration > 0) setLocalDuration(a.duration);
+    };
+
+    const handleTimeUpdate = (e: React.SyntheticEvent<HTMLAudioElement>) => {
+        const a = e.target as HTMLAudioElement;
+        setLocalCurrentTime(a.currentTime);
+        if (isFinite(a.duration) && a.duration > 0) setLocalDuration(a.duration);
+    };
+
     const toggle = () => {
         if (onPlay) {
-            if (isActive) {
-                onGlobalToggle?.();
-            } else {
-                onPlay(url, name);
-            }
+            if (isActive) { onGlobalToggle?.(); }
+            else { onPlay(url, name); }
             return;
         }
         const a = audioRef.current;
@@ -242,17 +257,70 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
     };
 
     const seek = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (isActive && onGlobalSeek) {
-            onGlobalSeek(e);
-            return;
-        }
+        if (isActive && onGlobalSeek) { onGlobalSeek(e); return; }
         const a = audioRef.current;
-        if (!a || !localDuration) return;
+        if (!a) return;
+        const dur = isFinite(a.duration) ? a.duration : 0;
+        if (!dur) return;
         const rect = e.currentTarget.getBoundingClientRect();
-        const ratio = (e.clientX - rect.left) / rect.width;
-        a.currentTime = ratio * localDuration;
+        a.currentTime = ((e.clientX - rect.left) / rect.width) * dur;
     };
 
+    const localAudioEl = !onPlay ? (
+        <audio
+            ref={audioRef}
+            src={url}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onEnded={handleEnded}
+
+            onDurationChange={handleDurationChange}
+            onTimeUpdate={handleTimeUpdate}
+        />
+    ) : null;
+
+    // ── Voice message layout ──
+    if (isVoice) {
+        const waveHeights = [4, 8, 14, 20, 16, 10, 18, 24, 16, 12, 8, 14, 20, 15, 10, 7, 12, 18, 13, 9];
+        const safeDispDuration = dispDuration > 0 && isFinite(dispDuration) ? dispDuration : 0;
+        const filledColor = isOwn ? 'rgba(255,255,255,0.9)' : '#6366f1';
+        const emptyColor = isOwn ? 'rgba(255,255,255,0.3)' : dm ? '#5a5a8a' : '#c4b5fd';
+        const btnBg = isOwn ? 'rgba(255,255,255,0.18)' : dm ? 'rgba(99,102,241,0.18)' : '#ede9fe';
+        const btnColor = isOwn ? 'white' : '#6366f1';
+        const timeColor = isOwn ? 'rgba(255,255,255,0.6)' : dm ? '#7c7caa' : '#9ca3af';
+
+        return (
+            <>
+                {localAudioEl}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 200 }}>
+                    <button onClick={toggle} style={{
+                        width: 40, height: 40, borderRadius: '50%',
+                        background: btnBg, border: 'none', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: dispPlaying ? 13 : 18, color: btnColor, flexShrink: 0,
+                    }}>
+                        {dispPlaying ? '⏸' : '🎤'}
+                    </button>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
+                        <div onClick={seek} style={{ display: 'flex', alignItems: 'center', gap: 2, height: 28, cursor: 'pointer' }}>
+                            {waveHeights.map((h, i) => (
+                                <div key={i} style={{
+                                    width: 3, height: h, borderRadius: 3, flexShrink: 0,
+                                    background: i / waveHeights.length < dispProgress ? filledColor : emptyColor,
+                                    transition: 'background 0.1s',
+                                }} />
+                            ))}
+                        </div>
+                        <div style={{ fontSize: 11, color: timeColor }}>
+                            {formatTime(dispCurrentTime)}{safeDispDuration > 0 ? ` / ${formatTime(safeDispDuration)}` : ''}
+                        </div>
+                    </div>
+                </div>
+            </>
+        );
+    }
+
+    // ── Regular audio layout ──
     const bg = isOwn ? 'rgba(255,255,255,0.15)' : dm ? 'rgba(255,255,255,0.06)' : '#f5f3ff';
     const border = isOwn ? 'rgba(255,255,255,0.2)' : dm ? '#3a3a55' : '#ede9fe';
     const textColor = isOwn ? 'white' : dm ? '#e2e8f0' : '#1e1b4b';
@@ -264,46 +332,20 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
 
     return (
         <div style={{ width: 260, background: bg, border: `1px solid ${border}`, borderRadius: 14, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {/* Local audio element — used only when no global player */}
-            {!onPlay && (
-                <audio
-                    ref={audioRef}
-                    src={url}
-                    onPlay={() => setPlaying(true)}
-                    onPause={() => setPlaying(false)}
-                    onEnded={() => { setPlaying(false); setLocalCurrentTime(0); if (audioRef.current) audioRef.current.currentTime = 0; }}
-                    onLoadedMetadata={e => setLocalDuration((e.target as HTMLAudioElement).duration)}
-                    onTimeUpdate={e => {
-                        const a = e.target as HTMLAudioElement;
-                        setLocalCurrentTime(a.currentTime);
-                        setLocalDuration(a.duration || 0);
-                    }}
-                />
-            )}
+            {localAudioEl}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <button
-                    onClick={toggle}
-                    style={{ width: 36, height: 36, borderRadius: '50%', background: btnBg, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: btnColor, flexShrink: 0 }}
-                >
+                <button onClick={toggle} style={{ width: 36, height: 36, borderRadius: '50%', background: btnBg, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: btnColor, flexShrink: 0 }}>
                     {dispPlaying ? '⏸' : '▶'}
                 </button>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: textColor, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
-                    <div style={{ fontSize: 11, color: subColor, marginTop: 1 }}>{formatTime(dispCurrentTime)} / {formatTime(dispDuration)}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: textColor, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{isVoice ? voiceDisplayName : name}</div>
+                    <div style={{ fontSize: 11, color: subColor, marginTop: 1 }}>{formatTime(dispCurrentTime)} / {formatTime(dispDuration > 0 && isFinite(dispDuration) ? dispDuration : 0)}</div>
                 </div>
-                <button
-                    onClick={onDownload}
-                    style={{ background: btnBg, border: 'none', borderRadius: 8, padding: '5px 8px', cursor: 'pointer', fontSize: 13, color: btnColor, flexShrink: 0 }}
-                    title="Скачать"
-                >
+                <button onClick={onDownload} style={{ background: btnBg, border: 'none', borderRadius: 8, padding: '5px 8px', cursor: 'pointer', fontSize: 13, color: btnColor, flexShrink: 0 }} title="Скачать">
                     💾
                 </button>
             </div>
-            {/* Progress bar */}
-            <div
-                style={{ height: 4, borderRadius: 4, background: trackBg, cursor: 'pointer', position: 'relative' }}
-                onClick={seek}
-            >
+            <div style={{ height: 4, borderRadius: 4, background: trackBg, cursor: 'pointer', position: 'relative' }} onClick={seek}>
                 <div style={{ height: '100%', borderRadius: 4, background: fillColor, width: `${dispProgress * 100}%`, transition: 'width 0.1s linear' }} />
             </div>
         </div>
@@ -381,6 +423,172 @@ const Lightbox: React.FC<LightboxProps> = ({ url, type, name, onClose, onDownloa
             </div>
         </div>,
         document.body
+    );
+};
+
+// ── LightboxGallery — лайтбокс с навигацией по галерее ──
+interface GalleryImage { url: string; name: string; }
+
+const LightboxGallery: React.FC<{ images: GalleryImage[]; initialIndex: number; onClose: () => void }> = ({ images, initialIndex, onClose }) => {
+    const [index, setIndex] = useState(initialIndex);
+    const img = images[index];
+    const hasPrev = index > 0;
+    const hasNext = index < images.length - 1;
+
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') onClose();
+            if (e.key === 'ArrowLeft' && index > 0) setIndex(i => i - 1);
+            if (e.key === 'ArrowRight' && index < images.length - 1) setIndex(i => i + 1);
+        };
+        document.addEventListener('keydown', handler);
+        return () => document.removeEventListener('keydown', handler);
+    }, [index, images.length, onClose]);
+
+    const downloadCurrent = async () => {
+        try {
+            const res = await fetch(img.url);
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = img.name;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch {
+            const a = document.createElement('a'); a.href = img.url; a.download = img.name;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        }
+    };
+
+    const navBtnStyle: React.CSSProperties = {
+        position: 'absolute', top: '50%', transform: 'translateY(-50%)',
+        width: 44, height: 44, borderRadius: '50%', border: 'none', cursor: 'pointer',
+        background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 22,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        backdropFilter: 'blur(4px)', transition: 'background 0.15s',
+        zIndex: 1,
+    };
+
+    return ReactDOM.createPortal(
+        <div
+            style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}
+            onClick={onClose}
+        >
+            {/* Toolbar */}
+            <div
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(rgba(0,0,0,0.6), transparent)' }}
+                onClick={e => e.stopPropagation()}
+            >
+                <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14, fontWeight: 500, maxWidth: '55%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {img.name}
+                </span>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    {images.length > 1 && (
+                        <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, fontWeight: 600 }}>
+                            {index + 1} / {images.length}
+                        </span>
+                    )}
+                    <button onClick={downloadCurrent} style={{ padding: '8px 16px', background: 'rgba(99,102,241,0.85)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                        💾 Скачать
+                    </button>
+                    <button onClick={onClose} style={{ width: 36, height: 36, background: 'rgba(255,255,255,0.12)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        ✕
+                    </button>
+                </div>
+            </div>
+
+            {/* Prev */}
+            {hasPrev && (
+                <button style={{ ...navBtnStyle, left: 16 }} onClick={e => { e.stopPropagation(); setIndex(i => i - 1); }}>‹</button>
+            )}
+
+            {/* Image */}
+            <div onClick={e => e.stopPropagation()} style={{ maxWidth: '84vw', maxHeight: '84vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <img
+                    key={img.url}
+                    src={img.url}
+                    alt=""
+                    style={{ maxWidth: '84vw', maxHeight: '84vh', borderRadius: 12, objectFit: 'contain', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
+                />
+            </div>
+
+            {/* Next */}
+            {hasNext && (
+                <button style={{ ...navBtnStyle, right: 16 }} onClick={e => { e.stopPropagation(); setIndex(i => i + 1); }}>›</button>
+            )}
+
+            {/* Thumbnail strip */}
+            {images.length > 1 && (
+                <div
+                    style={{ position: 'absolute', bottom: 16, display: 'flex', gap: 6, maxWidth: '80vw', overflowX: 'auto', padding: '4px 8px' }}
+                    onClick={e => e.stopPropagation()}
+                >
+                    {images.map((im, i) => (
+                        <div
+                            key={i}
+                            onClick={() => setIndex(i)}
+                            style={{ width: 48, height: 36, borderRadius: 6, overflow: 'hidden', cursor: 'pointer', flexShrink: 0, opacity: i === index ? 1 : 0.45, border: i === index ? '2px solid white' : '2px solid transparent', transition: 'opacity 0.15s, border-color 0.15s', boxSizing: 'border-box' }}
+                        >
+                            <img src={im.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Hint */}
+            <div style={{ position: 'absolute', bottom: images.length > 1 ? 68 : 20, color: 'rgba(255,255,255,0.25)', fontSize: 11 }}>
+                Esc — закрыть{images.length > 1 ? ' • ← → — навигация' : ''}
+            </div>
+        </div>,
+        document.body
+    );
+};
+
+// ── ImageGrid — сетка изображений для нескольких фото ──
+export interface GridImage { url: string; name: string; }
+
+export const ImageGrid: React.FC<{ images: GridImage[] }> = ({ images }) => {
+    const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+    const count = images.length;
+    const MAX_CELLS = 4;
+    const shown = images.slice(0, MAX_CELLS);
+    const hiddenCount = Math.max(0, count - MAX_CELLS);
+
+    // Grid layout config based on count
+    const getLayout = () => {
+        if (count === 1) return { cols: '1fr', cellH: 240, firstSpan: false };
+        if (count === 2) return { cols: '1fr 1fr', cellH: 165, firstSpan: false };
+        if (count === 3) return { cols: '1fr 1fr', cellH: 120, firstSpan: true }; // first spans full row
+        return { cols: '1fr 1fr', cellH: 135, firstSpan: false }; // 4+
+    };
+    const { cols, cellH, firstSpan } = getLayout();
+
+    return (
+        <>
+            <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 2, width: 280, borderRadius: 14, overflow: 'hidden' }}>
+                {shown.map((img, i) => {
+                    const isLastShown = i === shown.length - 1 && hiddenCount > 0;
+                    const spanFull = firstSpan && i === 0;
+                    const h = spanFull ? 160 : count === 3 && i > 0 ? 105 : cellH;
+                    return (
+                        <div
+                            key={i}
+                            onClick={() => setLightboxIndex(i)}
+                            style={{ position: 'relative', height: h, overflow: 'hidden', cursor: 'zoom-in', gridColumn: spanFull ? '1 / -1' : undefined }}
+                        >
+                            <img src={img.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                            {isLastShown && (
+                                <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 700, color: 'white' }}>
+                                    +{hiddenCount}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+            {lightboxIndex !== null && (
+                <LightboxGallery images={images} initialIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} />
+            )}
+        </>
     );
 };
 

@@ -17,12 +17,14 @@ const Auth: React.FC<AuthProps> = ({ onAuth }) => {
     const [loading, setLoading] = useState(false);
 
     // Reset screen
-    const [resetUsername, setResetUsername] = useState('');
+    const [resetTag, setResetTag] = useState('');
+    const [resetOldPass, setResetOldPass] = useState('');
     const [resetNewPass, setResetNewPass] = useState('');
+    const [showOldPass, setShowOldPass] = useState(false);
 
-    const reset = () => { setError(''); setSuccess(''); setEmail(''); setPassword(''); setResetUsername(''); setResetNewPass(''); };
+    const reset = () => { setError(''); setSuccess(''); setEmail(''); setPassword(''); setResetTag(''); setResetOldPass(''); setResetNewPass(''); };
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError(''); setSuccess('');
         setLoading(true);
@@ -32,22 +34,22 @@ const Auth: React.FC<AuthProps> = ({ onAuth }) => {
                 if (res?.success) {
                     onAuth(res.token, res.user_id, res.username, res.setup_required);
                 } else {
-                    setError(res?.detail || 'Неверный email или пароль');
+                    setError(Array.isArray(res?.detail) ? res.detail.map((e: any) => { const field = e.loc?.slice(-1)[0]; return field ? `${field}: ${e.msg}` : e.msg; }).join('; ') : (res?.detail || 'Неверный email или пароль'));
                 }
             } else if (screen === 'register') {
                 const res = await api.register(email, password);
                 if (res?.success) {
                     onAuth(res.token, res.user_id, '', true);
                 } else {
-                    setError(res?.detail || 'Ошибка регистрации');
+                    setError(Array.isArray(res?.detail) ? res.detail.map((e: any) => e.msg).join('; ') : (res?.detail || 'Ошибка регистрации'));
                 }
             } else {
-                const res = await api.resetPassword(email, resetUsername, resetNewPass);
+                const res = await api.resetPassword(email, resetTag, resetOldPass, resetNewPass);
                 if (res?.success) {
                     setSuccess('Пароль успешно изменён! Войдите с новым паролем.');
                     setTimeout(() => { reset(); setScreen('login'); }, 2000);
                 } else {
-                    setError(res?.detail || 'Пользователь не найден');
+                    setError(Array.isArray(res?.detail) ? res.detail.map((e: any) => e.msg).join('; ') : (res?.detail || 'Пользователь не найден'));
                 }
             }
         } catch (err: any) {
@@ -93,8 +95,23 @@ const Auth: React.FC<AuthProps> = ({ onAuth }) => {
 
                     {screen === 'reset' && (
                         <div className="auth-input-wrap" style={st.inputWrap}>
-                            <span style={st.inputIcon}>👤</span>
-                            <input type="text" placeholder="Имя пользователя" value={resetUsername} onChange={e => setResetUsername(e.target.value)} style={st.input} required />
+                            <span style={st.inputIcon}>🏷️</span>
+                            <input type="text" placeholder="Тег (@ваш_тег)" value={resetTag} onChange={e => setResetTag(e.target.value.replace(/^@/, ''))} style={st.input} required />
+                        </div>
+                    )}
+
+                    {screen === 'reset' && (
+                        <div className="auth-input-wrap" style={st.inputWrap}>
+                            <span style={st.inputIcon}>🔑</span>
+                            <input
+                                type={showOldPass ? 'text' : 'password'}
+                                placeholder="Текущий пароль"
+                                value={resetOldPass}
+                                onChange={e => setResetOldPass(e.target.value)}
+                                style={{ ...st.input, paddingRight: 44 }}
+                                required
+                            />
+                            <button type="button" onClick={() => setShowOldPass(!showOldPass)} style={st.eyeBtn}>{showOldPass ? '🙈' : '👁️'}</button>
                         </div>
                     )}
 

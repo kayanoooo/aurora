@@ -202,3 +202,7 @@ input:focus {
     background: currentColor;
     opacity: 0.25;
 }
+@keyframes voice-pulse {
+  0%, 100% { opacity: 0.35; }
+  50%       { opacity: 1;    }
+}

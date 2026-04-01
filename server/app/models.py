@@ -59,6 +59,18 @@ class UserModel:
                 return await cur.fetchone()
 
     @staticmethod
+    async def get_user_by_tag(tag: str) -> Optional[Dict]:
+        """Получить пользователя по тегу"""
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT id, username, tag, email, password_hash, created_at, avatar, status, avatar_color, birthday, phone, privacy_settings, last_seen FROM users WHERE tag = %s",
+                    (tag.lstrip('@').lower(),)
+                )
+                return await cur.fetchone()
+
+    @staticmethod
     async def get_user_by_id(user_id: int) -> Optional[Dict]:
         """Получить пользователя по ID"""
         pool = await DatabasePool.get_pool()
@@ -87,10 +99,19 @@ class UserModel:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute("""
                     SELECT u.id, u.username, u.tag, u.email, u.created_at, u.avatar, u.status, u.avatar_color, u.privacy_settings, u.last_seen,
-                        (SELECT MAX(m.id) FROM messages m
-                         WHERE (m.sender_id = %s AND m.receiver_id = u.id)
-                            OR (m.sender_id = u.id AND m.receiver_id = %s)) AS last_msg_id
+                        lm.id AS last_msg_id,
+                        lm.message_text AS last_msg_text,
+                        COALESCE(lm.file_path, JSON_UNQUOTE(JSON_EXTRACT(lm.files, '$[0].file_path'))) AS last_msg_file,
+                        COALESCE(lm.filename, JSON_UNQUOTE(JSON_EXTRACT(lm.files, '$[0].filename'))) AS last_msg_filename,
+                        lm.timestamp AS last_msg_time,
+                        lm.sender_id AS last_msg_sender_id
                     FROM users u
+                    LEFT JOIN messages lm ON lm.id = (
+                        SELECT MAX(m.id) FROM messages m
+                        WHERE ((m.sender_id = %s AND m.receiver_id = u.id)
+                            OR (m.sender_id = u.id AND m.receiver_id = %s))
+                        AND m.is_deleted = 0
+                    )
                     WHERE u.id IN (
                         SELECT DISTINCT receiver_id FROM messages WHERE sender_id = %s AND receiver_id != %s
                         UNION
@@ -98,7 +119,11 @@ class UserModel:
                     )
                     ORDER BY last_msg_id DESC
                 """, (user_id, user_id, user_id, user_id, user_id, user_id))
-                return await cur.fetchall()
+                rows = await cur.fetchall()
+                for row in rows:
+                    if row.get('last_msg_time') and hasattr(row['last_msg_time'], 'isoformat'):
+                        row['last_msg_time'] = row['last_msg_time'].replace(tzinfo=__import__('datetime').timezone.utc).isoformat()
+                return rows
 
     @staticmethod
     async def get_all_users(exclude_id: int = None) -> List[Dict]:
@@ -120,7 +145,8 @@ class UserModel:
     @staticmethod
     async def update_profile(user_id: int, username: str = None, status: str = None,
                              avatar_color: str = None, birthday: str = None,
-                             phone: str = None, privacy_settings: str = None) -> bool:
+                             phone: str = None, privacy_settings: str = None,
+                             tag: str = None) -> bool:
         pool = await DatabasePool.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
@@ -139,6 +165,8 @@ class UserModel:
                         fields.append("phone = %s"); values.append(phone or None)
                     if privacy_settings is not None:
                         fields.append("privacy_settings = %s"); values.append(privacy_settings)
+                    if tag is not None:
+                        fields.append("tag = %s"); values.append(tag)
                     if fields:
                         values.append(user_id)
                         await cur.execute(
@@ -215,17 +243,18 @@ class MessageModel:
     async def save_message(sender_id: int, receiver_id: int, message_text: str = None,
                         file_path: str = None, filename: str = None, file_size: int = None,
                         reply_to_id: int = None, reply_to_text: str = None,
-                        reply_to_sender: str = None, files: str = None) -> Optional[int]:
+                        reply_to_sender: str = None, files: str = None,
+                        reply_to_file_path: str = None) -> Optional[int]:
         pool = await DatabasePool.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("""
                     INSERT INTO messages
                     (sender_id, receiver_id, message_text, file_path, filename, file_size,
-                    reply_to_id, reply_to_text, reply_to_sender, files)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    reply_to_id, reply_to_text, reply_to_sender, files, reply_to_file_path)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (sender_id, receiver_id, message_text, file_path, filename, file_size,
-                    reply_to_id, reply_to_text, reply_to_sender, files))
+                    reply_to_id, reply_to_text, reply_to_sender, files, reply_to_file_path))
                 return cur.lastrowid
     
     @staticmethod
@@ -237,6 +266,7 @@ class MessageModel:
                     SELECT m.id, m.sender_id, m.receiver_id, m.message_text,
                         m.file_path, m.filename, m.file_size, m.timestamp,
                         m.reply_to_id, m.reply_to_text, m.reply_to_sender, m.files,
+                        m.reply_to_file_path,
                         COALESCE(m.is_read, 0) as is_read,
                         u1.username as sender_name, u2.username as receiver_name
                     FROM messages m
@@ -245,9 +275,11 @@ class MessageModel:
                     WHERE ((m.sender_id = %s AND m.receiver_id = %s)
                         OR (m.sender_id = %s AND m.receiver_id = %s))
                         AND m.is_deleted = 0
+                        AND NOT (m.sender_id = %s AND m.deleted_by_sender = 1)
+                        AND NOT (m.receiver_id = %s AND m.deleted_by_receiver = 1)
                     ORDER BY m.timestamp DESC
                     LIMIT %s
-                """, (user1_id, user2_id, user2_id, user1_id, limit))
+                """, (user1_id, user2_id, user2_id, user1_id, user1_id, user1_id, limit))
                 
                 messages = await cur.fetchall()
                 for msg in messages:
@@ -350,15 +382,24 @@ class MessageModel:
                 return cur.rowcount > 0
 
     @staticmethod
-    async def delete_message(message_id: int) -> bool:
+    async def delete_message(message_id: int, for_self: bool = False, current_user_id: int = None) -> bool:
         """Пометить сообщение как удаленное"""
         pool = await DatabasePool.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
-                    "UPDATE messages SET is_deleted = TRUE WHERE id = %s",
-                    (message_id,)
-                )
+                if for_self and current_user_id:
+                    await cur.execute(
+                        """UPDATE messages SET
+                            deleted_by_sender = CASE WHEN sender_id = %s THEN 1 ELSE deleted_by_sender END,
+                            deleted_by_receiver = CASE WHEN receiver_id = %s THEN 1 ELSE deleted_by_receiver END
+                        WHERE id = %s""",
+                        (current_user_id, current_user_id, message_id)
+                    )
+                else:
+                    await cur.execute(
+                        "UPDATE messages SET is_deleted = TRUE WHERE id = %s",
+                        (message_id,)
+                    )
                 return cur.rowcount > 0
     
     @staticmethod
@@ -455,17 +496,27 @@ class GroupModel:
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
-                    """SELECT g.*, COUNT(gm2.user_id) as member_count,
-                              (SELECT COUNT(*) FROM group_messages WHERE group_id = g.id) as message_count
+                    """SELECT g.*, COUNT(DISTINCT gm2.user_id) as member_count,
+                              gm.role as my_role,
+                              (SELECT message_text FROM group_messages WHERE group_id = g.id AND is_deleted = 0 AND (g.is_channel = 0 OR reply_to_id IS NULL) ORDER BY id DESC LIMIT 1) AS last_msg_text,
+                              (SELECT COALESCE(file_path, JSON_UNQUOTE(JSON_EXTRACT(files, '$[0].file_path'))) FROM group_messages WHERE group_id = g.id AND is_deleted = 0 AND (g.is_channel = 0 OR reply_to_id IS NULL) ORDER BY id DESC LIMIT 1) AS last_msg_file,
+                              (SELECT COALESCE(filename, JSON_UNQUOTE(JSON_EXTRACT(files, '$[0].filename'))) FROM group_messages WHERE group_id = g.id AND is_deleted = 0 AND (g.is_channel = 0 OR reply_to_id IS NULL) ORDER BY id DESC LIMIT 1) AS last_msg_filename,
+                              (SELECT timestamp FROM group_messages WHERE group_id = g.id AND is_deleted = 0 AND (g.is_channel = 0 OR reply_to_id IS NULL) ORDER BY id DESC LIMIT 1) AS last_msg_time,
+                              (SELECT sender_id FROM group_messages WHERE group_id = g.id AND is_deleted = 0 AND (g.is_channel = 0 OR reply_to_id IS NULL) ORDER BY id DESC LIMIT 1) AS last_msg_sender_id,
+                              (SELECT u.username FROM group_messages gm3 JOIN users u ON gm3.sender_id = u.id WHERE gm3.group_id = g.id AND gm3.is_deleted = 0 AND (g.is_channel = 0 OR gm3.reply_to_id IS NULL) ORDER BY gm3.id DESC LIMIT 1) AS last_msg_sender_name
                        FROM `groups` g
-                       JOIN group_members gm ON g.id = gm.group_id
+                       JOIN group_members gm ON g.id = gm.group_id AND gm.user_id = %s
                        LEFT JOIN group_members gm2 ON g.id = gm2.group_id
                        WHERE gm.user_id = %s
                        GROUP BY g.id
-                       ORDER BY g.created_at DESC""",
-                    (user_id,)
+                       ORDER BY (SELECT MAX(id) FROM group_messages WHERE group_id = g.id AND is_deleted = 0 AND (g.is_channel = 0 OR reply_to_id IS NULL)) DESC""",
+                    (user_id, user_id)
                 )
-                return await cur.fetchall()
+                rows = await cur.fetchall()
+                for row in rows:
+                    if row.get('last_msg_time') and hasattr(row['last_msg_time'], 'isoformat'):
+                        row['last_msg_time'] = row['last_msg_time'].replace(tzinfo=__import__('datetime').timezone.utc).isoformat()
+                return rows
     
     @staticmethod
     async def add_member(group_id: int, user_id: int, role: str = 'member') -> bool:
@@ -489,7 +540,7 @@ class GroupModel:
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
-                    """SELECT u.id, u.username, u.email, u.avatar, gm.role, gm.joined_at
+                    """SELECT u.id, u.username, u.email, u.avatar, u.tag, gm.role, gm.joined_at
                        FROM group_members gm
                        JOIN users u ON gm.user_id = u.id
                        WHERE gm.group_id = %s
@@ -573,20 +624,108 @@ class GroupModel:
                     print(f"Error updating group avatar: {e}")
                     return False
 
+    @staticmethod
+    async def create_channel(name: str, description: str, creator_id: int, channel_type: str = 'public', channel_tag: str = None, invite_link: str = None) -> Optional[int]:
+        """Создать канал"""
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                try:
+                    await cur.execute(
+                        "INSERT INTO `groups` (name, description, creator_id, is_channel, channel_type, channel_tag, invite_link) VALUES (%s, %s, %s, 1, %s, %s, %s)",
+                        (name, description, creator_id, channel_type, channel_tag, invite_link)
+                    )
+                    group_id = cur.lastrowid
+                    await cur.execute(
+                        "INSERT INTO group_members (group_id, user_id, role) VALUES (%s, %s, 'admin')",
+                        (group_id, creator_id)
+                    )
+                    return group_id
+                except Exception as e:
+                    print(f"Error creating channel: {e}")
+                    return None
+
+    @staticmethod
+    async def update_channel_settings(group_id: int, channel_type: str = None, channel_tag: str = None, invite_link: str = None) -> bool:
+        """Обновить настройки канала"""
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                try:
+                    if channel_type is not None:
+                        await cur.execute("UPDATE `groups` SET channel_type = %s WHERE id = %s", (channel_type, group_id))
+                    if channel_tag is not None:
+                        await cur.execute("UPDATE `groups` SET channel_tag = %s WHERE id = %s", (channel_tag or None, group_id))
+                    if invite_link is not None:
+                        await cur.execute("UPDATE `groups` SET invite_link = %s WHERE id = %s", (invite_link, group_id))
+                    return True
+                except Exception as e:
+                    print(f"Error updating channel settings: {e}")
+                    return False
+
+    @staticmethod
+    async def set_member_role(group_id: int, user_id: int, role: str) -> bool:
+        """Изменить роль участника"""
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                try:
+                    await cur.execute(
+                        "UPDATE group_members SET role = %s WHERE group_id = %s AND user_id = %s",
+                        (role, group_id, user_id)
+                    )
+                    return cur.rowcount > 0
+                except Exception as e:
+                    print(f"Error setting member role: {e}")
+                    return False
+
+    @staticmethod
+    async def get_group_by_invite_link(invite_link: str) -> Optional[Dict]:
+        """Найти группу/канал по invite_link"""
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    """SELECT g.*, COUNT(gm.user_id) as member_count
+                       FROM `groups` g
+                       LEFT JOIN group_members gm ON g.id = gm.group_id
+                       WHERE g.invite_link = %s
+                       GROUP BY g.id""",
+                    (invite_link,)
+                )
+                return await cur.fetchone()
+
+    @staticmethod
+    async def get_channel_by_tag(tag: str) -> Optional[Dict]:
+        """Найти публичный канал по тегу"""
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    """SELECT g.*, COUNT(gm.user_id) as member_count
+                       FROM `groups` g
+                       LEFT JOIN group_members gm ON g.id = gm.group_id
+                       WHERE g.channel_tag = %s AND g.is_channel = 1
+                       GROUP BY g.id""",
+                    (tag,)
+                )
+                return await cur.fetchone()
+
 class GroupMessageModel:
     @staticmethod
     async def save_message(group_id: int, sender_id: int = None, message_text: str = None,
                         file_path: str = None, filename: str = None, file_size: int = None,
-                        reply_to_id: int = None, is_system: bool = False, files: str = None) -> Optional[int]:
+                        reply_to_id: int = None, is_system: bool = False, files: str = None,
+                        reply_to_file_path: str = None) -> Optional[int]:
         """Сохранить сообщение в группе"""
         pool = await DatabasePool.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """INSERT INTO group_messages (group_id, sender_id, message_text, file_path,
-                            filename, file_size, reply_to_id, is_system, files)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (group_id, sender_id, message_text, file_path, filename, file_size, reply_to_id, int(is_system), files)
+                            filename, file_size, reply_to_id, is_system, files, reply_to_file_path)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (group_id, sender_id, message_text, file_path, filename, file_size, reply_to_id, int(is_system), files, reply_to_file_path)
                 )
                 return cur.lastrowid
     
@@ -603,12 +742,14 @@ class GroupMessageModel:
                         gm.file_path, gm.filename, gm.file_size, gm.timestamp,
                         gm.reply_to_id, gm.edited_at, gm.is_deleted,
                         COALESCE(gm.is_system, 0) as is_system,
-                        gm.files,
+                        gm.files, gm.reply_to_file_path,
                         u.username as sender_name,
+                        u.tag as sender_tag,
                         u.avatar as sender_avatar,
                         COALESCE(u.avatar_color, '#1a73e8') as sender_avatar_color,
                         COALESCE(rm.message_text, '') as reply_to_text,
-                        COALESCE(ru.username, '') as reply_to_sender
+                        COALESCE(ru.username, '') as reply_to_sender,
+                        COALESCE(rm.file_path, rm.reply_to_file_path) as reply_to_file_path_resolved
                     FROM group_messages gm
                     LEFT JOIN users u ON gm.sender_id = u.id
                     LEFT JOIN group_messages rm ON gm.reply_to_id = rm.id
@@ -687,15 +828,33 @@ class GroupMessageModel:
                 return cur.rowcount > 0
 
     @staticmethod
-    async def delete_message(message_id: int) -> bool:
+    async def delete_message(message_id: int, for_self: bool = False, current_user_id: int = None) -> bool:
         """Пометить групповое сообщение как удаленное"""
         pool = await DatabasePool.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
-                    "UPDATE group_messages SET is_deleted = TRUE WHERE id = %s",
-                    (message_id,)
-                )
+                if for_self and current_user_id:
+                    # Add user_id to hidden_for JSON array
+                    await cur.execute("SELECT hidden_for FROM group_messages WHERE id = %s", (message_id,))
+                    row = await cur.fetchone()
+                    if row is None:
+                        return False
+                    import json as _json
+                    try:
+                        hidden = _json.loads(row[0]) if row[0] else []
+                    except Exception:
+                        hidden = []
+                    if current_user_id not in hidden:
+                        hidden.append(current_user_id)
+                    await cur.execute(
+                        "UPDATE group_messages SET hidden_for = %s WHERE id = %s",
+                        (_json.dumps(hidden), message_id)
+                    )
+                else:
+                    await cur.execute(
+                        "UPDATE group_messages SET is_deleted = TRUE WHERE id = %s",
+                        (message_id,)
+                    )
                 return cur.rowcount > 0
 
     @staticmethod

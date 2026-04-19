@@ -104,7 +104,8 @@ class UserModel:
                         COALESCE(lm.file_path, JSON_UNQUOTE(JSON_EXTRACT(lm.files, '$[0].file_path'))) AS last_msg_file,
                         COALESCE(lm.filename, JSON_UNQUOTE(JSON_EXTRACT(lm.files, '$[0].filename'))) AS last_msg_filename,
                         lm.timestamp AS last_msg_time,
-                        lm.sender_id AS last_msg_sender_id
+                        lm.sender_id AS last_msg_sender_id,
+                        lm.is_read AS last_msg_is_read
                     FROM users u
                     LEFT JOIN messages lm ON lm.id = (
                         SELECT MAX(m.id) FROM messages m
@@ -123,6 +124,7 @@ class UserModel:
                 for row in rows:
                     if row.get('last_msg_time') and hasattr(row['last_msg_time'], 'isoformat'):
                         row['last_msg_time'] = row['last_msg_time'].replace(tzinfo=__import__('datetime').timezone.utc).isoformat()
+                    row['is_developer'] = row.get('tag') in ('kayano', 'durov')
                 return rows
 
     @staticmethod
@@ -540,7 +542,7 @@ class GroupModel:
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
-                    """SELECT u.id, u.username, u.email, u.avatar, u.tag, gm.role, gm.joined_at
+                    """SELECT u.id, u.username, u.email, u.avatar, u.tag, gm.role, gm.joined_at, gm.custom_title
                        FROM group_members gm
                        JOIN users u ON gm.user_id = u.id
                        WHERE gm.group_id = %s
@@ -677,6 +679,21 @@ class GroupModel:
                     return cur.rowcount > 0
                 except Exception as e:
                     print(f"Error setting member role: {e}")
+                    return False
+
+    @staticmethod
+    async def set_member_title(group_id: int, user_id: int, title: Optional[str]) -> bool:
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                try:
+                    await cur.execute(
+                        "UPDATE group_members SET custom_title = %s WHERE group_id = %s AND user_id = %s",
+                        (title or None, group_id, user_id)
+                    )
+                    return cur.rowcount > 0
+                except Exception as e:
+                    print(f"Error setting member title: {e}")
                     return False
 
     @staticmethod
@@ -1052,3 +1069,248 @@ class FolderModel:
                     (folder_id, chat_type, chat_id)
                 )
                 return cur.rowcount > 0
+
+class PostViewModel:
+    @staticmethod
+    async def record_view(message_id: int, user_id: int) -> int:
+        """Record a post view and return updated count"""
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "INSERT IGNORE INTO post_views (message_id, user_id) VALUES (%s, %s)",
+                    (message_id, user_id)
+                )
+                await cur.execute(
+                    "SELECT COUNT(*) FROM post_views WHERE message_id = %s",
+                    (message_id,)
+                )
+                row = await cur.fetchone()
+                return row[0] if row else 0
+
+    @staticmethod
+    async def get_view_count(message_id: int) -> int:
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT COUNT(*) FROM post_views WHERE message_id = %s",
+                    (message_id,)
+                )
+                row = await cur.fetchone()
+                return row[0] if row else 0
+
+    @staticmethod
+    async def get_view_counts(message_ids: list) -> dict:
+        """Get view counts for multiple messages at once"""
+        if not message_ids:
+            return {}
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                fmt = ",".join(["%s"] * len(message_ids))
+                await cur.execute(
+                    f"SELECT message_id, COUNT(*) as cnt FROM post_views WHERE message_id IN ({fmt}) GROUP BY message_id",
+                    message_ids
+                )
+                rows = await cur.fetchall()
+                return {row[0]: row[1] for row in rows}
+
+
+class SupportModel:
+    @staticmethod
+    async def send_message(user_id: int, message_text: str) -> Optional[int]:
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                try:
+                    await cur.execute(
+                        "INSERT INTO support_messages (user_id, sender_id, message_text) VALUES (%s, %s, %s)",
+                        (user_id, user_id, message_text)
+                    )
+                    return cur.lastrowid
+                except Exception as e:
+                    print(f"Error sending support message: {e}")
+                    return None
+
+    @staticmethod
+    async def get_user_messages(user_id: int) -> List[Dict]:
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute("""
+                    SELECT sm.id, sm.user_id, sm.sender_id, sm.message_text, sm.is_admin_reply, sm.is_read, sm.created_at,
+                           u.username as sender_name, u.tag as sender_tag, u.avatar as sender_avatar
+                    FROM support_messages sm
+                    JOIN users u ON u.id = sm.sender_id
+                    WHERE sm.user_id = %s
+                    ORDER BY sm.created_at ASC
+                """, (user_id,))
+                rows = await cur.fetchall()
+                for r in rows:
+                    if r.get('created_at') and hasattr(r['created_at'], 'isoformat'):
+                        r['created_at'] = r['created_at'].replace(tzinfo=__import__('datetime').timezone.utc).isoformat()
+                return rows
+
+    @staticmethod
+    async def admin_reply(admin_id: int, user_id: int, message_text: str) -> Optional[int]:
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                try:
+                    await cur.execute(
+                        "INSERT INTO support_messages (user_id, sender_id, message_text, is_admin_reply) VALUES (%s, %s, %s, 1)",
+                        (user_id, admin_id, message_text)
+                    )
+                    return cur.lastrowid
+                except Exception as e:
+                    print(f"Error sending admin reply: {e}")
+                    return None
+
+    @staticmethod
+    async def get_all_threads() -> List[Dict]:
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute("""
+                    SELECT u.id as user_id, u.username, u.tag, u.avatar,
+                        latest.message_text as last_message,
+                        latest.created_at as last_time,
+                        latest.is_admin_reply,
+                        COALESCE(unread_tbl.cnt, 0) as unread_count
+                    FROM (SELECT DISTINCT user_id FROM support_messages) threads
+                    JOIN users u ON u.id = threads.user_id
+                    JOIN support_messages latest ON latest.id = (
+                        SELECT id FROM support_messages WHERE user_id = u.id ORDER BY created_at DESC LIMIT 1
+                    )
+                    LEFT JOIN (
+                        SELECT user_id, COUNT(*) as cnt FROM support_messages
+                        WHERE is_admin_reply = 0 AND is_read = 0 GROUP BY user_id
+                    ) unread_tbl ON unread_tbl.user_id = u.id
+                    ORDER BY latest.created_at DESC
+                """)
+                rows = await cur.fetchall()
+                for r in rows:
+                    if r.get('last_time') and hasattr(r['last_time'], 'isoformat'):
+                        r['last_time'] = r['last_time'].replace(tzinfo=__import__('datetime').timezone.utc).isoformat()
+                return rows
+
+    @staticmethod
+    async def get_thread(user_id: int) -> List[Dict]:
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute("""
+                    SELECT sm.id, sm.user_id, sm.sender_id, sm.message_text, sm.is_admin_reply, sm.is_read, sm.created_at,
+                           u.username as sender_name, u.tag as sender_tag, u.avatar as sender_avatar
+                    FROM support_messages sm
+                    JOIN users u ON u.id = sm.sender_id
+                    WHERE sm.user_id = %s
+                    ORDER BY sm.created_at ASC
+                """, (user_id,))
+                rows = await cur.fetchall()
+                for r in rows:
+                    if r.get('created_at') and hasattr(r['created_at'], 'isoformat'):
+                        r['created_at'] = r['created_at'].replace(tzinfo=__import__('datetime').timezone.utc).isoformat()
+                await cur.execute(
+                    "UPDATE support_messages SET is_read = 1 WHERE user_id = %s AND is_admin_reply = 0",
+                    (user_id,)
+                )
+                return rows
+
+    @staticmethod
+    async def mark_user_read(user_id: int):
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "UPDATE support_messages SET is_read = 1 WHERE user_id = %s AND is_admin_reply = 1",
+                    (user_id,)
+                )
+
+    @staticmethod
+    async def get_admin_ids() -> List[int]:
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute("SELECT id FROM users WHERE tag IN ('kayano', 'durov')")
+                rows = await cur.fetchall()
+                return [r['id'] for r in rows]
+
+    @staticmethod
+    async def has_unread_replies(user_id: int) -> bool:
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT COUNT(*) FROM support_messages WHERE user_id = %s AND is_admin_reply = 1 AND is_read = 0",
+                    (user_id,)
+                )
+                row = await cur.fetchone()
+                return (row[0] if row else 0) > 0
+
+
+class BlockModel:
+    @staticmethod
+    async def block_user(blocker_id: int, blocked_id: int) -> bool:
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                try:
+                    await cur.execute(
+                        "INSERT IGNORE INTO blocked_users (blocker_id, blocked_id) VALUES (%s, %s)",
+                        (blocker_id, blocked_id)
+                    )
+                    return True
+                except Exception as e:
+                    print(f"Error blocking user: {e}")
+                    return False
+
+    @staticmethod
+    async def unblock_user(blocker_id: int, blocked_id: int) -> bool:
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "DELETE FROM blocked_users WHERE blocker_id = %s AND blocked_id = %s",
+                    (blocker_id, blocked_id)
+                )
+                return cur.rowcount > 0
+
+    @staticmethod
+    async def get_blocked_users(user_id: int) -> List[Dict]:
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute("""
+                    SELECT u.id, u.username, u.tag, u.avatar, bu.created_at
+                    FROM blocked_users bu
+                    JOIN users u ON u.id = bu.blocked_id
+                    WHERE bu.blocker_id = %s
+                    ORDER BY bu.created_at DESC
+                """, (user_id,))
+                return await cur.fetchall()
+
+    @staticmethod
+    async def is_blocked(blocker_id: int, blocked_id: int) -> bool:
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT 1 FROM blocked_users WHERE blocker_id = %s AND blocked_id = %s",
+                    (blocker_id, blocked_id)
+                )
+                return await cur.fetchone() is not None
+
+    @staticmethod
+    async def get_users_who_blocked(user_id: int) -> List[int]:
+        """Возвращает список ID пользователей, которые заблокировали user_id"""
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT blocker_id FROM blocked_users WHERE blocked_id = %s",
+                    (user_id,)
+                )
+                rows = await cur.fetchall()
+                return [r[0] for r in rows]

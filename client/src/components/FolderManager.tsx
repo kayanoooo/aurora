@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { api } from '../services/api';
 import { User, Group } from '../types';
+import { useLang } from '../i18n';
 
 interface ChatFolder {
     id: number;
@@ -26,6 +27,7 @@ const FOLDER_COLORS = ['#6366f1','#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf
 const FolderManager: React.FC<FolderManagerProps> = ({
     token, folders, users, groups, isDark: dm, baseUrl, onClose, onFoldersChange,
 }) => {
+    const { t, lang } = useLang();
     const [selectedFolderId, setSelectedFolderId] = useState<number | null>(folders[0]?.id ?? null);
     const [newFolderName, setNewFolderName] = useState('');
     const [newFolderColor, setNewFolderColor] = useState('#6366f1');
@@ -86,9 +88,10 @@ const FolderManager: React.FC<FolderManagerProps> = ({
         }
     };
 
-    const bg = dm ? '#13131f' : 'white';
-    const bg2 = dm ? '#1a1a2e' : '#f8f8ff';
-    const border = dm ? 'rgba(99,102,241,0.18)' : '#ede9fe';
+    const isOled = dm && document.body.classList.contains('oled-theme');
+    const bg = isOled ? '#000000' : (dm ? '#1a1a2e' : 'white');
+    const bg2 = isOled ? '#050508' : (dm ? '#12122a' : '#f8f8ff');
+    const border = isOled ? 'rgba(167,139,250,0.2)' : (dm ? 'rgba(99,102,241,0.25)' : '#ede9fe');
     const text = dm ? '#e2e8f0' : '#1e1b4b';
     const sub = dm ? '#6060a0' : '#a5b4fc';
 
@@ -96,23 +99,21 @@ const FolderManager: React.FC<FolderManagerProps> = ({
         <>
         <div style={{
             position: 'fixed', inset: 0, zIndex: 3000,
-            backgroundColor: dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)',
-            backdropFilter: 'blur(6px)',
+            backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'),
+            backdropFilter: 'blur(8px)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
         }} className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'} onClick={close}>
             <div style={{
                 background: bg, borderRadius: 20, width: 560, maxHeight: '80vh',
-                boxShadow: dm
-                    ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)'
-                    : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)',
-                border: dm ? '1px solid rgba(99,102,241,0.25)' : '1px solid #ede9fe',
+                boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)',
+                border: `1px solid ${border}`,
                 display: 'flex', flexDirection: 'column',
                 overflow: 'hidden',
             }} className={closing ? 'modal-exit' : 'modal-enter'} onClick={e => e.stopPropagation()}>
 
                 {/* Header */}
                 <div style={{ padding: '16px 20px', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontWeight: 700, fontSize: 16, color: text }}>📁 Папки чатов</span>
+                    <span style={{ fontWeight: 700, fontSize: 16, color: text }}>📁 {t('Chat folders')}</span>
                     <button onClick={close} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: sub, lineHeight: 1 }}>✕</button>
                 </div>
 
@@ -121,7 +122,7 @@ const FolderManager: React.FC<FolderManagerProps> = ({
                     <div style={{ width: 200, borderRight: `1px solid ${border}`, display: 'flex', flexDirection: 'column', backgroundColor: bg2 }}>
                         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
                             {folders.length === 0 && (
-                                <div style={{ fontSize: 12, color: sub, padding: '12px 14px', textAlign: 'center' }}>Нет папок</div>
+                                <div style={{ fontSize: 12, color: sub, padding: '12px 14px', textAlign: 'center' }}>{t('No folders')}</div>
                             )}
                             {folders.map(f => (
                                 <div key={f.id}
@@ -143,17 +144,17 @@ const FolderManager: React.FC<FolderManagerProps> = ({
                                     )}
                                     <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(f.id); }}
                                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', fontSize: 13, padding: '0 2px', flexShrink: 0, opacity: 0.6, lineHeight: 1 }}
-                                        title="Удалить папку">🗑</button>
+                                        title={t('Delete')}>🗑</button>
                                 </div>
                             ))}
                         </div>
 
                         {/* Create folder */}
                         <div style={{ padding: '10px 12px', borderTop: `1px solid ${border}` }}>
-                            <div style={{ fontSize: 11, color: sub, marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Новая папка</div>
+                            <div style={{ fontSize: 11, color: sub, marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('New folder')}</div>
                             <input value={newFolderName} onChange={e => setNewFolderName(e.target.value)}
                                 onKeyDown={e => { if (e.key === 'Enter') createFolder(); }}
-                                placeholder="Название..." maxLength={30}
+                                placeholder={t('Folder name')} maxLength={30}
                                 style={{ width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 7, border: `1px solid ${border}`, background: bg, color: text, outline: 'none', boxSizing: 'border-box' }} />
                             <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
                                 {FOLDER_COLORS.map(c => (
@@ -168,7 +169,7 @@ const FolderManager: React.FC<FolderManagerProps> = ({
                                 background: newFolderName.trim() ? newFolderColor : (dm ? '#2a2a3e' : '#e0e0f0'),
                                 color: newFolderName.trim() ? 'white' : sub, cursor: newFolderName.trim() ? 'pointer' : 'default',
                                 fontSize: 12, fontWeight: 600, transition: 'background 0.15s',
-                            }}>Создать</button>
+                            }}>{t('Create')}</button>
                         </div>
                     </div>
 
@@ -176,20 +177,20 @@ const FolderManager: React.FC<FolderManagerProps> = ({
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                         {!selectedFolder ? (
                             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: sub, fontSize: 13 }}>
-                                Выберите папку слева
+                                {lang === 'en' ? 'Select a folder on the left' : 'Выберите папку слева'}
                             </div>
                         ) : (
                             <>
                                 <div style={{ padding: '12px 16px', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                                     <span style={{ width: 12, height: 12, borderRadius: '50%', background: selectedFolder.color }} />
                                     <span style={{ fontWeight: 700, fontSize: 14, color: text }}>{selectedFolder.name}</span>
-                                    <span style={{ fontSize: 12, color: sub }}>— {selectedFolder.chats.length} чатов</span>
+                                    <span style={{ fontSize: 12, color: sub }}>— {selectedFolder.chats.length} {lang === 'en' ? 'chats' : 'чатов'}</span>
                                 </div>
                                 <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
                                     {/* Groups */}
                                     {groups.length > 0 && (
                                         <>
-                                            <div style={{ fontSize: 11, fontWeight: 700, color: sub, padding: '4px 16px 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Группы</div>
+                                            <div style={{ fontSize: 11, fontWeight: 700, color: sub, padding: '4px 16px 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{lang === 'en' ? 'Groups' : 'Группы'}</div>
                                             {groups.map(g => {
                                                 const inFolder = selectedFolder.chats.some(c => c.chat_type === 'group' && c.chat_id === g.id);
                                                 return (
@@ -214,7 +215,7 @@ const FolderManager: React.FC<FolderManagerProps> = ({
                                     {/* Users */}
                                     {users.length > 0 && (
                                         <>
-                                            <div style={{ fontSize: 11, fontWeight: 700, color: sub, padding: '8px 16px 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Контакты</div>
+                                            <div style={{ fontSize: 11, fontWeight: 700, color: sub, padding: '8px 16px 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{lang === 'en' ? 'Contacts' : 'Контакты'}</div>
                                             {users.map(u => {
                                                 const inFolder = selectedFolder.chats.some(c => c.chat_type === 'private' && c.chat_id === u.id);
                                                 return (
@@ -237,7 +238,7 @@ const FolderManager: React.FC<FolderManagerProps> = ({
                                         </>
                                     )}
                                     {groups.length === 0 && users.length === 0 && (
-                                        <div style={{ padding: '24px 16px', textAlign: 'center', color: sub, fontSize: 13 }}>Нет доступных чатов</div>
+                                        <div style={{ padding: '24px 16px', textAlign: 'center', color: sub, fontSize: 13 }}>{lang === 'en' ? 'No chats available' : 'Нет доступных чатов'}</div>
                                     )}
                                 </div>
                             </>
@@ -250,16 +251,19 @@ const FolderManager: React.FC<FolderManagerProps> = ({
         {/* Confirm folder delete */}
         {confirmDeleteId !== null && ReactDOM.createPortal(
             <div onClick={() => setConfirmDeleteId(null)} className="modal-backdrop-enter"
-                style={{ position: 'fixed', inset: 0, zIndex: 4000, backgroundColor: dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                style={{ position: 'fixed', inset: 0, zIndex: 4000, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <div onClick={e => e.stopPropagation()} className="modal-enter"
-                    style={{ background: dm ? '#13132a' : '#ffffff', borderRadius: 20, width: 320, padding: '28px 28px 22px', boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)', border: dm ? '1px solid rgba(99,102,241,0.25)' : '1px solid #ede9fe', textAlign: 'center' }}>
-                    <div style={{ fontSize: 17, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', marginBottom: 8 }}>Это нельзя будет отменить</div>
+                    style={{ background: bg, borderRadius: 20, width: 320, padding: '28px 28px 22px', boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)', border: `1px solid ${border}`, textAlign: 'center' }}>
+                    <div style={{ fontSize: 17, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', marginBottom: 8 }}>{t('This cannot be undone.')}</div>
                     <div style={{ fontSize: 14, color: dm ? '#9090b0' : '#6b7280', marginBottom: 24 }}>
-                        Удалить папку «{folders.find(f => f.id === confirmDeleteId)?.name}»?
+                        {lang === 'en'
+                            ? `Delete folder "${folders.find(f => f.id === confirmDeleteId)?.name}"?`
+                            : `Удалить папку «${folders.find(f => f.id === confirmDeleteId)?.name}»?`
+                        }
                     </div>
                     <div style={{ display: 'flex', gap: 10 }}>
-                        <button onClick={() => setConfirmDeleteId(null)} style={{ flex: 1, padding: '11px 0', borderRadius: 12, border: dm ? '1.5px solid #3a3a5e' : '1.5px solid #ede9fe', background: dm ? '#1e1e3a' : '#f5f3ff', color: dm ? '#c0c0d8' : '#374151', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Отмена</button>
-                        <button onClick={() => deleteFolder(confirmDeleteId!)} style={{ flex: 1, padding: '11px 0', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #e53935, #ef5350)', color: 'white', fontSize: 14, fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 14px rgba(229,57,53,0.35)' }}>Удалить</button>
+                        <button onClick={() => setConfirmDeleteId(null)} style={{ flex: 1, padding: '11px 0', borderRadius: 12, border: `1.5px solid ${border}`, background: dm ? '#12122a' : '#f5f3ff', color: dm ? '#c0c0d8' : '#374151', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>{t('Cancel')}</button>
+                        <button onClick={() => deleteFolder(confirmDeleteId!)} style={{ flex: 1, padding: '11px 0', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #e53935, #ef5350)', color: 'white', fontSize: 14, fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 14px rgba(229,57,53,0.35)' }}>{t('Delete')}</button>
                     </div>
                 </div>
             </div>,

@@ -10,6 +10,7 @@ import re
 import uuid
 import json
 import mimetypes
+import asyncio
 from urllib.parse import quote
 from datetime import datetime, timezone
 import cloudinary
@@ -27,7 +28,7 @@ def _cloudinary_configured() -> bool:
     return bool(name and key and name not in ("ваш_cloud_name",) and key not in ("ваш_api_key",))
 
 from .config import config
-from .models import DatabasePool, UserModel, MessageModel, GroupModel, GroupMessageModel, ReactionModel, FolderModel, GroupReadModel
+from .models import DatabasePool, UserModel, MessageModel, GroupModel, GroupMessageModel, ReactionModel, FolderModel, GroupReadModel, PostViewModel, SupportModel, BlockModel
 from .auth import hash_password, verify_password, create_jwt_token, decode_jwt_token
 from .websocket_manager import manager
 
@@ -84,6 +85,31 @@ class CreateChannelRequest(BaseModel):
 class UpdateChannelSettingsRequest(BaseModel):
     channel_type: Optional[str] = None
     channel_tag: Optional[str] = None
+
+class SupportSendRequest(BaseModel):
+    message_text: str
+
+class AdminReplyRequest(BaseModel):
+    user_id: int
+    message_text: str
+
+class UpdatePublicKeyRequest(BaseModel):
+    public_key: str
+
+class CreatePollRequest(BaseModel):
+    question: str
+    options: List[str]
+    is_anonymous: bool = False
+    is_multi_choice: bool = False
+
+class VotePollRequest(BaseModel):
+    option_indices: List[int]
+
+class ScheduleMessageRequest(BaseModel):
+    message_text: str
+    scheduled_at: str   # ISO datetime string
+    receiver_id: Optional[int] = None
+    group_id: Optional[int] = None
 
 app = FastAPI(title="Messenger API", version="2.0.0")
 
@@ -172,12 +198,72 @@ async def startup():
                 "ALTER TABLE `groups` ADD COLUMN `channel_type` VARCHAR(10) NOT NULL DEFAULT 'public'",
                 "ALTER TABLE `groups` ADD COLUMN `channel_tag` VARCHAR(64) NULL DEFAULT NULL",
                 "ALTER TABLE `groups` ADD COLUMN `invite_link` VARCHAR(64) NULL DEFAULT NULL",
+                """CREATE TABLE IF NOT EXISTS post_views (
+                    message_id INT NOT NULL,
+                    user_id INT NOT NULL,
+                    viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (message_id, user_id)
+                )""",
+                """CREATE TABLE IF NOT EXISTS support_messages (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    sender_id INT NOT NULL,
+                    message_text TEXT NOT NULL,
+                    is_admin_reply TINYINT(1) NOT NULL DEFAULT 0,
+                    is_read TINYINT(1) NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_support_user (user_id),
+                    INDEX idx_support_created (created_at)
+                )""",
+                "ALTER TABLE users ADD COLUMN public_key TEXT NULL",
+                """CREATE TABLE IF NOT EXISTS blocked_users (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    blocker_id INT NOT NULL,
+                    blocked_id INT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_block (blocker_id, blocked_id),
+                    INDEX idx_blocker (blocker_id),
+                    INDEX idx_blocked (blocked_id)
+                )""",
+                """CREATE TABLE IF NOT EXISTS scheduled_messages (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    sender_id INT NOT NULL,
+                    receiver_id INT NULL,
+                    group_id INT NULL,
+                    message_text TEXT NOT NULL,
+                    scheduled_at DATETIME NOT NULL,
+                    sent TINYINT(1) NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_scheduled (scheduled_at, sent)
+                )""",
+                "ALTER TABLE `group_members` ADD COLUMN `custom_title` VARCHAR(64) NULL DEFAULT NULL",
+                """CREATE TABLE IF NOT EXISTS polls (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    creator_id INT NOT NULL,
+                    question VARCHAR(512) NOT NULL,
+                    options JSON NOT NULL,
+                    is_anonymous TINYINT(1) NOT NULL DEFAULT 0,
+                    is_multi_choice TINYINT(1) NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_polls_creator (creator_id)
+                )""",
+                """CREATE TABLE IF NOT EXISTS poll_votes (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    poll_id INT NOT NULL,
+                    user_id INT NOT NULL,
+                    option_indices JSON NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_vote (poll_id, user_id),
+                    INDEX idx_poll_votes_poll (poll_id)
+                )""",
+                "ALTER TABLE users ADD COLUMN is_deleted TINYINT(1) NOT NULL DEFAULT 0",
             ]:
                 try:
                     await cur.execute(sql)
                 except Exception:
                     pass
             await conn.commit()
+    asyncio.create_task(scheduled_message_worker())
     print("✅ Database pool initialized")
 
 @app.on_event("shutdown")
@@ -357,10 +443,19 @@ async def find_user(token: str, username: str):
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
     user = await UserModel.get_user_by_username(username)
-    if not user or user['id'] == payload['user_id']:
+    if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    is_self = user['id'] == payload['user_id']
     tags = await UserModel.get_tags(user['id'])
     safe = {k: v for k, v in user.items() if k not in ('password_hash', 'privacy_settings')}
+    if is_self:
+        # No privacy restrictions for self
+        safe['tags'] = tags
+        raw_ls = user.get('last_seen')
+        if raw_ls and hasattr(raw_ls, 'isoformat'):
+            safe['last_seen'] = raw_ls.isoformat() + 'Z'
+        safe['is_online'] = True
+        return {"user": safe}
     # Apply privacy settings
     import json as _json
     try:
@@ -384,6 +479,16 @@ async def find_user(token: str, username: str):
         safe['last_seen'] = raw_ls.isoformat() + 'Z'
     else:
         safe['last_seen'] = raw_ls
+
+    # Если пользователь заблокировал смотрящего — скрываем аватар и статус (как в Telegram)
+    viewer_id = payload['user_id']
+    if await BlockModel.is_blocked(user['id'], viewer_id):
+        safe['avatar'] = None
+        safe['last_seen'] = 'blocked_you'
+        safe['is_online'] = False
+    else:
+        safe['is_online'] = manager.is_user_online(user['id'])
+
     return {"user": safe}
 
 @app.get("/api/users/search")
@@ -418,7 +523,10 @@ async def get_users(token: str):
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    users = await UserModel.get_contacts(payload['user_id'])
+    current_user_id = payload['user_id']
+    users = await UserModel.get_contacts(current_user_id)
+    # Получаем список тех, кто нас заблокировал (для маскировки)
+    blocked_us = set(await BlockModel.get_users_who_blocked(current_user_id))
     result = []
     for u in users:
         ud = dict(u)
@@ -428,11 +536,17 @@ async def get_users(token: str):
         except Exception:
             pass
         ud.pop('privacy_settings', None)
-        if not priv.get('show_last_seen', True):
-            ud['last_seen'] = 'hidden'
-        elif ud.get('last_seen') and hasattr(ud['last_seen'], 'isoformat'):
-            ud['last_seen'] = ud['last_seen'].isoformat() + 'Z'
-        ud['is_online'] = manager.is_user_online(ud['id'])
+        if ud['id'] in blocked_us:
+            # Пользователь нас заблокировал — скрываем его данные
+            ud['avatar'] = None
+            ud['last_seen'] = 'blocked_you'
+            ud['is_online'] = False
+        else:
+            if not priv.get('show_last_seen', True):
+                ud['last_seen'] = 'hidden'
+            elif ud.get('last_seen') and hasattr(ud['last_seen'], 'isoformat'):
+                ud['last_seen'] = ud['last_seen'].isoformat() + 'Z'
+            ud['is_online'] = manager.is_user_online(ud['id'])
         result.append(ud)
     return {"users": result}
 
@@ -615,6 +729,50 @@ async def remove_tag(tag: str, token: str):
     await UserModel.remove_tag(payload['user_id'], tag)
     return {"success": True}
 
+# ========== Чёрный список ==========
+
+@app.post("/api/block/{target_user_id}")
+async def block_user(target_user_id: int, token: str):
+    """Добавить пользователя в чёрный список"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user_id = payload['user_id']
+    if user_id == target_user_id:
+        raise HTTPException(status_code=400, detail="Cannot block yourself")
+    await BlockModel.block_user(user_id, target_user_id)
+    await manager.send_message_to_user(target_user_id, {"type": "visibility_update", "data": {"user_id": user_id, "last_seen": "blocked_you"}})
+    await manager.send_message_to_user(user_id, {"type": "visibility_update", "data": {"user_id": target_user_id, "last_seen": "hidden"}})
+    return {"success": True}
+
+@app.delete("/api/block/{target_user_id}")
+async def unblock_user(target_user_id: int, token: str):
+    """Убрать пользователя из чёрного списка"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    await BlockModel.unblock_user(payload['user_id'], target_user_id)
+    await manager.send_message_to_user(target_user_id, {"type": "visibility_update", "data": {"user_id": payload['user_id'], "last_seen": None}})
+    return {"success": True}
+
+@app.get("/api/blocked")
+async def get_blocked_users(token: str):
+    """Список заблокированных пользователей"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    blocked = await BlockModel.get_blocked_users(payload['user_id'])
+    result = []
+    for u in blocked:
+        result.append({
+            "id": u['id'],
+            "username": u['username'],
+            "tag": u['tag'],
+            "avatar": u['avatar'],
+            "blocked_at": u['created_at'].isoformat() if u.get('created_at') else None,
+        })
+    return {"success": True, "blocked": result}
+
 @app.post("/api/groups/{group_id}/avatar")
 async def update_group_avatar(group_id: int, token: str = Form(...), file: UploadFile = File(...)):
     payload = decode_jwt_token(token)
@@ -787,12 +945,23 @@ async def get_group_messages(group_id: int, token: str, limit: int = 10000):
         msg_ids = [m['id'] for m in messages]
         reactions_map = await ReactionModel.get_reactions_for_messages(msg_ids, True)
         read_counts = await GroupReadModel.get_read_counts(msg_ids)
+        view_counts = await PostViewModel.get_view_counts(msg_ids)
         for msg in messages:
             msg['reactions'] = reactions_map.get(msg['id'], [])
-            # is_read = at least 1 other member has read this message
             msg['is_read'] = read_counts.get(msg['id'], 0) > 0
+            msg['view_count'] = view_counts.get(msg['id'], 0)
 
     return {"messages": messages}
+
+
+@app.post("/api/groups/{group_id}/messages/{message_id}/view")
+async def record_post_view(group_id: int, message_id: int, token: str):
+    """Record that the current user viewed a channel post"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    count = await PostViewModel.record_view(message_id, payload['user_id'])
+    return {"view_count": count}
 
 @app.put("/api/groups/{group_id}")
 async def update_group(group_id: int, request: UpdateGroupRequest, token: str):
@@ -1039,6 +1208,19 @@ async def set_member_role(group_id: int, user_id: int, token: str, role: str):
         raise HTTPException(status_code=400, detail="User not found in group")
     return {"success": True}
 
+@app.put("/api/groups/{group_id}/members/{user_id}/title")
+async def set_member_title(group_id: int, user_id: int, token: str, title: str = ""):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    my_role = await GroupModel.get_member_role(group_id, payload['user_id'])
+    if my_role != 'admin':
+        raise HTTPException(status_code=403, detail="Only admins can set titles")
+    success = await GroupModel.set_member_title(group_id, user_id, title or None)
+    if not success:
+        raise HTTPException(status_code=400, detail="User not found in group")
+    return {"success": True}
+
 @app.put("/api/groups/{group_id}/channel-settings")
 async def update_channel_settings_endpoint(group_id: int, request: UpdateChannelSettingsRequest, token: str):
     """Обновить настройки канала"""
@@ -1089,7 +1271,17 @@ async def clear_conversation(user_id: int, token: str):
 
 # ========== Файлы ==========
 
-MAX_UPLOAD_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB
+MAX_UPLOAD_SIZE = 5 * 1024 * 1024 * 1024  # 5 GB (dev limit)
+
+@app.get("/api/server-info")
+async def server_info():
+    cloudinary_active = _cloudinary_configured()
+    return {
+        "storage": "cloudinary" if cloudinary_active else "local",
+        "max_file_mb": 25 if cloudinary_active else 5120,
+        "max_image_mb": 20 if cloudinary_active else 5120,
+        "max_video_mb": 100 if cloudinary_active else 5120,
+    }
 
 @app.post("/api/upload")
 async def upload_file(token: str = Form(...), file: UploadFile = File(...)):
@@ -1369,6 +1561,35 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 current_timestamp = datetime.now(timezone.utc).isoformat()
                 
+                # Проверяем чёрный список (двусторонняя блокировка)
+                if receiver_id != user_id:
+                    if await BlockModel.is_blocked(receiver_id, user_id) or await BlockModel.is_blocked(user_id, receiver_id):
+                        continue  # Молча игнорируем
+
+                    # Проверяем, не удалён ли получатель
+                    recv_info = await UserModel.get_user_by_id(receiver_id)
+                    if recv_info and recv_info.get('is_deleted'):
+                        continue  # Нельзя писать удалённому пользователю
+
+                    # Проверяем настройку "принимать сообщения только от известных"
+                    if recv_info:
+                        try:
+                            recv_priv = json.loads(recv_info.get('privacy_settings') or '{}')
+                            if not recv_priv.get('allow_messages', True):
+                                # Проверяем: есть ли уже история переписки?
+                                pool_chk = await DatabasePool.get_pool()
+                                async with pool_chk.acquire() as conn_chk:
+                                    async with conn_chk.cursor() as cur_chk:
+                                        await cur_chk.execute(
+                                            "SELECT 1 FROM messages WHERE (sender_id=%s AND receiver_id=%s) OR (sender_id=%s AND receiver_id=%s) LIMIT 1",
+                                            (user_id, receiver_id, receiver_id, user_id)
+                                        )
+                                        has_history = await cur_chk.fetchone() is not None
+                                if not has_history:
+                                    continue  # Новый собеседник — не принимать
+                        except Exception:
+                            pass
+
                 # Получаем информацию об ответе
                 reply_to_text = None
                 reply_to_sender = None
@@ -1471,11 +1692,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 files_json = json.dumps(files_list) if files_list else None
                 current_timestamp = datetime.now(timezone.utc).isoformat()
 
+                # Проверяем членство пользователя в группе
+                sender_role = await GroupModel.get_member_role(group_id, user_id)
+                if sender_role is None:
+                    continue
+
                 # Каналы: только администраторы могут создавать посты (сообщения без reply_to_id)
                 if reply_to_id is None:
                     grp_info = await GroupModel.get_group(group_id)
                     if grp_info and grp_info.get('is_channel'):
-                        sender_role = await GroupModel.get_member_role(group_id, user_id)
                         if sender_role != 'admin':
                             continue
                 # Получаем информацию о сообщении, на которое отвечаем
@@ -1567,6 +1792,10 @@ async def websocket_endpoint(websocket: WebSocket):
             # Индикатор набора текста (групповой)
             elif data.get("type") == "group_typing":
                 group_id = data.get("group_id")
+                # Проверяем членство перед рассылкой typing-индикатора
+                typing_role = await GroupModel.get_member_role(group_id, user_id)
+                if typing_role is None:
+                    continue
                 members = await GroupModel.get_members(group_id)
                 for member in members:
                     if member['id'] != user_id:
@@ -1864,6 +2093,474 @@ async def remove_chat_from_folder(folder_id: int, chat_type: str, chat_id: int, 
     if not payload: raise HTTPException(401, "Invalid token")
     ok = await FolderModel.remove_chat(folder_id, chat_type, chat_id)
     return {"ok": ok}
+
+# ========== Admin guard ==========
+
+async def require_admin(token: str) -> dict:
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT tag FROM users WHERE id = %s", (payload['user_id'],))
+            user = await cur.fetchone()
+    if not user or user.get('tag') not in ('kayano', 'durov'):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return payload
+
+# ========== Support chat ==========
+
+@app.post("/api/support/send")
+async def support_send(request: SupportSendRequest, token: str):
+    payload = decode_jwt_token(token)
+    if not payload: raise HTTPException(401, "Invalid token")
+    user_id = payload['user_id']
+    if not request.message_text.strip():
+        raise HTTPException(400, "Empty message")
+    msg_id = await SupportModel.send_message(user_id, request.message_text.strip())
+    if not msg_id:
+        raise HTTPException(500, "Failed to send message")
+    admin_ids = await SupportModel.get_admin_ids()
+    for admin_id in admin_ids:
+        await manager.send_message_to_user(admin_id, {
+            "type": "support_message",
+            "data": {"user_id": user_id, "msg_id": msg_id, "message_text": request.message_text.strip()}
+        })
+    return {"success": True, "id": msg_id}
+
+@app.get("/api/support/messages")
+async def get_support_messages(token: str):
+    payload = decode_jwt_token(token)
+    if not payload: raise HTTPException(401, "Invalid token")
+    messages = await SupportModel.get_user_messages(payload['user_id'])
+    await SupportModel.mark_user_read(payload['user_id'])
+    return {"messages": messages}
+
+@app.get("/api/support/unread")
+async def get_support_unread(token: str):
+    payload = decode_jwt_token(token)
+    if not payload: raise HTTPException(401, "Invalid token")
+    has_unread = await SupportModel.has_unread_replies(payload['user_id'])
+    return {"has_unread": has_unread}
+
+# ========== Admin panel ==========
+
+@app.get("/api/admin/stats")
+async def get_admin_stats(token: str):
+    await require_admin(token)
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            stats = {}
+            await cur.execute("SELECT COUNT(*) as cnt FROM users")
+            stats['total_users'] = (await cur.fetchone())['cnt']
+            for label, cond in [
+                ('day', "DATE(timestamp) = CURDATE()"),
+                ('week', "timestamp >= DATE_SUB(NOW(), INTERVAL 7 DAY)"),
+                ('month', "timestamp >= DATE_SUB(NOW(), INTERVAL 30 DAY)"),
+            ]:
+                await cur.execute(
+                    f"SELECT (SELECT COUNT(*) FROM messages WHERE {cond} AND is_deleted = 0) + "
+                    f"(SELECT COUNT(*) FROM group_messages WHERE {cond} AND is_deleted = 0) as cnt"
+                )
+                stats[f'messages_{label}'] = (await cur.fetchone())['cnt']
+            for label, cond in [
+                ('day', "DATE(timestamp) = CURDATE()"),
+                ('week', "timestamp >= DATE_SUB(NOW(), INTERVAL 7 DAY)"),
+                ('month', "timestamp >= DATE_SUB(NOW(), INTERVAL 30 DAY)"),
+            ]:
+                await cur.execute(
+                    f"SELECT (SELECT COUNT(*) FROM messages WHERE (file_path IS NOT NULL OR files IS NOT NULL) AND {cond} AND is_deleted = 0) + "
+                    f"(SELECT COUNT(*) FROM group_messages WHERE (file_path IS NOT NULL OR files IS NOT NULL) AND {cond} AND is_deleted = 0) as cnt"
+                )
+                stats[f'files_{label}'] = (await cur.fetchone())['cnt']
+            for label, cond in [
+                ('day', "DATE(created_at) = CURDATE()"),
+                ('week', "created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)"),
+                ('month', "created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)"),
+            ]:
+                await cur.execute(f"SELECT COUNT(*) as cnt FROM users WHERE {cond}")
+                stats[f'users_{label}'] = (await cur.fetchone())['cnt']
+            await cur.execute("""
+                SELECT DATE(created_at) as d, COUNT(*) as cnt
+                FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                GROUP BY DATE(created_at) ORDER BY d
+            """)
+            stats['reg_chart'] = [{"date": str(r['d']), "count": r['cnt']} for r in await cur.fetchall()]
+            stats['online_now'] = len(manager.active_connections)
+            return stats
+
+@app.get("/api/admin/users")
+async def get_admin_users(token: str, search: str = ""):
+    await require_admin(token)
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            if search:
+                await cur.execute("""
+                    SELECT id, username, tag, email, created_at, avatar, status, is_deleted
+                    FROM users WHERE username LIKE %s OR tag LIKE %s OR email LIKE %s
+                    ORDER BY created_at DESC LIMIT 200
+                """, (f'%{search}%', f'%{search}%', f'%{search}%'))
+            else:
+                await cur.execute("""
+                    SELECT id, username, tag, email, created_at, avatar, status, is_deleted
+                    FROM users ORDER BY created_at DESC LIMIT 200
+                """)
+            rows = await cur.fetchall()
+            for r in rows:
+                if r.get('created_at') and hasattr(r['created_at'], 'isoformat'):
+                    r['created_at'] = r['created_at'].replace(tzinfo=timezone.utc).isoformat()
+            return {"users": rows}
+
+@app.delete("/api/admin/users/{user_id}")
+async def delete_admin_user(user_id: int, token: str):
+    payload = await require_admin(token)
+    if payload['user_id'] == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    related_ids = await _get_related_user_ids(user_id)
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE users SET is_deleted = 1, username = 'Удалённый пользователь', tag = NULL, avatar = NULL, status = NULL WHERE id = %s",
+                (user_id,)
+            )
+            await conn.commit()
+    deleted_event = {
+        "type": "profile_updated",
+        "data": {"user_id": user_id, "username": "Удалённый пользователь", "avatar": None, "status": None, "avatar_color": "#6b7280"}
+    }
+    for uid in related_ids | {user_id}:
+        await manager.send_message_to_user(uid, deleted_event)
+    return {"success": True}
+
+@app.delete("/api/account")
+async def delete_own_account(token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user_id = payload['user_id']
+    related_ids = await _get_related_user_ids(user_id)
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE users SET is_deleted = 1, username = 'Удалённый пользователь', tag = NULL, avatar = NULL, status = NULL WHERE id = %s",
+                (user_id,)
+            )
+            await conn.commit()
+    deleted_event = {
+        "type": "profile_updated",
+        "data": {"user_id": user_id, "username": "Удалённый пользователь", "avatar": None, "status": None, "avatar_color": "#6b7280"}
+    }
+    for uid in related_ids:
+        await manager.send_message_to_user(uid, deleted_event)
+    await manager.send_message_to_user(user_id, {"type": "account_deleted", "data": {}})
+    return {"success": True}
+
+@app.get("/api/admin/support")
+async def get_admin_support(token: str):
+    await require_admin(token)
+    threads = await SupportModel.get_all_threads()
+    return {"threads": threads}
+
+@app.get("/api/admin/support/{user_id}")
+async def get_admin_support_thread(user_id: int, token: str):
+    await require_admin(token)
+    messages = await SupportModel.get_thread(user_id)
+    return {"messages": messages}
+
+@app.post("/api/admin/support/reply")
+async def admin_support_reply(request: AdminReplyRequest, token: str):
+    payload = await require_admin(token)
+    if not request.message_text.strip():
+        raise HTTPException(400, "Empty message")
+    msg_id = await SupportModel.admin_reply(payload['user_id'], request.user_id, request.message_text.strip())
+    if not msg_id:
+        raise HTTPException(500, "Failed to send reply")
+    await manager.send_message_to_user(request.user_id, {
+        "type": "support_reply",
+        "data": {"msg_id": msg_id, "message_text": request.message_text.strip(), "admin_id": payload['user_id']}
+    })
+    return {"success": True, "id": msg_id}
+
+# ========== Encryption — public key exchange ==========
+
+@app.put("/api/users/me/public-key")
+async def update_public_key(request: UpdatePublicKeyRequest, token: str):
+    payload = decode_jwt_token(token)
+    if not payload: raise HTTPException(401, "Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE users SET public_key = %s WHERE id = %s",
+                              (request.public_key, payload['user_id']))
+    return {"ok": True}
+
+@app.get("/api/users/{user_id}/public-key")
+async def get_public_key(user_id: int, token: str):
+    payload = decode_jwt_token(token)
+    if not payload: raise HTTPException(401, "Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT public_key FROM users WHERE id = %s", (user_id,))
+            row = await cur.fetchone()
+    if not row: raise HTTPException(404, "User not found")
+    return {"public_key": row.get("public_key")}
+
+# ========== Scheduled messages ==========
+
+async def scheduled_message_worker():
+    """Background task: fires due scheduled messages every 20 seconds."""
+    while True:
+        await asyncio.sleep(20)
+        try:
+            pool = await DatabasePool.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor(aiomysql.DictCursor) as cur:
+                    await cur.execute("""
+                        SELECT * FROM scheduled_messages
+                        WHERE sent = 0 AND scheduled_at <= NOW()
+                        LIMIT 50
+                    """)
+                    due = await cur.fetchall()
+                    for m in due:
+                        await cur.execute(
+                            "UPDATE scheduled_messages SET sent = 1 WHERE id = %s", (m['id'],)
+                        )
+                        await conn.commit()
+                        # Insert into real messages table
+                        if m['receiver_id']:
+                            await cur.execute(
+                                "INSERT INTO messages (sender_id, receiver_id, message_text) VALUES (%s, %s, %s)",
+                                (m['sender_id'], m['receiver_id'], m['message_text'])
+                            )
+                            msg_id = cur.lastrowid
+                            await conn.commit()
+                            msg_data = {
+                                "type": "message",
+                                "data": {
+                                    "id": msg_id,
+                                    "sender_id": m['sender_id'],
+                                    "receiver_id": m['receiver_id'],
+                                    "message_text": m['message_text'],
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "is_read": 0,
+                                    "scheduled_id": m['id'],
+                                }
+                            }
+                            await manager.send_message_to_user(m['sender_id'], {**msg_data, "data": {**msg_data["data"], "is_own": True}})
+                            await manager.send_message_to_user(m['receiver_id'], msg_data)
+                        elif m['group_id']:
+                            await cur.execute(
+                                "INSERT INTO group_messages (group_id, sender_id, message_text) VALUES (%s, %s, %s)",
+                                (m['group_id'], m['sender_id'], m['message_text'])
+                            )
+                            msg_id = cur.lastrowid
+                            await conn.commit()
+                            from .models import GroupModel
+                            members = await GroupModel.get_members(m['group_id'])
+                            msg_data = {
+                                "type": "group_message",
+                                "data": {
+                                    "id": msg_id,
+                                    "group_id": m['group_id'],
+                                    "sender_id": m['sender_id'],
+                                    "message_text": m['message_text'],
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "scheduled_id": m['id'],
+                                }
+                            }
+                            for member in members:
+                                await manager.send_message_to_user(member['id'], msg_data)
+                        # Notify sender that scheduled message was sent
+                        await manager.send_message_to_user(m['sender_id'], {
+                            "type": "scheduled_sent",
+                            "data": {"scheduled_id": m['id']}
+                        })
+        except Exception as e:
+            print(f"Scheduler error: {e}")
+
+@app.post("/api/messages/schedule")
+async def schedule_message(request: ScheduleMessageRequest, token: str):
+    payload = decode_jwt_token(token)
+    if not payload: raise HTTPException(401, "Invalid token")
+    if not request.message_text.strip(): raise HTTPException(400, "Empty message")
+    if not request.receiver_id and not request.group_id:
+        raise HTTPException(400, "receiver_id or group_id required")
+    try:
+        scheduled_at = datetime.fromisoformat(request.scheduled_at.replace('Z', '+00:00'))
+    except Exception:
+        raise HTTPException(400, "Invalid scheduled_at datetime")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO scheduled_messages (sender_id, receiver_id, group_id, message_text, scheduled_at) VALUES (%s, %s, %s, %s, %s)",
+                (payload['user_id'], request.receiver_id, request.group_id, request.message_text.strip(), scheduled_at)
+            )
+            new_id = cur.lastrowid
+            await conn.commit()
+    return {"success": True, "id": new_id, "scheduled_at": scheduled_at.isoformat()}
+
+@app.get("/api/messages/scheduled")
+async def get_scheduled_messages(token: str, receiver_id: Optional[int] = None, group_id: Optional[int] = None):
+    payload = decode_jwt_token(token)
+    if not payload: raise HTTPException(401, "Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            if receiver_id:
+                await cur.execute(
+                    "SELECT * FROM scheduled_messages WHERE sender_id = %s AND receiver_id = %s AND sent = 0 ORDER BY scheduled_at",
+                    (payload['user_id'], receiver_id)
+                )
+            elif group_id:
+                await cur.execute(
+                    "SELECT * FROM scheduled_messages WHERE sender_id = %s AND group_id = %s AND sent = 0 ORDER BY scheduled_at",
+                    (payload['user_id'], group_id)
+                )
+            else:
+                await cur.execute(
+                    "SELECT * FROM scheduled_messages WHERE sender_id = %s AND sent = 0 ORDER BY scheduled_at",
+                    (payload['user_id'],)
+                )
+            rows = await cur.fetchall()
+            for r in rows:
+                if r.get('scheduled_at') and hasattr(r['scheduled_at'], 'isoformat'):
+                    r['scheduled_at'] = r['scheduled_at'].replace(tzinfo=timezone.utc).isoformat()
+                if r.get('created_at') and hasattr(r['created_at'], 'isoformat'):
+                    r['created_at'] = r['created_at'].replace(tzinfo=timezone.utc).isoformat()
+    return {"scheduled": rows}
+
+@app.delete("/api/messages/scheduled/{scheduled_id}")
+async def delete_scheduled_message(scheduled_id: int, token: str):
+    payload = decode_jwt_token(token)
+    if not payload: raise HTTPException(401, "Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM scheduled_messages WHERE id = %s AND sender_id = %s AND sent = 0",
+                (scheduled_id, payload['user_id'])
+            )
+            deleted = cur.rowcount
+            await conn.commit()
+    return {"ok": deleted > 0}
+
+# ========== Опросы ==========
+
+@app.post("/api/polls")
+async def create_poll(request: CreatePollRequest, token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    if len(request.options) < 2 or len(request.options) > 10:
+        raise HTTPException(status_code=400, detail="Poll must have 2-10 options")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO polls (creator_id, question, options, is_anonymous, is_multi_choice) VALUES (%s, %s, %s, %s, %s)",
+                (payload['user_id'], request.question, json.dumps(request.options, ensure_ascii=False),
+                 1 if request.is_anonymous else 0, 1 if request.is_multi_choice else 0)
+            )
+            poll_id = cur.lastrowid
+            await conn.commit()
+    return {"poll_id": poll_id}
+
+@app.get("/api/polls/{poll_id}")
+async def get_poll(poll_id: int, token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT * FROM polls WHERE id = %s", (poll_id,))
+            poll = await cur.fetchone()
+            if not poll:
+                raise HTTPException(status_code=404, detail="Poll not found")
+            await cur.execute("SELECT user_id, option_indices FROM poll_votes WHERE poll_id = %s", (poll_id,))
+            votes_rows = await cur.fetchall()
+    options = poll['options'] if isinstance(poll['options'], list) else json.loads(poll['options'])
+    vote_counts = [0] * len(options)
+    voters_by_option: list[list] = [[] for _ in options]
+    my_votes: list[int] = []
+    for row in votes_rows:
+        indices = row['option_indices'] if isinstance(row['option_indices'], list) else json.loads(row['option_indices'])
+        for idx in indices:
+            if 0 <= idx < len(options):
+                vote_counts[idx] += 1
+                voters_by_option[idx].append(row['user_id'])
+        if row['user_id'] == payload['user_id']:
+            my_votes = indices
+    total_voters = len(votes_rows)
+    # Get voter usernames if not anonymous
+    voter_names: list[list] = [[] for _ in options]
+    if not poll['is_anonymous'] and votes_rows:
+        all_voter_ids = list({row['user_id'] for row in votes_rows})
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                placeholders = ','.join(['%s'] * len(all_voter_ids))
+                await cur.execute(f"SELECT id, username, tag, avatar FROM users WHERE id IN ({placeholders})", all_voter_ids)
+                user_rows = {r['id']: r for r in await cur.fetchall()}
+        for i, uid_list in enumerate(voters_by_option):
+            voter_names[i] = [{'id': uid, 'username': user_rows[uid]['username'], 'tag': user_rows[uid].get('tag'), 'avatar': user_rows[uid].get('avatar')} for uid in uid_list if uid in user_rows]
+    return {
+        "id": poll_id,
+        "question": poll['question'],
+        "options": options,
+        "is_anonymous": bool(poll['is_anonymous']),
+        "is_multi_choice": bool(poll['is_multi_choice']),
+        "vote_counts": vote_counts,
+        "total_voters": total_voters,
+        "my_votes": my_votes,
+        "voters": voter_names if not poll['is_anonymous'] else [[] for _ in options],
+    }
+
+@app.delete("/api/polls/{poll_id}/vote")
+async def unvote_poll(poll_id: int, token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM poll_votes WHERE poll_id = %s AND user_id = %s",
+                (poll_id, payload['user_id'])
+            )
+            await conn.commit()
+    return {"ok": True}
+
+@app.post("/api/polls/{poll_id}/vote")
+async def vote_poll(poll_id: int, request: VotePollRequest, token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT * FROM polls WHERE id = %s", (poll_id,))
+            poll = await cur.fetchone()
+            if not poll:
+                raise HTTPException(status_code=404, detail="Poll not found")
+            options = poll['options'] if isinstance(poll['options'], list) else json.loads(poll['options'])
+            for idx in request.option_indices:
+                if idx < 0 or idx >= len(options):
+                    raise HTTPException(status_code=400, detail="Invalid option index")
+            if not poll['is_multi_choice'] and len(request.option_indices) > 1:
+                raise HTTPException(status_code=400, detail="Single choice poll")
+            await cur.execute(
+                "INSERT INTO poll_votes (poll_id, user_id, option_indices) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE option_indices = VALUES(option_indices)",
+                (poll_id, payload['user_id'], json.dumps(request.option_indices))
+            )
+            await conn.commit()
+    return {"ok": True}
 
 # ========== Статика ==========
 

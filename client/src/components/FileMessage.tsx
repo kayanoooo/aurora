@@ -87,7 +87,6 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
                 <div
                     style={{ position: 'relative', display: 'inline-block', borderRadius: 14, overflow: 'hidden', maxWidth: 280, cursor: 'zoom-in' }}
                     onClick={() => setLightboxOpen(true)}
-                    title="Нажмите для просмотра • ПКМ — скачать"
                 >
                     <img
                         src={fileUrl}
@@ -95,15 +94,6 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
                         style={{ display: 'block', maxWidth: '100%', maxHeight: 260, objectFit: 'cover', borderRadius: 14 }}
                         onError={e => { e.currentTarget.style.display = 'none'; }}
                     />
-                    {/* Подсказка */}
-                    <div style={{
-                        position: 'absolute', bottom: 0, left: 0, right: 0,
-                        background: 'linear-gradient(transparent, rgba(0,0,0,0.4))',
-                        padding: '18px 10px 8px', borderRadius: '0 0 14px 14px',
-                        fontSize: 11, color: 'rgba(255,255,255,0.8)', textAlign: 'right',
-                    }}>
-                        🔍 ПКМ — скачать
-                    </div>
                 </div>
 
                 {lightboxOpen && (
@@ -331,7 +321,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
     const btnColor = isOwn ? 'white' : '#6366f1';
 
     return (
-        <div style={{ width: 260, background: bg, border: `1px solid ${border}`, borderRadius: 14, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ width: '100%', maxWidth: 260, minWidth: 180, background: bg, border: `1px solid ${border}`, borderRadius: 14, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8, boxSizing: 'border-box' }}>
             {localAudioEl}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <button onClick={toggle} style={{ width: 36, height: 36, borderRadius: '50%', background: btnBg, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: btnColor, flexShrink: 0 }}>
@@ -546,38 +536,75 @@ const LightboxGallery: React.FC<{ images: GalleryImage[]; initialIndex: number; 
 // ── ImageGrid — сетка изображений для нескольких фото ──
 export interface GridImage { url: string; name: string; }
 
+interface CellDef { index: number; col: string; row: string; h: number; }
+
+const buildCells = (count: number, MAX: number): { cells: CellDef[]; cols: string; gridW: number } => {
+    const n = Math.min(count, MAX);
+    // 1 photo
+    if (n === 1) return { cells: [{ index: 0, col: '1 / -1', row: '1 / -1', h: 240 }], cols: '1fr', gridW: 280 };
+    // 2 photos
+    if (n === 2) return { cells: [{ index: 0, col: '1', row: '1', h: 180 }, { index: 1, col: '2', row: '1', h: 180 }], cols: '1fr 1fr', gridW: 300 };
+    // 3 photos: big left, 2 stacked right
+    if (n === 3) return {
+        cells: [
+            { index: 0, col: '1', row: '1 / 3', h: 200 },
+            { index: 1, col: '2', row: '1', h: 98 },
+            { index: 2, col: '2', row: '2', h: 98 },
+        ], cols: '1.3fr 1fr', gridW: 300,
+    };
+    // 4 photos: 2x2
+    if (n === 4) return {
+        cells: [
+            { index: 0, col: '1', row: '1', h: 148 }, { index: 1, col: '2', row: '1', h: 148 },
+            { index: 2, col: '1', row: '2', h: 148 }, { index: 3, col: '2', row: '2', h: 148 },
+        ], cols: '1fr 1fr', gridW: 300,
+    };
+    // 5 photos: 2 top + 3 bottom
+    if (n === 5) return {
+        cells: [
+            { index: 0, col: '1', row: '1', h: 140 }, { index: 1, col: '2', row: '1', h: 140 },
+            { index: 2, col: '1', row: '2', h: 100 }, { index: 3, col: '2', row: '2', h: 100 }, { index: 4, col: '3', row: '2', h: 100 },
+        ], cols: '1fr 1fr 1fr', gridW: 320,
+    };
+    // 6 photos: 3x2
+    if (n === 6) return {
+        cells: [
+            { index: 0, col: '1', row: '1', h: 120 }, { index: 1, col: '2', row: '1', h: 120 }, { index: 2, col: '3', row: '1', h: 120 },
+            { index: 3, col: '1', row: '2', h: 120 }, { index: 4, col: '2', row: '2', h: 120 }, { index: 5, col: '3', row: '2', h: 120 },
+        ], cols: '1fr 1fr 1fr', gridW: 320,
+    };
+    // 7–9 photos: 3 per row
+    const cells: CellDef[] = [];
+    for (let i = 0; i < n; i++) {
+        const col = (i % 3) + 1;
+        const row = Math.floor(i / 3) + 1;
+        cells.push({ index: i, col: String(col), row: String(row), h: 105 });
+    }
+    return { cells, cols: '1fr 1fr 1fr', gridW: 320 };
+};
+
 export const ImageGrid: React.FC<{ images: GridImage[] }> = ({ images }) => {
     const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
     const count = images.length;
-    const MAX_CELLS = 4;
-    const shown = images.slice(0, MAX_CELLS);
-    const hiddenCount = Math.max(0, count - MAX_CELLS);
-
-    // Grid layout config based on count
-    const getLayout = () => {
-        if (count === 1) return { cols: '1fr', cellH: 240, firstSpan: false };
-        if (count === 2) return { cols: '1fr 1fr', cellH: 165, firstSpan: false };
-        if (count === 3) return { cols: '1fr 1fr', cellH: 120, firstSpan: true }; // first spans full row
-        return { cols: '1fr 1fr', cellH: 135, firstSpan: false }; // 4+
-    };
-    const { cols, cellH, firstSpan } = getLayout();
+    const MAX = 9;
+    const hiddenCount = Math.max(0, count - MAX);
+    const { cells, cols, gridW } = buildCells(count, MAX);
 
     return (
         <>
-            <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 2, width: 280, borderRadius: 14, overflow: 'hidden' }}>
-                {shown.map((img, i) => {
-                    const isLastShown = i === shown.length - 1 && hiddenCount > 0;
-                    const spanFull = firstSpan && i === 0;
-                    const h = spanFull ? 160 : count === 3 && i > 0 ? 105 : cellH;
+            <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 2, width: gridW, borderRadius: 12, overflow: 'hidden' }}>
+                {cells.map(({ index, col, row, h }) => {
+                    const img = images[index];
+                    const isLast = index === cells.length - 1 && hiddenCount > 0;
                     return (
                         <div
-                            key={i}
-                            onClick={() => setLightboxIndex(i)}
-                            style={{ position: 'relative', height: h, overflow: 'hidden', cursor: 'zoom-in', gridColumn: spanFull ? '1 / -1' : undefined }}
+                            key={index}
+                            onClick={() => setLightboxIndex(index)}
+                            style={{ position: 'relative', height: h, overflow: 'hidden', cursor: 'zoom-in', gridColumn: col, gridRow: row }}
                         >
                             <img src={img.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                            {isLastShown && (
-                                <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 700, color: 'white' }}>
+                            {isLast && (
+                                <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.58)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 700, color: 'white', letterSpacing: '-0.5px' }}>
                                     +{hiddenCount}
                                 </div>
                             )}

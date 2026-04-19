@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { config } from '../config';
+import { useLang } from '../i18n';
 
 interface MediaFile {
     messageId: number;
@@ -50,11 +51,11 @@ const downloadFile = async (src: string, filename: string) => {
     }
 };
 
-const Lightbox: React.FC<{ src: string; filename: string; isVideo: boolean; onClose: () => void }> = ({ src, filename, isVideo: vid, onClose }) => {
+const Lightbox: React.FC<{ src: string; filename: string; isVideo: boolean; onClose: () => void; tFn: (k: string) => string }> = ({ src, filename, isVideo: vid, onClose, tFn }) => {
     const download = () => downloadFile(src, filename);
 
     return ReactDOM.createPortal(
-        <div onClick={onClose} style={{
+        <div className="modal-backdrop-enter" onClick={onClose} style={{
             position: 'fixed', inset: 0, zIndex: 9999,
             background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(8px)',
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -68,7 +69,7 @@ const Lightbox: React.FC<{ src: string; filename: string; isVideo: boolean; onCl
                 <div style={{ display: 'flex', gap: 10 }}>
                     <button onClick={download}
                         style={{ padding: '8px 16px', background: 'rgba(99,102,241,0.85)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backdropFilter: 'blur(4px)' }}>
-                        💾 Скачать
+                        💾 {tFn('Download')}
                     </button>
                     <button onClick={onClose}
                         style={{ width: 36, height: 36, background: 'rgba(255,255,255,0.12)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -85,14 +86,16 @@ const Lightbox: React.FC<{ src: string; filename: string; isVideo: boolean; onCl
             </div>
             {/* Hint */}
             <div style={{ position: 'absolute', bottom: 20, color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>
-                Нажмите вне изображения или Esc чтобы закрыть
+                {tFn('Click outside or press Esc to close')}
             </div>
+
         </div>,
         document.body
     );
 };
 
 const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, onClose, onGoToMessage }) => {
+    const { t, lang } = useLang();
     const [tab, setTab] = useState<'media' | 'audio' | 'files'>('media');
     const [lightbox, setLightbox] = useState<{ src: string; filename: string; isVideo: boolean } | null>(null);
 
@@ -134,6 +137,9 @@ const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, o
     const tabActive = { background: '#6366f1', color: 'white', border: 'none' };
     const tabInactive = { background: 'none', color: sub, border: `1px solid ${border}` };
 
+    const goToMsgTitle = lang === 'en' ? 'Go to message' : 'Перейти к сообщению';
+    const downloadTitle = lang === 'en' ? 'Download' : 'Скачать';
+
     return (
         <div style={{
             position: 'absolute', top: 0, right: 0, bottom: 0, width: 320,
@@ -144,20 +150,20 @@ const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, o
         }}>
             {/* Header */}
             <div style={{ padding: '14px 16px', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontWeight: 700, fontSize: 15, color: text }}>Медиа и файлы</span>
+                <span style={{ fontWeight: 700, fontSize: 15, color: text }}>{t('Media')} & {t('Files')}</span>
                 <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: sub, fontSize: 18, lineHeight: 1 }}>✕</button>
             </div>
 
             {/* Tabs */}
             <div style={{ display: 'flex', gap: 6, padding: '10px 14px', borderBottom: `1px solid ${border}`, backgroundColor: bg2 }}>
                 <button onClick={() => setTab('media')} style={{ flex: 1, padding: '6px 0', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600, ...(tab === 'media' ? tabActive : tabInactive) }}>
-                    🖼 Медиа {mediaFiles.length > 0 && `(${mediaFiles.length})`}
+                    🖼 {t('Media')} {mediaFiles.length > 0 && `(${mediaFiles.length})`}
                 </button>
                 <button onClick={() => setTab('audio')} style={{ flex: 1, padding: '6px 0', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600, ...(tab === 'audio' ? tabActive : tabInactive) }}>
-                    🎵 Аудио {audioFiles.length > 0 && `(${audioFiles.length})`}
+                    🎵 {t('Audio')} {audioFiles.length > 0 && `(${audioFiles.length})`}
                 </button>
                 <button onClick={() => setTab('files')} style={{ flex: 1, padding: '6px 0', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600, ...(tab === 'files' ? tabActive : tabInactive) }}>
-                    📄 Файлы {otherFiles.length > 0 && `(${otherFiles.length})`}
+                    📄 {t('Files')} {otherFiles.length > 0 && `(${otherFiles.length})`}
                 </button>
             </div>
 
@@ -165,7 +171,7 @@ const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, o
             <div style={{ flex: 1, overflowY: 'auto' }}>
                 {tab === 'media' && (
                     mediaFiles.length === 0
-                        ? <div style={{ padding: 32, textAlign: 'center', color: sub, fontSize: 13 }}>Нет медиафайлов</div>
+                        ? <div style={{ padding: 32, textAlign: 'center', color: sub, fontSize: 13 }}>{t('No media')}</div>
                         : <div style={{ padding: 10, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
                             {mediaFiles.map((f, i) => {
                                 const src = f.filePath.startsWith('http') ? f.filePath : `${BASE_URL}${f.filePath}`;
@@ -197,7 +203,7 @@ const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, o
 
                 {tab === 'audio' && (
                     audioFiles.length === 0
-                        ? <div style={{ padding: 32, textAlign: 'center', color: sub, fontSize: 13 }}>Нет аудиофайлов</div>
+                        ? <div style={{ padding: 32, textAlign: 'center', color: sub, fontSize: 13 }}>{lang === 'en' ? 'No audio files' : 'Нет аудиофайлов'}</div>
                         : <div style={{ padding: '4px 0' }}>
                             {audioFiles.map((f, i) => {
                                 const src = f.filePath.startsWith('http') ? f.filePath : `${BASE_URL}${f.filePath}`;
@@ -213,8 +219,8 @@ const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, o
                                             </div>
                                         </div>
                                         <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
-                                            <button onClick={() => downloadFile(src, f.filename)} style={{ width: 28, height: 28, borderRadius: 8, background: dm ? '#252540' : '#f0f0ff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6366f1', fontSize: 14 }} title="Скачать">⬇</button>
-                                            <button onClick={() => { onGoToMessage(f.messageId); onClose(); }} style={{ width: 28, height: 28, borderRadius: 8, background: dm ? '#252540' : '#f0f0ff', border: 'none', cursor: 'pointer', color: '#6366f1', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Перейти к сообщению">→</button>
+                                            <button onClick={() => downloadFile(src, f.filename)} style={{ width: 28, height: 28, borderRadius: 8, background: dm ? '#252540' : '#f0f0ff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6366f1', fontSize: 14 }} title={downloadTitle}>⬇</button>
+                                            <button onClick={() => { onGoToMessage(f.messageId); onClose(); }} style={{ width: 28, height: 28, borderRadius: 8, background: dm ? '#252540' : '#f0f0ff', border: 'none', cursor: 'pointer', color: '#6366f1', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={goToMsgTitle}>→</button>
                                         </div>
                                     </div>
                                 );
@@ -224,7 +230,7 @@ const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, o
 
                 {tab === 'files' && (
                     otherFiles.length === 0
-                        ? <div style={{ padding: 32, textAlign: 'center', color: sub, fontSize: 13 }}>Нет файлов</div>
+                        ? <div style={{ padding: 32, textAlign: 'center', color: sub, fontSize: 13 }}>{t('No files')}</div>
                         : <div style={{ padding: '4px 0' }}>
                             {otherFiles.map((f, i) => {
                                 const src = f.filePath.startsWith('http') ? f.filePath : `${BASE_URL}${f.filePath}`;
@@ -241,9 +247,9 @@ const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, o
                                             </div>
                                         </div>
                                         <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
-                                            <button onClick={() => downloadFile(src, f.filename)} style={{ width: 28, height: 28, borderRadius: 8, background: dm ? '#252540' : '#f0f0ff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6366f1', fontSize: 14 }} title="Скачать">⬇</button>
+                                            <button onClick={() => downloadFile(src, f.filename)} style={{ width: 28, height: 28, borderRadius: 8, background: dm ? '#252540' : '#f0f0ff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6366f1', fontSize: 14 }} title={downloadTitle}>⬇</button>
                                             <button onClick={() => { onGoToMessage(f.messageId); onClose(); }}
-                                                style={{ width: 28, height: 28, borderRadius: 8, background: dm ? '#252540' : '#f0f0ff', border: 'none', cursor: 'pointer', color: '#6366f1', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Перейти к сообщению">→</button>
+                                                style={{ width: 28, height: 28, borderRadius: 8, background: dm ? '#252540' : '#f0f0ff', border: 'none', cursor: 'pointer', color: '#6366f1', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={goToMsgTitle}>→</button>
                                         </div>
                                     </div>
                                 );
@@ -252,7 +258,7 @@ const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, o
                 )}
             </div>
 
-            {lightbox && <Lightbox src={lightbox.src} filename={lightbox.filename} isVideo={lightbox.isVideo} onClose={() => setLightbox(null)} />}
+            {lightbox && <Lightbox src={lightbox.src} filename={lightbox.filename} isVideo={lightbox.isVideo} onClose={() => setLightbox(null)} tFn={t} />}
         </div>
     );
 };

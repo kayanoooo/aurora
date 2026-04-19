@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { api } from '../services/api';
+import { useLang } from '../i18n';
 
 type Screen = 'login' | 'register' | 'reset';
 
@@ -8,6 +9,7 @@ interface AuthProps {
 }
 
 const Auth: React.FC<AuthProps> = ({ onAuth }) => {
+    const { t } = useLang();
     const [screen, setScreen] = useState<Screen>('login');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -34,29 +36,29 @@ const Auth: React.FC<AuthProps> = ({ onAuth }) => {
                 if (res?.success) {
                     onAuth(res.token, res.user_id, res.username, res.setup_required);
                 } else {
-                    setError(Array.isArray(res?.detail) ? res.detail.map((e: any) => { const field = e.loc?.slice(-1)[0]; return field ? `${field}: ${e.msg}` : e.msg; }).join('; ') : (res?.detail || 'Неверный email или пароль'));
+                    setError(Array.isArray(res?.detail) ? res.detail.map((e: any) => { const field = e.loc?.slice(-1)[0]; return field ? `${field}: ${e.msg}` : e.msg; }).join('; ') : (res?.detail || t('Invalid username or password')));
                 }
             } else if (screen === 'register') {
                 const res = await api.register(email, password);
                 if (res?.success) {
                     onAuth(res.token, res.user_id, '', true);
                 } else {
-                    setError(Array.isArray(res?.detail) ? res.detail.map((e: any) => e.msg).join('; ') : (res?.detail || 'Ошибка регистрации'));
+                    setError(Array.isArray(res?.detail) ? res.detail.map((e: any) => e.msg).join('; ') : (res?.detail || t('Registration error')));
                 }
             } else {
                 const res = await api.resetPassword(email, resetTag, resetOldPass, resetNewPass);
                 if (res?.success) {
-                    setSuccess('Пароль успешно изменён! Войдите с новым паролем.');
+                    setSuccess(t('Password changed! Sign in with new password.'));
                     setTimeout(() => { reset(); setScreen('login'); }, 2000);
                 } else {
-                    setError(Array.isArray(res?.detail) ? res.detail.map((e: any) => e.msg).join('; ') : (res?.detail || 'Пользователь не найден'));
+                    setError(Array.isArray(res?.detail) ? res.detail.map((e: any) => e.msg).join('; ') : (res?.detail || t('User not found')));
                 }
             }
         } catch (err: any) {
             if (err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
-                setError('Сервер недоступен. Проверьте подключение.');
+                setError(t('Server unavailable. Check connection.'));
             } else {
-                setError(err.message || 'Произошла ошибка');
+                setError(err.message || t('An error occurred'));
             }
         } finally {
             setLoading(false);
@@ -77,13 +79,13 @@ const Auth: React.FC<AuthProps> = ({ onAuth }) => {
                 </div>
                 <h1 style={st.appName}>Aurora</h1>
                 <p style={st.subtitle}>
-                    {screen === 'login' ? 'Добро пожаловать обратно!' : screen === 'register' ? 'Создайте аккаунт' : 'Восстановление пароля'}
+                    {screen === 'login' ? t('Welcome back!') : screen === 'register' ? t('Create account') : t('Password recovery')}
                 </p>
 
                 {screen !== 'reset' && (
                     <div style={st.tabRow}>
-                        <button onClick={() => switchScreen('login')} style={{ ...st.tabBtn, ...(screen === 'login' ? st.tabBtnActive : {}) }}>Вход</button>
-                        <button onClick={() => switchScreen('register')} style={{ ...st.tabBtn, ...(screen === 'register' ? st.tabBtnActive : {}) }}>Регистрация</button>
+                        <button onClick={() => switchScreen('login')} style={{ ...st.tabBtn, ...(screen === 'login' ? st.tabBtnActive : {}) }}>{t('Sign In')}</button>
+                        <button onClick={() => switchScreen('register')} style={{ ...st.tabBtn, ...(screen === 'register' ? st.tabBtnActive : {}) }}>{t('Sign Up')}</button>
                     </div>
                 )}
 
@@ -96,7 +98,7 @@ const Auth: React.FC<AuthProps> = ({ onAuth }) => {
                     {screen === 'reset' && (
                         <div className="auth-input-wrap" style={st.inputWrap}>
                             <span style={st.inputIcon}>🏷️</span>
-                            <input type="text" placeholder="Тег (@ваш_тег)" value={resetTag} onChange={e => setResetTag(e.target.value.replace(/^@/, ''))} style={st.input} required />
+                            <input type="text" placeholder={t('Tag (@your_tag)')} value={resetTag} onChange={e => setResetTag(e.target.value.replace(/^@/, ''))} style={st.input} required />
                         </div>
                     )}
 
@@ -105,7 +107,7 @@ const Auth: React.FC<AuthProps> = ({ onAuth }) => {
                             <span style={st.inputIcon}>🔑</span>
                             <input
                                 type={showOldPass ? 'text' : 'password'}
-                                placeholder="Текущий пароль"
+                                placeholder={t('Current password')}
                                 value={resetOldPass}
                                 onChange={e => setResetOldPass(e.target.value)}
                                 style={{ ...st.input, paddingRight: 44 }}
@@ -119,7 +121,7 @@ const Auth: React.FC<AuthProps> = ({ onAuth }) => {
                         <span style={st.inputIcon}>🔒</span>
                         <input
                             type={showPass ? 'text' : 'password'}
-                            placeholder={screen === 'reset' ? 'Новый пароль' : 'Пароль'}
+                            placeholder={screen === 'reset' ? t('New password') : t('Password')}
                             value={screen === 'reset' ? resetNewPass : password}
                             onChange={e => screen === 'reset' ? setResetNewPass(e.target.value) : setPassword(e.target.value)}
                             style={{ ...st.input, paddingRight: 44 }}
@@ -132,16 +134,16 @@ const Auth: React.FC<AuthProps> = ({ onAuth }) => {
                     {success && <div style={st.successBox}>✓ {success}</div>}
 
                     <button type="submit" disabled={loading} className={!loading ? 'auth-btn-pulse' : ''} style={{ ...st.submitBtn, ...(loading ? st.submitBtnLoading : {}) }}>
-                        {loading ? <span style={st.loader} /> : screen === 'login' ? '→ Войти' : screen === 'register' ? '✓ Зарегистрироваться' : '🔑 Сбросить пароль'}
+                        {loading ? <span style={st.loader} /> : screen === 'login' ? t('→ Sign In') : screen === 'register' ? t('✓ Sign Up') : t('🔑 Reset password')}
                     </button>
                 </form>
 
                 <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
                     {screen === 'login' && (
-                        <button onClick={() => switchScreen('reset')} style={st.switchLink}>Забыли пароль?</button>
+                        <button onClick={() => switchScreen('reset')} style={st.switchLink}>{t('Forgot password?')}</button>
                     )}
                     {screen === 'reset' && (
-                        <button onClick={() => switchScreen('login')} style={st.switchLink}>← Назад ко входу</button>
+                        <button onClick={() => switchScreen('login')} style={st.switchLink}>{t('← Back to sign in')}</button>
                     )}
                 </div>
             </div>

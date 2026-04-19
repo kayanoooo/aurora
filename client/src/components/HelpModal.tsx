@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 
 interface HelpModalProps {
     isDark?: boolean;
+    initialTab?: 'features' | 'patchnotes' | 'authors';
     onClose: () => void;
 }
 
@@ -165,20 +166,41 @@ const PATCHNOTES = [
     },
 ];
 
-const HelpModal: React.FC<HelpModalProps> = ({ isDark = false, onClose }) => {
+const AUTHORS = {
+    developers: [
+        { tag: 'kayano', role: 'Lead developer' },
+        { tag: 'durov', role: 'Developer' },
+    ],
+    testers: [
+        { tag: 'even', role: 'Tester' },
+        { tag: 'revesore', role: 'Tester' },
+        { tag: 'kokoko', role: 'Tester' },
+    ],
+};
+
+const HelpModal: React.FC<HelpModalProps> = ({ isDark = false, initialTab = 'features', onClose }) => {
     const dm = isDark;
-    const [tab, setTab] = useState<'features' | 'patchnotes'>('features');
+    const [tab, setTab] = useState<'features' | 'patchnotes' | 'authors'>(initialTab);
     const [closing, setClosing] = useState(false);
     const close = () => { setClosing(true); setTimeout(onClose, 180); };
 
+    const isOled = dm && document.body.classList.contains('oled-theme');
+    const bg = isOled ? '#000000' : (dm ? '#1a1a2e' : '#ffffff');
+    const cardBg = isOled ? '#050508' : (dm ? '#12122a' : '#f8f7ff');
+    const border = isOled ? 'rgba(167,139,250,0.2)' : (dm ? 'rgba(99,102,241,0.25)' : '#ede9fe');
+    const cardBorder = isOled ? 'rgba(167,139,250,0.12)' : (dm ? 'rgba(99,102,241,0.15)' : '#ede9fe');
+    const tabBarBg = isOled ? '#050508' : (dm ? '#12122a' : '#f3f4f6');
+    const tabActiveBg = isOled ? '#0a0a14' : (dm ? '#1e1e3a' : 'white');
+    const shadow = dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)';
+
     return (
         <div
-            style={{ position: 'fixed', inset: 0, backgroundColor: dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000 }}
+            style={{ position: 'fixed', inset: 0, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000 }}
             className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'}
             onClick={close}
         >
             <div
-                style={{ backgroundColor: dm ? '#13132a' : '#ffffff', borderRadius: 20, width: 440, maxWidth: '92vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)', border: dm ? '1px solid rgba(99,102,241,0.25)' : '1px solid #ede9fe', position: 'relative' }}
+                style={{ backgroundColor: bg, borderRadius: 20, width: 440, maxWidth: '92vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: shadow, border: `1px solid ${border}`, position: 'relative' }}
                 className={closing ? 'modal-exit' : 'modal-enter'}
                 onClick={e => e.stopPropagation()}
             >
@@ -193,22 +215,60 @@ const HelpModal: React.FC<HelpModalProps> = ({ isDark = false, onClose }) => {
                         </div>
                     </div>
                     {/* Tabs */}
-                    <div style={{ display: 'flex', backgroundColor: dm ? '#1e1e3a' : '#f3f4f6', borderRadius: 10, padding: 3, gap: 3 }}>
-                        <button onClick={() => setTab('features')} style={{ flex: 1, padding: '7px 0', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, background: tab === 'features' ? (dm ? '#2d2b5a' : 'white') : 'none', color: tab === 'features' ? (dm ? '#a5b4fc' : '#6366f1') : (dm ? '#5a5a8a' : '#9ca3af'), boxShadow: tab === 'features' ? '0 1px 4px rgba(0,0,0,0.12)' : 'none', transition: 'all 0.2s' }}>
+                    <div style={{ display: 'flex', backgroundColor: tabBarBg, borderRadius: 10, padding: 3, gap: 3 }}>
+                        <button onClick={() => setTab('features')} style={{ flex: 1, padding: '7px 0', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, background: tab === 'features' ? tabActiveBg : 'none', color: tab === 'features' ? (dm ? '#a5b4fc' : '#6366f1') : (dm ? '#5a5a8a' : '#9ca3af'), boxShadow: tab === 'features' ? '0 1px 4px rgba(0,0,0,0.12)' : 'none', transition: 'all 0.2s' }}>
                             ✨ Возможности
                         </button>
-                        <button onClick={() => setTab('patchnotes')} style={{ flex: 1, padding: '7px 0', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, background: tab === 'patchnotes' ? (dm ? '#2d2b5a' : 'white') : 'none', color: tab === 'patchnotes' ? (dm ? '#a5b4fc' : '#6366f1') : (dm ? '#5a5a8a' : '#9ca3af'), boxShadow: tab === 'patchnotes' ? '0 1px 4px rgba(0,0,0,0.12)' : 'none', transition: 'all 0.2s' }}>
+                        <button onClick={() => setTab('patchnotes')} style={{ flex: 1, padding: '7px 0', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, background: tab === 'patchnotes' ? tabActiveBg : 'none', color: tab === 'patchnotes' ? (dm ? '#a5b4fc' : '#6366f1') : (dm ? '#5a5a8a' : '#9ca3af'), boxShadow: tab === 'patchnotes' ? '0 1px 4px rgba(0,0,0,0.12)' : 'none', transition: 'all 0.2s' }}>
                             📋 Обновления
+                        </button>
+                        <button onClick={() => setTab('authors')} style={{ flex: 1, padding: '7px 0', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, background: tab === 'authors' ? tabActiveBg : 'none', color: tab === 'authors' ? (dm ? '#a5b4fc' : '#6366f1') : (dm ? '#5a5a8a' : '#9ca3af'), boxShadow: tab === 'authors' ? '0 1px 4px rgba(0,0,0,0.12)' : 'none', transition: 'all 0.2s' }}>
+                            👥 Авторы
                         </button>
                     </div>
                 </div>
 
                 {/* Content */}
                 <div style={{ overflowY: 'auto', flex: 1, padding: '16px 24px 20px' }}>
-                    {tab === 'features' ? (
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    {tab === 'authors' ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                            <div style={{ backgroundColor: cardBg, borderRadius: 14, padding: '16px 18px', border: `1px solid ${cardBorder}` }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: dm ? '#7c7caa' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 12 }}>🔧 Разработчики</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                    {AUTHORS.developers.map(a => (
+                                        <div key={a.tag} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                            <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'linear-gradient(135deg, #6c47d4, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: 16, flexShrink: 0 }}>
+                                                {a.tag[0].toUpperCase()}
+                                            </div>
+                                            <div>
+                                                <div style={{ fontWeight: 700, fontSize: 14, color: dm ? '#e0e0f0' : '#1e1b4b' }}>@{a.tag} <span style={{ fontSize: 12 }}>🔧</span></div>
+                                                <div style={{ fontSize: 12, color: dm ? '#7c7caa' : '#9ca3af' }}>{a.role}</div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <div style={{ backgroundColor: cardBg, borderRadius: 14, padding: '16px 18px', border: `1px solid ${cardBorder}` }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: dm ? '#7c7caa' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 12 }}>🧪 Тестеры</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                    {AUTHORS.testers.map(a => (
+                                        <div key={a.tag} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                            <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'linear-gradient(135deg, #0ea5e9, #6366f1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: 16, flexShrink: 0 }}>
+                                                {a.tag[0].toUpperCase()}
+                                            </div>
+                                            <div>
+                                                <div style={{ fontWeight: 700, fontSize: 14, color: dm ? '#e0e0f0' : '#1e1b4b' }}>@{a.tag}</div>
+                                                <div style={{ fontSize: 12, color: dm ? '#7c7caa' : '#9ca3af' }}>{a.role}</div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    ) : tab === 'features' ? (
+                        <div className="help-features-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                             {FEATURES.map(f => (
-                                <div key={f.title} style={{ backgroundColor: dm ? '#1e1e3a' : '#f8f7ff', borderRadius: 12, padding: '10px 12px', border: dm ? '1px solid rgba(255,255,255,0.05)' : '1px solid #ede9fe' }}>
+                                <div key={f.title} style={{ backgroundColor: cardBg, borderRadius: 12, padding: '10px 12px', border: `1px solid ${cardBorder}` }}>
                                     <div style={{ fontSize: 18, marginBottom: 4 }}>{f.icon}</div>
                                     <div style={{ fontSize: 12, fontWeight: 700, color: dm ? '#c0b4e8' : '#4f46e5', marginBottom: 2 }}>{f.title}</div>
                                     <div style={{ fontSize: 11, color: dm ? '#6868a0' : '#9ca3af', lineHeight: 1.4 }}>{f.desc}</div>
@@ -218,7 +278,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ isDark = false, onClose }) => {
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                             {PATCHNOTES.map(p => (
-                                <div key={p.version} style={{ backgroundColor: dm ? '#1e1e3a' : '#f8f7ff', borderRadius: 14, padding: '14px 16px', border: dm ? '1px solid rgba(255,255,255,0.05)' : '1px solid #ede9fe' }}>
+                                <div key={p.version} style={{ backgroundColor: cardBg, borderRadius: 14, padding: '14px 16px', border: `1px solid ${cardBorder}` }}>
                                     <div style={{ marginBottom: 10 }}>
                                         <span style={{ fontSize: 15, fontWeight: 800, color: dm ? '#a5b4fc' : '#6366f1' }}>Версия {p.version}</span>
                                     </div>

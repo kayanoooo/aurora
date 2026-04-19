@@ -18,6 +18,8 @@ export interface User {
     last_msg_filename?: string | null;
     last_msg_time?: string | null;
     last_msg_sender_id?: number | null;
+    last_msg_is_read?: number | null;
+    is_developer?: boolean;
 }
 
 export interface Message {
@@ -70,6 +72,7 @@ export interface GroupMember {
     tag?: string;
     role: 'admin' | 'member';
     joined_at: string;
+    custom_title?: string;
 }
 
 export interface GroupMessage {

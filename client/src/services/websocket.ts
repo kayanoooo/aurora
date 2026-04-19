@@ -7,6 +7,7 @@ class WebSocketService {
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private reconnectAttempts: number = 0;
     private readonly MAX_RECONNECT_DELAY = 30000;
+    private readonly MAX_QUEUE_SIZE = 100;
 
     private constructor() {}
 
@@ -132,12 +133,12 @@ class WebSocketService {
         }
         if (this.socket.readyState === WebSocket.CONNECTING) {
             console.log('⏳ queuing (still connecting):', message.type);
-            this.queue.push(message);
+            if (this.queue.length < this.MAX_QUEUE_SIZE) this.queue.push(message);
             return true;
         }
         // Socket is CLOSING or CLOSED — queue and let reconnect flush it
         console.log('⏳ queuing (socket closing/closed, will retry on reconnect):', message.type);
-        this.queue.push(message);
+        if (this.queue.length < this.MAX_QUEUE_SIZE) this.queue.push(message);
         return true;
     }
 

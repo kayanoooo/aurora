@@ -2,6 +2,13 @@
   text-align: left;
 }
 
+html.no-animations *,
+html.no-animations *::before,
+html.no-animations *::after {
+  transition: none !important;
+  animation: none !important;
+}
+
 .App-logo {
   height: 40vmin;
   pointer-events: none;
@@ -35,4 +42,30 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Scheduled message clock animation */
+@keyframes clockMinute {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes clockHour {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.clock-minute-hand {
+  animation: clockMinute 2s linear infinite;
+  transform-origin: 50% 100%;
+}
+.clock-hour-hand {
+  animation: clockHour 24s linear infinite;
+  transform-origin: 50% 100%;
+}
+
+/* Scheduled message bubble — slight opacity */
+.msg-scheduled {
+  opacity: 0.75;
+}
+.msg-scheduled:hover {
+  opacity: 1;
 }

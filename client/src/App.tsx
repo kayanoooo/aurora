@@ -17,12 +17,9 @@ const DEFAULT_THEME: ThemeSettings = {
 };
 
 const THEME_MAP: Record<string, Partial<ThemeSettings>> = {
-    dark:     { darkMode: true,  chatBg: '#1a1a2e', bubbleOwnColor: '#6366f1' },
-    light:    { darkMode: false, chatBg: '#f8f9ff', bubbleOwnColor: '#6366f1' },
-    midnight: { darkMode: true,  chatBg: '#0f0c29', bubbleOwnColor: '#8b5cf6' },
-    forest:   { darkMode: true,  chatBg: '#1a2e1a', bubbleOwnColor: '#22c55e' },
-    ocean:    { darkMode: true,  chatBg: '#0c1a2e', bubbleOwnColor: '#06b6d4' },
-    rose:     { darkMode: true,  chatBg: '#2e1a1a', bubbleOwnColor: '#f43f5e' },
+    light: { darkMode: false, chatBg: '#f8f9ff', bubbleOwnColor: '#6366f1',  bubbleOtherColor: '#e8e8e8' },
+    dark:  { darkMode: true,  chatBg: '#1a1a2e', bubbleOwnColor: '#6366f1',  bubbleOtherColor: '#2a2a3d' },
+    oled:  { darkMode: true,  chatBg: '#000000', bubbleOwnColor: '#a78bfa',  bubbleOtherColor: '#0d0d0d' },
 };
 
 interface AuthState {
@@ -32,6 +29,7 @@ interface AuthState {
     avatar?: string;
     status?: string;
     tag?: string;
+    isDeveloper?: boolean;
 }
 
 function App() {
@@ -40,13 +38,25 @@ function App() {
     const [loading, setLoading] = useState(true);
     const [theme, setTheme] = useState<ThemeSettings>(() => {
         try {
-            const saved = localStorage.getItem('chat_theme');
-            return saved ? { ...DEFAULT_THEME, ...JSON.parse(saved) } : DEFAULT_THEME;
+            let userId: number | null = null;
+            try { const a = localStorage.getItem('chat_auth'); if (a) userId = JSON.parse(a).userId; } catch {}
+            const key = userId ? `chat_theme_${userId}` : 'chat_theme';
+            const saved = localStorage.getItem(key) ?? (userId ? localStorage.getItem('chat_theme') : null);
+            const t = saved ? { ...DEFAULT_THEME, ...JSON.parse(saved) } : DEFAULT_THEME;
+            if (t.darkMode && t.chatBg === '#000000') document.body.classList.add('oled-theme');
+            return t;
         } catch { return DEFAULT_THEME; }
     });
 
     const restoreSession = useCallback(async (token: string, userId: number, username: string) => {
         try {
+            const themeKey = `chat_theme_${userId}`;
+            const saved = localStorage.getItem(themeKey) ?? localStorage.getItem('chat_theme');
+            if (saved) {
+                const t = { ...DEFAULT_THEME, ...JSON.parse(saved) };
+                setTheme(t);
+                document.body.classList.toggle('oled-theme', t.darkMode && t.chatBg === '#000000');
+            }
             const res = await api.getProfile(token);
             if (res.success && res.user) {
                 const avatar = res.user.avatar || undefined;
@@ -55,23 +65,23 @@ function App() {
                 if (res.user.avatar_color) {
                     setTheme(prev => {
                         const updated = { ...prev, avatarColor: res.user.avatar_color };
-                        localStorage.setItem('chat_theme', JSON.stringify(updated));
+                        localStorage.setItem(themeKey, JSON.stringify(updated));
                         return updated;
                     });
                 }
                 setAuth({ token, userId, username: res.user.username || username, avatar, status, tag });
             } else {
-                sessionStorage.removeItem('chat_auth');
+                localStorage.removeItem('chat_auth');
             }
         } catch {
-            sessionStorage.removeItem('chat_auth');
+            localStorage.removeItem('chat_auth');
         }
         setLoading(false);
     }, []);
 
     useEffect(() => {
         try {
-            const saved = sessionStorage.getItem('chat_auth');
+            const saved = localStorage.getItem('chat_auth');
             if (saved) {
                 const { token, userId, username } = JSON.parse(saved);
                 if (token && userId && username) {
@@ -88,6 +98,13 @@ function App() {
             setSetupToken(token);
             return;
         }
+        const themeKey = `chat_theme_${userId}`;
+        const saved = localStorage.getItem(themeKey) ?? localStorage.getItem('chat_theme');
+        if (saved) {
+            const t = { ...DEFAULT_THEME, ...JSON.parse(saved) };
+            setTheme(t);
+            document.body.classList.toggle('oled-theme', t.darkMode && t.chatBg === '#000000');
+        }
         let avatar: string | undefined;
         let status: string | undefined;
         let tag: string | undefined;
@@ -100,13 +117,13 @@ function App() {
                 if (res.user.avatar_color) {
                     setTheme(prev => {
                         const updated = { ...prev, avatarColor: res.user.avatar_color };
-                        localStorage.setItem('chat_theme', JSON.stringify(updated));
+                        localStorage.setItem(themeKey, JSON.stringify(updated));
                         return updated;
                     });
                 }
             }
         } catch {}
-        sessionStorage.setItem('chat_auth', JSON.stringify({ token, userId, username }));
+        localStorage.setItem('chat_auth', JSON.stringify({ token, userId, username }));
         setAuth({ token, userId, username, avatar, status, tag });
     }, []);
 
@@ -114,7 +131,6 @@ function App() {
         const themeOverride = THEME_MAP[selectedTheme] || {};
         const newTheme = { ...DEFAULT_THEME, ...themeOverride };
         setTheme(newTheme);
-        localStorage.setItem('chat_theme', JSON.stringify(newTheme));
 
         setSetupToken(null);
         let avatar: string | undefined;
@@ -131,28 +147,35 @@ function App() {
             console.error('Failed to fetch profile after setup');
             return;
         }
-        sessionStorage.setItem('chat_auth', JSON.stringify({ token: newToken, userId, username }));
+        localStorage.setItem(`chat_theme_${userId}`, JSON.stringify(newTheme));
+        localStorage.setItem('chat_auth', JSON.stringify({ token: newToken, userId, username }));
         setAuth({ token: newToken, userId, username, avatar });
     }, []);
 
     const handleThemeChange = useCallback((newTheme: ThemeSettings) => {
-        setTheme(newTheme);
-        localStorage.setItem('chat_theme', JSON.stringify(newTheme));
-    }, []);
+        const fixed = (!newTheme.darkMode && newTheme.chatBg === '#000000')
+            ? { ...newTheme, chatBg: '#f8f9ff' }
+            : newTheme;
+        setTheme(fixed);
+        const key = auth ? `chat_theme_${auth.userId}` : 'chat_theme';
+        localStorage.setItem(key, JSON.stringify(fixed));
+        const oled = fixed.darkMode && fixed.chatBg === '#000000';
+        document.body.classList.toggle('oled-theme', oled);
+    }, [auth]);
 
     const handleLogout = useCallback(() => {
         wsService.disconnect();
-        sessionStorage.removeItem('chat_auth');
+        localStorage.removeItem('chat_auth');
         setAuth(null);
         setSetupToken(null);
         setTheme(DEFAULT_THEME);
     }, []);
 
-    const handleProfileUpdate = useCallback((username: string, avatar?: string, status?: string) => {
+    const handleProfileUpdate = useCallback((username: string, avatar?: string, status?: string, tag?: string) => {
         setAuth(prev => {
             if (!prev) return prev;
-            const updated = { ...prev, username, avatar, status };
-            sessionStorage.setItem('chat_auth', JSON.stringify({ token: updated.token, userId: updated.userId, username: updated.username }));
+            const updated = { ...prev, username, avatar, status, tag: tag ?? prev.tag };
+            localStorage.setItem('chat_auth', JSON.stringify({ token: updated.token, userId: updated.userId, username: updated.username }));
             return updated;
         });
     }, []);

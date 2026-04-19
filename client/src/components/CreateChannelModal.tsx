@@ -1,6 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { api } from '../services/api';
 import { config } from '../config';
+import { useLang } from '../i18n';
+import AvatarCropper from './AvatarCropper';
 
 interface CreateChannelModalProps {
     token: string;
@@ -11,12 +13,14 @@ interface CreateChannelModalProps {
 
 const CreateChannelModal: React.FC<CreateChannelModalProps> = ({ token, isDark = false, onClose, onChannelCreated }) => {
     const dm = isDark;
+    const { t } = useLang();
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [channelType, setChannelType] = useState<'public' | 'private'>('public');
     const [channelTag, setChannelTag] = useState('');
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
     const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+    const [cropSrc, setCropSrc] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [closing, setClosing] = useState(false);
@@ -26,11 +30,23 @@ const CreateChannelModal: React.FC<CreateChannelModalProps> = ({ token, isDark =
 
     const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const f = e.target.files?.[0];
+        e.target.value = '';
         if (!f) return;
-        setAvatarFile(f);
-        const reader = new FileReader();
-        reader.onload = ev => setAvatarPreview(ev.target?.result as string);
-        reader.readAsDataURL(f);
+        setCropSrc(URL.createObjectURL(f));
+    };
+
+    const handleCropApply = (blob: Blob) => {
+        if (cropSrc) URL.revokeObjectURL(cropSrc);
+        setCropSrc(null);
+        const croppedFile = new File([blob], 'avatar.jpg', { type: 'image/jpeg' });
+        setAvatarFile(croppedFile);
+        if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+        setAvatarPreview(URL.createObjectURL(croppedFile));
+    };
+
+    const handleCropCancel = () => {
+        if (cropSrc) URL.revokeObjectURL(cropSrc);
+        setCropSrc(null);
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -41,17 +57,16 @@ const CreateChannelModal: React.FC<CreateChannelModalProps> = ({ token, isDark =
         try {
             const res = await api.createChannel(token, name.trim(), description, channelType, channelType === 'public' ? channelTag : undefined);
             if (res.success) {
-                // Upload avatar if selected
                 if (avatarFile && res.channel_id) {
                     await api.updateGroupAvatar(token, res.channel_id, avatarFile);
                 }
                 onChannelCreated();
                 close();
             } else {
-                setError(res.detail || 'Ошибка создания канала');
+                setError(res.detail || t('Save error'));
             }
         } catch (err: any) {
-            setError('Ошибка сети');
+            setError(t('Network error'));
             console.error(err);
         } finally {
             setLoading(false);
@@ -59,19 +74,21 @@ const CreateChannelModal: React.FC<CreateChannelModalProps> = ({ token, isDark =
     };
 
     // Style tokens
-    const bg = dm ? '#13132a' : '#ffffff';
+    const isOled = dm && document.body.classList.contains('oled-theme');
+    const bg = isOled ? '#000000' : (dm ? '#1a1a2e' : '#ffffff');
     const col = dm ? '#e2e8f0' : '#1e1b4b';
     const subCol = dm ? '#7c7caa' : '#6b7280';
-    const inputBg = dm ? '#1e1e3a' : '#f5f3ff';
-    const inputBorder = dm ? '1.5px solid #3a3a5e' : '1.5px solid #ede9fe';
-    const cardBg = dm ? '#1a1a2e' : '#fafbff';
-    const borderCol = dm ? '#2a2a3d' : '#ede9fe';
+    const inputBg = isOled ? '#050508' : (dm ? '#12122a' : '#f5f3ff');
+    const inputBorder = isOled ? '1.5px solid rgba(167,139,250,0.2)' : (dm ? '1.5px solid rgba(99,102,241,0.25)' : '1.5px solid #ede9fe');
+    const cardBg = isOled ? '#050508' : (dm ? '#12122a' : '#fafbff');
+    const borderCol = isOled ? 'rgba(167,139,250,0.2)' : (dm ? 'rgba(99,102,241,0.25)' : '#ede9fe');
 
     const inp: React.CSSProperties = { width: '100%', padding: '11px 14px', border: inputBorder, borderRadius: 12, fontSize: 14, boxSizing: 'border-box', backgroundColor: inputBg, color: col, outline: 'none', fontFamily: 'inherit' };
 
     return (
+        <>
         <div
-            style={{ position: 'fixed', inset: 0, backgroundColor: dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}
+            style={{ position: 'fixed', inset: 0, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}
             className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'}
             onClick={close}
         >
@@ -80,7 +97,7 @@ const CreateChannelModal: React.FC<CreateChannelModalProps> = ({ token, isDark =
                 className={closing ? 'modal-exit' : 'modal-enter'}
                 onClick={e => e.stopPropagation()}
             >
-                <h3 style={{ margin: '0 0 22px', textAlign: 'center', color: col, fontWeight: 700, fontSize: 18 }}>📢 Создать канал</h3>
+                <h3 style={{ margin: '0 0 22px', textAlign: 'center', color: col, fontWeight: 700, fontSize: 18 }}>{t('📢 Create channel')}</h3>
 
                 <form onSubmit={handleSubmit}>
                     {/* Avatar */}
@@ -99,48 +116,48 @@ const CreateChannelModal: React.FC<CreateChannelModalProps> = ({ token, isDark =
                                 <span style={{ color: 'white', fontSize: 20 }}>📷</span>
                             </div>
                         </div>
-                        <div style={{ marginTop: 6, fontSize: 11, color: subCol }}>Нажмите чтобы добавить фото</div>
+                        <div style={{ marginTop: 6, fontSize: 11, color: subCol }}>{t('Click to add photo')}</div>
                         <input ref={fileRef} type="file" accept="image/*" onChange={handleAvatarChange} style={{ display: 'none' }} />
                     </div>
 
                     {/* Name */}
                     <div style={{ marginBottom: 12 }}>
-                        <label style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'block', marginBottom: 5 }}>Название канала</label>
-                        <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Введите название" style={inp} autoFocus required />
+                        <label style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'block', marginBottom: 5 }}>{t('Channel name')}</label>
+                        <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder={t('Enter name...')} style={inp} autoFocus required />
                     </div>
 
                     {/* Description */}
                     <div style={{ marginBottom: 16 }}>
-                        <label style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'block', marginBottom: 5 }}>Описание</label>
-                        <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="О чём этот канал?" rows={3} style={{ ...inp, resize: 'vertical' }} />
+                        <label style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'block', marginBottom: 5 }}>{t('Description')}</label>
+                        <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder={t('What is this channel about?')} rows={3} style={{ ...inp, resize: 'vertical' }} />
                     </div>
 
                     {/* Type toggle */}
                     <div style={{ marginBottom: 16 }}>
-                        <label style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'block', marginBottom: 8 }}>Тип канала</label>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'block', marginBottom: 8 }}>{t('Channel type')}</label>
                         <div style={{ display: 'flex', gap: 8 }}>
-                            {(['public', 'private'] as const).map(t => (
+                            {(['public', 'private'] as const).map(ct => (
                                 <button
-                                    key={t}
+                                    key={ct}
                                     type="button"
-                                    onClick={() => setChannelType(t)}
-                                    style={{ flex: 1, padding: '10px 0', border: channelType === t ? '2px solid #6366f1' : `2px solid ${borderCol}`, borderRadius: 12, background: channelType === t ? (dm ? 'rgba(99,102,241,0.15)' : '#f0efff') : cardBg, color: channelType === t ? '#6366f1' : subCol, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }}
+                                    onClick={() => setChannelType(ct)}
+                                    style={{ flex: 1, padding: '10px 0', border: channelType === ct ? '2px solid #6366f1' : `2px solid ${borderCol}`, borderRadius: 12, background: channelType === ct ? (dm ? 'rgba(99,102,241,0.15)' : '#f0efff') : cardBg, color: channelType === ct ? '#6366f1' : subCol, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }}
                                 >
-                                    {t === 'public' ? '🌐 Публичный' : '🔒 Частный'}
+                                    {ct === 'public' ? t('🌐 Public') : t('🔒 Private')}
                                 </button>
                             ))}
                         </div>
                         <div style={{ marginTop: 8, fontSize: 12, color: subCol, lineHeight: 1.5 }}>
                             {channelType === 'public'
-                                ? 'Любой может найти и вступить по тегу'
-                                : 'Вступить можно только по приглашению'}
+                                ? t('Anyone can find and join by tag')
+                                : t('Join by invite only')}
                         </div>
                     </div>
 
                     {/* Public tag */}
                     {channelType === 'public' && (
                         <div style={{ marginBottom: 16 }}>
-                            <label style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'block', marginBottom: 5 }}>Публичный тег</label>
+                            <label style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'block', marginBottom: 5 }}>{t('Public tag')}</label>
                             <div style={{ position: 'relative' }}>
                                 <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: '#6366f1', fontWeight: 700, fontSize: 15 }}>@</span>
                                 <input
@@ -152,7 +169,7 @@ const CreateChannelModal: React.FC<CreateChannelModalProps> = ({ token, isDark =
                                 />
                             </div>
                             <div style={{ marginTop: 4, fontSize: 11, color: subCol }}>
-                                Только буквы, цифры и _
+                                {t('Letters, numbers and _ only')}
                             </div>
                         </div>
                     )}
@@ -160,16 +177,18 @@ const CreateChannelModal: React.FC<CreateChannelModalProps> = ({ token, isDark =
                     {error && <div style={{ color: '#ef4444', fontSize: 12, marginBottom: 12, textAlign: 'center' }}>{error}</div>}
 
                     <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-                        <button type="button" onClick={close} style={{ flex: 1, padding: '11px 0', background: dm ? '#252538' : '#f0f2f5', color: dm ? '#9999bb' : '#555', border: dm ? '1.5px solid #3a3a5e' : '1px solid #ddd', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
-                            Отмена
+                        <button type="button" onClick={close} style={{ flex: 1, padding: '11px 0', background: dm ? '#12122a' : '#f0f2f5', color: dm ? '#9999bb' : '#555', border: dm ? '1.5px solid rgba(99,102,241,0.25)' : '1px solid #ddd', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
+                            {t('Cancel')}
                         </button>
-                        <button type="submit" disabled={loading || !name.trim()} style={{ flex: 2, padding: '11px 0', background: (loading || !name.trim()) ? (dm ? '#2a2a3d' : '#e5e7eb') : 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: (loading || !name.trim()) ? subCol : 'white', border: 'none', borderRadius: 12, cursor: (loading || !name.trim()) ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 700, boxShadow: (loading || !name.trim()) ? 'none' : '0 4px 14px rgba(99,102,241,0.35)' }}>
-                            {loading ? 'Создание...' : '📢 Создать канал'}
+                        <button type="submit" disabled={loading || !name.trim()} style={{ flex: 2, padding: '11px 0', background: (loading || !name.trim()) ? (dm ? '#1e1e3a' : '#e5e7eb') : 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: (loading || !name.trim()) ? subCol : 'white', border: 'none', borderRadius: 12, cursor: (loading || !name.trim()) ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 700, boxShadow: (loading || !name.trim()) ? 'none' : '0 4px 14px rgba(99,102,241,0.35)' }}>
+                            {loading ? t('Creating...') : t('📢 Create channel')}
                         </button>
                     </div>
                 </form>
             </div>
         </div>
+        {cropSrc && <AvatarCropper src={cropSrc} isDark={dm} onApply={handleCropApply} onCancel={handleCropCancel} />}
+        </>
     );
 };
 

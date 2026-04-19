@@ -246,7 +246,7 @@ export const api = {
         return data;
     },
 
-    async getGroupMessages(token: string, groupId: number, limit: number = 50) {
+    async getGroupMessages(token: string, groupId: number, limit: number = 10000) {
         const response = await fetch(`${API_URL}/groups/${groupId}/messages?token=${token}&limit=${limit}`);
         return response.json();
     },
@@ -298,6 +298,21 @@ export const api = {
 
     async removeTag(token: string, tag: string) {
         const response = await fetch(`${API_URL}/profile/tags/${encodeURIComponent(tag)}?token=${token}`, { method: 'DELETE' });
+        return response.json();
+    },
+
+    async blockUser(token: string, userId: number) {
+        const response = await fetch(`${API_URL}/block/${userId}?token=${token}`, { method: 'POST' });
+        return response.json();
+    },
+
+    async unblockUser(token: string, userId: number) {
+        const response = await fetch(`${API_URL}/block/${userId}?token=${token}`, { method: 'DELETE' });
+        return response.json();
+    },
+
+    async getBlockedUsers(token: string) {
+        const response = await fetch(`${API_URL}/blocked?token=${token}`);
         return response.json();
     },
 
@@ -402,6 +417,13 @@ export const api = {
         return response.json();
     },
 
+    async setMemberTitle(token: string, groupId: number, userId: number, title: string) {
+        const response = await fetch(`${API_URL}/groups/${groupId}/members/${userId}/title?token=${token}&title=${encodeURIComponent(title)}`, {
+            method: 'PUT',
+        });
+        return response.json();
+    },
+
     async updateChannelSettings(token: string, groupId: number, channelType?: string, channelTag?: string) {
         const response = await fetch(`${API_URL}/groups/${groupId}/channel-settings?token=${token}`, {
             method: 'PUT',
@@ -409,5 +431,150 @@ export const api = {
             body: JSON.stringify({ channel_type: channelType, channel_tag: channelTag }),
         });
         return response.json();
+    },
+
+    async viewPost(token: string, groupId: number, messageId: number) {
+        try {
+            const response = await fetch(`${API_URL}/groups/${groupId}/messages/${messageId}/view?token=${token}`, {
+                method: 'POST',
+            });
+            return response.json();
+        } catch { return { view_count: 0 }; }
+    },
+
+    async sendSupportMessage(token: string, message_text: string) {
+        const response = await fetch(`${API_URL}/support/send?token=${token}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message_text }),
+        });
+        return response.json();
+    },
+
+    async getSupportMessages(token: string) {
+        const response = await fetch(`${API_URL}/support/messages?token=${token}`);
+        return response.json();
+    },
+
+    async getSupportUnread(token: string) {
+        try {
+            const response = await fetch(`${API_URL}/support/unread?token=${token}`);
+            return response.json();
+        } catch { return { has_unread: false }; }
+    },
+
+    async getAdminStats(token: string) {
+        const response = await fetch(`${API_URL}/admin/stats?token=${token}`);
+        return response.json();
+    },
+
+    async getAdminUsers(token: string, search = '') {
+        const response = await fetch(`${API_URL}/admin/users?token=${token}&search=${encodeURIComponent(search)}`);
+        return response.json();
+    },
+
+    async deleteAdminUser(token: string, userId: number) {
+        const response = await fetch(`${API_URL}/admin/users/${userId}?token=${token}`, { method: 'DELETE' });
+        return response.json();
+    },
+
+    async deleteOwnAccount(token: string) {
+        const response = await fetch(`${API_URL}/account?token=${token}`, { method: 'DELETE' });
+        return response.json();
+    },
+
+    async getAdminSupport(token: string) {
+        const response = await fetch(`${API_URL}/admin/support?token=${token}`);
+        return response.json();
+    },
+
+    async getAdminSupportThread(token: string, userId: number) {
+        const response = await fetch(`${API_URL}/admin/support/${userId}?token=${token}`);
+        return response.json();
+    },
+
+    async updatePublicKey(token: string, public_key: string) {
+        const response = await fetch(`${API_URL}/users/me/public-key?token=${token}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ public_key }),
+        });
+        return response.json();
+    },
+
+    async getUserPublicKey(token: string, userId: number): Promise<string | null> {
+        try {
+            const response = await fetch(`${API_URL}/users/${userId}/public-key?token=${token}`);
+            const data = await response.json();
+            return data.public_key || null;
+        } catch { return null; }
+    },
+
+    async scheduleMessage(token: string, message_text: string, scheduled_at: string, receiver_id?: number, group_id?: number) {
+        const response = await fetch(`${API_URL}/messages/schedule?token=${token}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message_text, scheduled_at, receiver_id, group_id }),
+        });
+        return response.json();
+    },
+
+    async getScheduledMessages(token: string, receiver_id?: number, group_id?: number) {
+        const params = receiver_id ? `&receiver_id=${receiver_id}` : group_id ? `&group_id=${group_id}` : '';
+        const response = await fetch(`${API_URL}/messages/scheduled?token=${token}${params}`);
+        return response.json();
+    },
+
+    async deleteScheduledMessage(token: string, scheduledId: number) {
+        const response = await fetch(`${API_URL}/messages/scheduled/${scheduledId}?token=${token}`, {
+            method: 'DELETE',
+        });
+        return response.json();
+    },
+
+    async adminSupportReply(token: string, user_id: number, message_text: string) {
+        const response = await fetch(`${API_URL}/admin/support/reply?token=${token}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id, message_text }),
+        });
+        return response.json();
+    },
+
+    async createPoll(token: string, question: string, options: string[], is_anonymous: boolean, is_multi_choice: boolean) {
+        const response = await fetch(`${API_URL}/polls?token=${token}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question, options, is_anonymous, is_multi_choice }),
+        });
+        return response.json();
+    },
+
+    async getPoll(token: string, pollId: number) {
+        const response = await fetch(`${API_URL}/polls/${pollId}?token=${token}`);
+        return response.json();
+    },
+
+    async votePoll(token: string, pollId: number, option_indices: number[]) {
+        const response = await fetch(`${API_URL}/polls/${pollId}/vote?token=${token}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ option_indices }),
+        });
+        return response.json();
+    },
+
+    async unvotePoll(token: string, pollId: number) {
+        const response = await fetch(`${API_URL}/polls/${pollId}/vote?token=${token}`, {
+            method: 'DELETE',
+        });
+        return response.json();
+    },
+
+    async getServerInfo() {
+        try {
+            const response = await fetch(`${API_URL}/server-info`);
+            return response.json();
+        } catch { return null; }
     },
 };

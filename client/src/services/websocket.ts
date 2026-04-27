@@ -1,3 +1,5 @@
+import { config } from '../config';
+
 class WebSocketService {
     private static instance: WebSocketService;
     private socket: WebSocket | null = null;
@@ -45,16 +47,7 @@ class WebSocketService {
         }
 
         this.token = token;
-        const envWsUrl = process.env.REACT_APP_WS_URL;
-        let url: string;
-        if (envWsUrl) {
-            url = `${envWsUrl}/ws?token=${token}`;
-        } else {
-            const loc = window.location;
-            const wsProto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsHost = loc.protocol === 'https:' ? loc.host : `${loc.hostname}:8000`;
-            url = `${wsProto}//${wsHost}/ws?token=${token}`;
-        }
+        const url = `${config.WS_URL}/ws?token=${token}`;
         console.log('🔌 Creating WS to:', url);
 
         const ws = new WebSocket(url);

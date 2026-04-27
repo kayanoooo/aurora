@@ -20,6 +20,7 @@ export interface User {
     last_msg_sender_id?: number | null;
     last_msg_is_read?: number | null;
     is_developer?: boolean;
+    now_playing?: string | null;
 }
 
 export interface Message {

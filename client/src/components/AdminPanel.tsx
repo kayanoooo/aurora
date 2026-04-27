@@ -1,12 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { config } from '../config';
+import { useLang } from '../i18n';
+
+const isImgFile = (filename?: string | null, path?: string | null) =>
+    /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(filename || path?.split('/').pop() || '');
+const isVideoFile = (filename?: string | null, path?: string | null) =>
+    /\.(mp4|webm|mov|avi)$/i.test(filename || path?.split('/').pop() || '');
 
 interface AdminPanelProps {
     token: string;
     isDark?: boolean;
     onClose: () => void;
-    newSupportMsg?: { user_id: number; message_text: string; msg_id: number } | null;
+    onBack?: () => void;
+    newSupportMsg?: { user_id: number; message_text: string; msg_id: number; file_path?: string; filename?: string } | null;
 }
 
 interface Stats {
@@ -33,13 +40,15 @@ interface SupportMessage {
     id: number; sender_id: number; message_text: string;
     is_admin_reply: number; created_at: string;
     sender_name: string; sender_tag?: string; sender_avatar?: string;
+    file_path?: string; filename?: string;
 }
 
 const fmt = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
 
-const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose, newSupportMsg }) => {
+const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose, onBack, newSupportMsg }) => {
     const dm = isDark;
+    const { t } = useLang();
     const [tab, setTab] = useState<'stats' | 'users' | 'support'>('stats');
     const [closing, setClosing] = useState(false);
     const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
@@ -84,7 +93,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
         setDeletingId(userId);
         try {
             await api.deleteAdminUser(token, userId);
-            setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_deleted: 1, username: 'Удалённый пользователь', tag: undefined, avatar: undefined } : u));
+            setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_deleted: 1, username: t('Deleted user'), tag: undefined, avatar: undefined } : u));
         } finally { setDeletingId(null); setConfirmDeleteId(null); }
     };
 
@@ -158,6 +167,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
                     sender_name: thread?.username || 'User',
                     sender_tag: thread?.tag || '',
                     sender_avatar: thread?.avatar,
+                    file_path: newSupportMsg.file_path,
+                    filename: newSupportMsg.filename,
                 }]);
             }
         }
@@ -181,7 +192,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
                 <span style={{ fontSize: 12, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</span>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-                {[['День', day], ['Неделя', week], ['Месяц', month]].map(([lbl, val]) => (
+                {[[t('Day'), day], [t('Week'), week], [t('Month'), month]].map(([lbl, val]) => (
                     <div key={String(lbl)} style={{ flex: 1, textAlign: 'center', background: isOled ? 'rgba(124,58,237,0.08)' : (dm ? 'rgba(99,102,241,0.08)' : '#f5f3ff'), borderRadius: 10, padding: '8px 4px' }}>
                         <div style={{ fontSize: 20, fontWeight: 800, color: accentCol }}>{val}</div>
                         <div style={{ fontSize: 10, color: subCol, marginTop: 2 }}>{lbl}</div>
@@ -193,39 +204,48 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
 
     return (
         <div
-            style={{ position: 'fixed', inset: 0, zIndex: 2000, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            style={{ position: 'fixed', inset: 0, zIndex: 2000, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center' }}
             className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'}
             onClick={close}
         >
             <div
-                style={{ background: bg, borderRadius: 22, width: 780, maxWidth: '96vw', height: '88vh', maxHeight: 760, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.12), 0 30px 80px rgba(0,0,0,0.98)' : (dm ? '0 0 60px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.7)' : '0 0 40px rgba(99,102,241,0.15), 0 20px 60px rgba(0,0,0,0.15)'), border: `1px solid ${border}` }}
-                className={closing ? 'modal-exit' : 'modal-enter'}
+                style={{ background: bg, borderRadius: isMobile ? '20px 20px 0 0' : 22, width: isMobile ? '100%' : 780, maxWidth: isMobile ? '100%' : '96vw', height: isMobile ? '92svh' : '88vh', maxHeight: isMobile ? '92svh' : 760, display: 'flex', flexDirection: 'column', overflow: 'hidden', paddingBottom: isMobile ? 'env(safe-area-inset-bottom, 0px)' : 0, boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.28), 0 30px 80px rgba(0,0,0,0.98)' : (dm ? '0 0 50px rgba(99,102,241,0.22), 0 30px 80px rgba(0,0,0,0.7)' : '0 0 40px rgba(99,102,241,0.13), 0 20px 60px rgba(0,0,0,0.15)') }}
+                className={(closing ? 'modal-exit' : 'modal-enter') + (isMobile ? ' mobile-bottom-sheet' : '')}
                 onClick={e => e.stopPropagation()}
             >
+                {isMobile && <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px', flexShrink: 0 }}><div style={{ width: 36, height: 4, borderRadius: 2, background: dm ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)' }} /></div>}
                 {/* Header */}
-                <div style={{ background: headerBg, padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-                    <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🔑</div>
+                <div style={{ background: bg, padding: isMobile ? '8px 16px 10px' : '14px 20px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.06)' : dm ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.06)'}` }}>
+                    {isMobile && (
+                        <button onClick={onBack ? () => { setClosing(true); setTimeout(onBack, 180); } : close} style={{ background: 'none', border: 'none', cursor: 'pointer', color: isOled ? '#a78bfa' : '#6366f1', padding: '4px 8px 4px 0', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+                        </button>
+                    )}
+                    <div style={{ width: 32, height: 32, borderRadius: '50%', background: isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0 }}>🔑</div>
                     <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 800, fontSize: 16, color: 'white' }}>Панель администратора</div>
-                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>Aurora Messenger</div>
+                        <div style={{ fontWeight: 700, fontSize: isMobile ? 17 : 16, color: isOled ? '#e2e0ff' : dm ? '#e2e8f0' : '#1e1b4b' }}>{t('Admin panel')}</div>
                     </div>
-                    <button onClick={close} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 8, color: 'white', cursor: 'pointer', fontSize: 15, padding: '4px 9px' }}>✕</button>
+                    {!isMobile && (
+                        <button onClick={close} style={{ background: 'none', border: 'none', cursor: 'pointer', color: subCol, fontSize: 15, padding: '4px', display: 'flex', alignItems: 'center' }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                    )}
                 </div>
 
                 {/* Tabs */}
                 <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, background: bg, flexShrink: 0 }}>
                     {([
-                        { id: 'stats', label: '📊 Статистика' },
-                        { id: 'users', label: '👥 Пользователи' },
-                        { id: 'support', label: '🎧 Поддержка', badge: threads.reduce((s, t) => s + t.unread_count, 0) },
+                        { id: 'stats', label: isMobile ? t('Statistics') : `📊 ${t('Statistics')}` },
+                        { id: 'users', label: isMobile ? t('Users') : `👥 ${t('Users')}` },
+                        { id: 'support', label: isMobile ? t('Support') : `🎧 ${t('Support')}`, badge: threads.reduce((s, th) => s + th.unread_count, 0) },
                     ] as const).map(t => (
                         <button
                             key={t.id}
                             onClick={() => setTab(t.id)}
                             style={{
-                                flex: 1, padding: '12px 8px', border: 'none', borderBottom: tab === t.id ? `2px solid ${accentCol}` : '2px solid transparent',
-                                background: 'none', cursor: 'pointer', fontSize: 13, fontWeight: tab === t.id ? 700 : 500,
-                                color: tab === t.id ? accentCol : subCol, transition: 'all 0.15s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                                flex: 1, padding: isMobile ? '10px 4px' : '12px 8px', border: 'none', borderBottom: tab === t.id ? `2px solid ${accentCol}` : '2px solid transparent',
+                                background: 'none', cursor: 'pointer', fontSize: isMobile ? 12 : 13, fontWeight: tab === t.id ? 700 : 500,
+                                color: tab === t.id ? accentCol : subCol, transition: 'all 0.15s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
                             }}
                         >
                             {t.label}
@@ -251,9 +271,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
                                     {/* Hero row */}
                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
                                         {[
-                                            { icon: '👤', label: 'Пользователей', val: stats.total_users, sub: `+${stats.users_day} сегодня` },
-                                            { icon: '🌐', label: 'Онлайн сейчас', val: stats.online_now, sub: 'активных сессий' },
-                                            { icon: '📅', label: 'За месяц', val: stats.users_month, sub: 'новых пользователей' },
+                                            { icon: '👤', label: t('Users'), val: stats.total_users, sub: `+${stats.users_day} ${t('today')}` },
+                                            { icon: '🌐', label: t('Online now'), val: stats.online_now, sub: t('active sessions') },
+                                            { icon: '📅', label: t('Per month'), val: stats.users_month, sub: t('new users') },
                                         ].map(c => (
                                             <div key={c.label} style={{ background: cardBg, borderRadius: 14, padding: '16px', border: `1px solid ${border}`, textAlign: 'center', boxShadow: isOled ? '0 2px 12px rgba(0,0,0,0.8)' : (dm ? '0 2px 12px rgba(0,0,0,0.3)' : '0 2px 8px rgba(99,102,241,0.07)') }}>
                                                 <div style={{ fontSize: 26 }}>{c.icon}</div>
@@ -265,9 +285,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
                                     </div>
 
                                     {/* Stat cards */}
-                                    <StatCard icon="💬" label="Сообщения" day={stats.messages_day} week={stats.messages_week} month={stats.messages_month} />
-                                    <StatCard icon="📎" label="Файлы" day={stats.files_day} week={stats.files_week} month={stats.files_month} />
-                                    <StatCard icon="🆕" label="Регистрации" day={stats.users_day} week={stats.users_week} month={stats.users_month} />
+                                    <StatCard icon="💬" label={t('Messages')} day={stats.messages_day} week={stats.messages_week} month={stats.messages_month} />
+                                    <StatCard icon="📎" label={t('Files')} day={stats.files_day} week={stats.files_week} month={stats.files_month} />
+                                    <StatCard icon="🆕" label={t('Registrations')} day={stats.users_day} week={stats.users_week} month={stats.users_month} />
 
                                     {/* Mini chart */}
                                     {stats.reg_chart.length > 0 && (
@@ -311,7 +331,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
                                         if (searchTimer.current) clearTimeout(searchTimer.current);
                                         searchTimer.current = setTimeout(() => loadUsers(q), 300);
                                     }}
-                                    placeholder="🔍 Поиск по имени, тегу, email..."
+                                    placeholder={`🔍 ${t('Search by name, tag, email...')}`}
                                     style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', border: `1.5px solid ${border}`, borderRadius: 10, background: isOled ? '#050508' : (dm ? '#12122a' : '#f5f3ff'), color: textCol, fontSize: 13, outline: 'none', fontFamily: 'inherit' }}
                                 />
                             </div>
@@ -449,7 +469,25 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
                                                                 ? <img src={avatarSrc ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                                                 : <span style={{ fontSize: 11, color: isAdmin ? 'white' : subCol, fontWeight: 700 }}>{isAdmin ? '🔑' : msg.sender_name[0]?.toUpperCase()}</span>}
                                                         </div>
-                                                        <div style={{ maxWidth: '70%' }}>
+                                                        <div style={{ maxWidth: '72%' }}>
+                                                            {/* File attachment */}
+                                                            {(msg as any).file_path && isImgFile((msg as any).filename, (msg as any).file_path) && (
+                                                                <div style={{ marginBottom: msg.message_text ? 4 : 0, borderRadius: 12, overflow: 'hidden', cursor: 'pointer', maxWidth: 220 }}
+                                                                    onClick={() => window.open(config.fileUrl((msg as any).file_path) ?? undefined, '_blank')}>
+                                                                    <img src={config.fileUrl((msg as any).file_path) ?? undefined} alt={(msg as any).filename || 'image'} style={{ display: 'block', width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 12 }} />
+                                                                </div>
+                                                            )}
+                                                            {(msg as any).file_path && isVideoFile((msg as any).filename, (msg as any).file_path) && (
+                                                                <video src={config.fileUrl((msg as any).file_path) ?? undefined} controls style={{ maxWidth: 220, borderRadius: 12, display: 'block', marginBottom: msg.message_text ? 4 : 0 }} />
+                                                            )}
+                                                            {(msg as any).file_path && !isImgFile((msg as any).filename, (msg as any).file_path) && !isVideoFile((msg as any).filename, (msg as any).file_path) && (
+                                                                <a href={config.fileUrl((msg as any).file_path) ?? undefined} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 10px', marginBottom: msg.message_text ? 4 : 0, background: isAdmin ? 'linear-gradient(135deg,#6366f1,#8b5cf6)' : (isOled ? '#0a0a14' : (dm ? '#1e1e3a' : '#ffffff')), borderRadius: 10, textDecoration: 'none', border: isAdmin ? 'none' : `1px solid ${border}`, maxWidth: 220 }}>
+                                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isAdmin ? 'white' : textCol} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                                                                    <span style={{ fontSize: 11, color: isAdmin ? 'rgba(255,255,255,0.9)' : textCol, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(msg as any).filename || t('File')}</span>
+                                                                </a>
+                                                            )}
+                                                            {/* Text bubble */}
+                                                            {msg.message_text && (
                                                             <div style={{
                                                                 background: isAdmin ? 'linear-gradient(135deg, #6366f1, #8b5cf6)' : (isOled ? '#0a0a14' : (dm ? '#1e1e3a' : '#ffffff')),
                                                                 color: isAdmin ? 'white' : textCol,
@@ -460,8 +498,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
                                                             }}>
                                                                 {msg.message_text}
                                                             </div>
+                                                            )}
                                                             <div style={{ fontSize: 9, color: subCol, marginTop: 2, textAlign: isAdmin ? 'right' : 'left' }}>
-                                                                {isAdmin ? 'Поддержка' : msg.sender_name} · {fmt(msg.created_at)}
+                                                                {isAdmin ? t('Support') : msg.sender_name} · {fmt(msg.created_at)}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -476,7 +515,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
                                                     value={replyText}
                                                     onChange={e => setReplyText(e.target.value)}
                                                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); } }}
-                                                    placeholder="Ответить пользователю..."
+                                                    placeholder={t('Reply to user...')}
                                                     style={{ flex: 1, padding: '8px 11px', border: `1.5px solid ${border}`, borderRadius: 10, background: isOled ? '#050508' : (dm ? '#12122a' : '#f5f3ff'), color: textCol, fontSize: 12, outline: 'none', fontFamily: 'inherit' }}
                                                 />
                                                 <button

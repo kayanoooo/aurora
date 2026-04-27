@@ -87,7 +87,9 @@ class UpdateChannelSettingsRequest(BaseModel):
     channel_tag: Optional[str] = None
 
 class SupportSendRequest(BaseModel):
-    message_text: str
+    message_text: str = ''
+    file_path: str = None
+    filename: str = None
 
 class AdminReplyRequest(BaseModel):
     user_id: int
@@ -122,14 +124,19 @@ ALLOWED_ORIGINS = [
     "http://192.168.1.2:8000",
     "http://192.168.1.9:3000",
     "http://192.168.1.9:8000",
+    "http://192.168.0.116:3000",
+    "http://192.168.0.116:8000",
     "https://aurora-messenger.vercel.app",
 ]
+# Regex pattern for ngrok and other tunnel services
+ALLOWED_ORIGIN_REGEX = r"https://.+\.(ngrok-free\.dev|ngrok-free\.app|ngrok\.io|ngrok\.app|loca\.lt|localhost\.run)"
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
+    import re
     origin = request.headers.get("origin", "")
     headers = {}
-    if origin in ALLOWED_ORIGINS:
+    if origin in ALLOWED_ORIGINS or (origin and re.match(ALLOWED_ORIGIN_REGEX, origin)):
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
     import traceback
@@ -141,6 +148,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -158,6 +166,9 @@ async def startup():
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             for sql in [
+                "ALTER TABLE users DROP INDEX username",
+                "ALTER TABLE support_messages ADD COLUMN file_path VARCHAR(512) NULL",
+                "ALTER TABLE support_messages ADD COLUMN filename VARCHAR(255) NULL",
                 "ALTER TABLE group_messages ADD COLUMN is_system TINYINT(1) NOT NULL DEFAULT 0",
                 "ALTER TABLE group_messages MODIFY COLUMN sender_id INT NULL",
                 "ALTER TABLE messages ADD COLUMN files TEXT NULL",
@@ -257,6 +268,29 @@ async def startup():
                     INDEX idx_poll_votes_poll (poll_id)
                 )""",
                 "ALTER TABLE users ADD COLUMN is_deleted TINYINT(1) NOT NULL DEFAULT 0",
+                """CREATE TABLE IF NOT EXISTS playlists (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    name VARCHAR(255) NOT NULL,
+                    cover VARCHAR(512) NULL,
+                    share_code VARCHAR(32) NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_playlists_user (user_id)
+                )""",
+                """CREATE TABLE IF NOT EXISTS playlist_tracks (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    playlist_id INT NOT NULL,
+                    title VARCHAR(255) NOT NULL,
+                    artist VARCHAR(255) NULL,
+                    file_path VARCHAR(512) NOT NULL,
+                    cover_path VARCHAR(512) NULL,
+                    duration INT NULL,
+                    position INT NOT NULL DEFAULT 0,
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_tracks_playlist (playlist_id)
+                )""",
+                "ALTER TABLE users ADD COLUMN now_playing TEXT NULL",
+                "ALTER TABLE playlists ADD COLUMN cover VARCHAR(512) NULL",
             ]:
                 try:
                     await cur.execute(sql)
@@ -1945,8 +1979,9 @@ async def websocket_endpoint(websocket: WebSocket):
             elif data.get("type") == "set_offline":
                 manager.set_manual_offline(user_id)
                 await UserModel.update_last_seen(user_id)
+                _now_ts = datetime.now(timezone.utc).isoformat()
                 for uid in list(manager.active_connections.keys()):
-                    await manager.send_message_to_user(uid, {"type": "user_status", "data": {"user_id": user_id, "is_online": False}})
+                    await manager.send_message_to_user(uid, {"type": "user_status", "data": {"user_id": user_id, "is_online": False, "last_seen": _now_ts}})
 
             elif data.get("type") == "set_online":
                 manager.set_manual_online(user_id)
@@ -2024,20 +2059,77 @@ async def websocket_endpoint(websocket: WebSocket):
                     print(f"❌ Error deleting message: {e}")
                     import traceback
                     traceback.print_exc()
-           
-                            
+
+            # ========== WebRTC signaling ==========
+            elif data.get("type") == "call_initiate":
+                target_id = data.get("target_id")
+                call_type = data.get("call_type", "audio")
+                if target_id:
+                    await manager.send_message_to_user(target_id, {
+                        "type": "call_initiate",
+                        "data": {"caller_id": user_id, "caller_name": username, "call_type": call_type}
+                    })
+
+            elif data.get("type") == "call_offer":
+                target_id = data.get("target_id")
+                sdp = data.get("sdp")
+                if target_id and sdp:
+                    await manager.send_message_to_user(target_id, {
+                        "type": "call_offer",
+                        "data": {"sdp": sdp, "from_id": user_id}
+                    })
+
+            elif data.get("type") == "call_answer":
+                target_id = data.get("target_id")
+                sdp = data.get("sdp")
+                if target_id and sdp:
+                    await manager.send_message_to_user(target_id, {
+                        "type": "call_answer",
+                        "data": {"sdp": sdp, "from_id": user_id}
+                    })
+
+            elif data.get("type") == "ice_candidate":
+                target_id = data.get("target_id")
+                candidate = data.get("candidate")
+                if target_id:
+                    await manager.send_message_to_user(target_id, {
+                        "type": "ice_candidate",
+                        "data": {"candidate": candidate, "from_id": user_id}
+                    })
+
+            elif data.get("type") == "call_reject":
+                target_id = data.get("target_id")
+                if target_id:
+                    await manager.send_message_to_user(target_id, {
+                        "type": "call_reject",
+                        "data": {"from_id": user_id}
+                    })
+
+            elif data.get("type") == "call_end":
+                target_id = data.get("target_id")
+                if target_id:
+                    await manager.send_message_to_user(target_id, {
+                        "type": "call_end",
+                        "data": {"from_id": user_id}
+                    })
+
+
     except WebSocketDisconnect:
-        manager.disconnect(user_id)
+        manager.disconnect(user_id, websocket)
         await UserModel.update_last_seen(user_id)
         print(f"User {username} disconnected")
-        for uid in list(manager.active_connections.keys()):
-            await manager.send_message_to_user(uid, {"type": "user_status", "data": {"user_id": user_id, "is_online": False}})
+        if not manager.is_user_online(user_id):
+            _now_ts = datetime.now(timezone.utc).isoformat()
+            for uid in list(manager.active_connections.keys()):
+                await manager.send_message_to_user(uid, {"type": "user_status", "data": {"user_id": user_id, "is_online": False, "last_seen": _now_ts}})
     except Exception as e:
         print(f"❌ Unexpected error for {username}: {e}")
-        manager.disconnect(user_id)
+        manager.disconnect(user_id, websocket)
         await UserModel.update_last_seen(user_id)
-        for uid in list(manager.active_connections.keys()):
-            await manager.send_message_to_user(uid, {"type": "user_status", "data": {"user_id": user_id, "is_online": False}})
+        if not manager.is_user_online(user_id):
+            _now_ts = datetime.now(timezone.utc).isoformat()
+            for uid in list(manager.active_connections.keys()):
+                await manager.send_message_to_user(uid, {"type": "user_status", "data": {"user_id": user_id, "is_online": False, "last_seen": _now_ts}})
 
 # ========== Папки чатов ==========
 
@@ -2116,16 +2208,17 @@ async def support_send(request: SupportSendRequest, token: str):
     payload = decode_jwt_token(token)
     if not payload: raise HTTPException(401, "Invalid token")
     user_id = payload['user_id']
-    if not request.message_text.strip():
+    text = request.message_text.strip() if request.message_text else ''
+    if not text and not request.file_path:
         raise HTTPException(400, "Empty message")
-    msg_id = await SupportModel.send_message(user_id, request.message_text.strip())
+    msg_id = await SupportModel.send_message(user_id, text, request.file_path, request.filename)
     if not msg_id:
         raise HTTPException(500, "Failed to send message")
     admin_ids = await SupportModel.get_admin_ids()
     for admin_id in admin_ids:
         await manager.send_message_to_user(admin_id, {
             "type": "support_message",
-            "data": {"user_id": user_id, "msg_id": msg_id, "message_text": request.message_text.strip()}
+            "data": {"user_id": user_id, "msg_id": msg_id, "message_text": text, "file_path": request.file_path, "filename": request.filename}
         })
     return {"success": True, "id": msg_id}
 
@@ -2560,6 +2653,184 @@ async def vote_poll(poll_id: int, request: VotePollRequest, token: str):
                 (poll_id, payload['user_id'], json.dumps(request.option_indices))
             )
             await conn.commit()
+    return {"ok": True}
+
+# ========== Media Player ==========
+
+class PlaylistCreate(BaseModel):
+    name: str
+    token: str
+
+class TrackAdd(BaseModel):
+    playlist_id: int
+    title: str
+    artist: Optional[str] = None
+    file_path: str
+    cover_path: Optional[str] = None
+    duration: Optional[int] = None
+    token: str
+
+class NowPlayingUpdate(BaseModel):
+    token: str
+    title: Optional[str] = None
+    artist: Optional[str] = None
+
+@app.get("/api/playlists")
+async def get_playlists(token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user_id = payload['user_id']
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT * FROM playlists WHERE user_id = %s ORDER BY created_at DESC", (user_id,))
+            playlists = await cur.fetchall()
+            result = []
+            for pl in playlists:
+                await cur.execute("SELECT * FROM playlist_tracks WHERE playlist_id = %s ORDER BY position", (pl['id'],))
+                tracks = await cur.fetchall()
+                result.append({**pl, 'tracks': tracks})
+            return result
+
+@app.post("/api/playlists")
+async def create_playlist(req: PlaylistCreate):
+    payload = decode_jwt_token(req.token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("INSERT INTO playlists (user_id, name) VALUES (%s, %s)", (payload['user_id'], req.name))
+            await conn.commit()
+            return {"id": cur.lastrowid, "name": req.name}
+
+@app.delete("/api/playlists/{playlist_id}")
+async def delete_playlist(playlist_id: int, token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM playlist_tracks WHERE playlist_id = %s", (playlist_id,))
+            await cur.execute("DELETE FROM playlists WHERE id = %s AND user_id = %s", (playlist_id, payload['user_id']))
+            await conn.commit()
+    return {"ok": True}
+
+@app.put("/api/playlists/{playlist_id}")
+async def rename_playlist(playlist_id: int, req: PlaylistCreate):
+    payload = decode_jwt_token(req.token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE playlists SET name = %s WHERE id = %s AND user_id = %s", (req.name, playlist_id, payload['user_id']))
+            await conn.commit()
+    return {"ok": True}
+
+@app.post("/api/playlists/tracks")
+async def add_track(req: TrackAdd):
+    payload = decode_jwt_token(req.token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT MAX(position) as mp FROM playlist_tracks WHERE playlist_id = %s", (req.playlist_id,))
+            row = await cur.fetchone()
+            pos = (row['mp'] or 0) + 1
+            await cur.execute(
+                "INSERT INTO playlist_tracks (playlist_id, title, artist, file_path, cover_path, duration, position) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (req.playlist_id, req.title, req.artist, req.file_path, req.cover_path, req.duration, pos)
+            )
+            await conn.commit()
+            return {"id": cur.lastrowid}
+
+@app.delete("/api/playlists/tracks/{track_id}")
+async def delete_track(track_id: int, token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM playlist_tracks WHERE id = %s", (track_id,))
+            await conn.commit()
+    return {"ok": True}
+
+@app.post("/api/playlists/{playlist_id}/share")
+async def share_playlist(playlist_id: int, token: str = Form(...)):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    code = str(uuid.uuid4())[:8]
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE playlists SET share_code = %s WHERE id = %s AND user_id = %s", (code, playlist_id, payload['user_id']))
+            await conn.commit()
+    return {"code": code}
+
+@app.get("/api/playlists/shared/{code}")
+async def get_shared_playlist(code: str, token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT * FROM playlists WHERE share_code = %s", (code,))
+            pl = await cur.fetchone()
+            if not pl:
+                raise HTTPException(status_code=404, detail="Playlist not found")
+            await cur.execute("SELECT * FROM playlist_tracks WHERE playlist_id = %s ORDER BY position", (pl['id'],))
+            tracks = await cur.fetchall()
+            return {**pl, 'tracks': tracks}
+
+@app.put("/api/playlists/{playlist_id}/cover")
+async def update_playlist_cover(playlist_id: int, token: str = Form(...), file: UploadFile = File(...)):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user_id = payload['user_id']
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="Only images allowed")
+    content = await file.read()
+    if _cloudinary_configured():
+        result = cloudinary.uploader.upload(content, folder="playlist_covers", resource_type="image")
+        cover_url = result["secure_url"]
+    else:
+        ext = os.path.splitext(file.filename or "")[1] or ".jpg"
+        local_filename = f"playlist_cover_{uuid.uuid4().hex}{ext}"
+        local_path = os.path.join("uploads", local_filename)
+        with open(local_path, "wb") as f:
+            f.write(content)
+        cover_url = f"/files/{local_filename}"
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE playlists SET cover = %s WHERE id = %s AND user_id = %s", (cover_url, playlist_id, user_id))
+            await conn.commit()
+    return {"cover": cover_url}
+
+@app.post("/api/now_playing")
+async def set_now_playing(req: NowPlayingUpdate):
+    payload = decode_jwt_token(req.token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user_id = payload['user_id']
+    pool = await DatabasePool.get_pool()
+    now_playing = json.dumps({"title": req.title, "artist": req.artist}) if req.title else None
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE users SET now_playing = %s WHERE id = %s", (now_playing, user_id))
+            await conn.commit()
+    msg = {"type": "now_playing", "data": {"user_id": user_id, "title": req.title, "artist": req.artist}}
+    for uid in list(manager.active_connections.keys()):
+        if uid != user_id:
+            await manager.send_message_to_user(uid, msg)
     return {"ok": True}
 
 # ========== Статика ==========

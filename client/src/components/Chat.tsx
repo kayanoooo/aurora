@@ -21,6 +21,9 @@ import { config } from '../config';
 import SupportChat from './SupportChat';
 import AdminPanel from './AdminPanel';
 import { getOrCreateKeyPair, getOwnPublicKey, encryptMessage, decryptMessage, isEncryptedMessage, cachePublicKey, getCachedPublicKey } from '../services/cryptoService';
+import MediaPlayer, { MiniPlayer, Track, MediaStateChange, Playlist, PlaylistBubble, PlaylistShareData, parsePlaylistMsg, PLAYLIST_MSG_PREFIX } from './MediaPlayer';
+import { useCall } from '../hooks/useCall';
+import CallOverlay from './CallOverlay';
 
 const BASE_URL = config.BASE_URL;
 
@@ -56,6 +59,9 @@ interface ChatProps {
 
 const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, currentUserAvatar, currentUserStatus, currentUserTag, theme, onThemeChange, onProfileUpdate, onLogout }) => {
     const { t, lang } = useLang();
+    const { callInfo, startCall, acceptCall, rejectCall, endCall, toggleMute: callToggleMute, toggleCamera: callToggleCamera } = useCall();
+    const callConnectedAtRef = useRef<number | null>(null);
+    const callPeerIdRef = useRef<number | null>(null);
     const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
     useEffect(() => {
         const handler = () => setIsMobile(window.innerWidth <= 768);
@@ -63,10 +69,34 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         return () => window.removeEventListener('resize', handler);
     }, []);
     useEffect(() => { api.getServerInfo().then(r => { if (r) setServerInfo(r); }); }, []);
+
+    // Track call connect time and send call-ended bubble
+    useEffect(() => {
+        if (callInfo.state === 'connected') {
+            callConnectedAtRef.current = Date.now();
+            callPeerIdRef.current = callInfo.peerId;
+        } else if (callInfo.state === 'idle' && callConnectedAtRef.current !== null) {
+            const dur = Math.round((Date.now() - callConnectedAtRef.current) / 1000);
+            const peerId = callPeerIdRef.current;
+            callConnectedAtRef.current = null;
+            callPeerIdRef.current = null;
+            if (peerId) {
+                wsService.sendMessage(peerId, `__call_ended__${dur}`);
+            }
+        } else if (callInfo.state === 'idle') {
+            callConnectedAtRef.current = null;
+            callPeerIdRef.current = null;
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [callInfo.state]);
+
     const [users, setUsers] = useState<User[]>([]);
     const [groups, setGroups] = useState<Group[]>([]);
     const [activeChat, setActiveChat] = useState<ChatItem | null>(null);
     const [messages, setMessages] = useState<(Message | GroupMessage)[]>([]);
+    const messagesRef = useRef<(Message | GroupMessage)[]>([]);
+    const [chatKey, setChatKey] = useState(0);
+    useEffect(() => { messagesRef.current = messages; }, [messages]);
     const [typing, setTyping] = useState(false);
     const [typingUser, setTypingUser] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
@@ -82,13 +112,33 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [showHelp, setShowHelp] = useState(false);
     const [showSupportChat, setShowSupportChat] = useState(false);
     const [showAdminPanel, setShowAdminPanel] = useState(false);
+    const [showMediaPlayer, setShowMediaPlayer] = useState(false);
+    const [miniTrack, setMiniTrack] = useState<Track | null>(null);
+    const [miniIsPlaying, setMiniIsPlaying] = useState(false);
+    const [miniVolume, setMiniVolume] = useState(0.8);
+    const miniControlsRef = useRef<Omit<MediaStateChange, 'track' | 'isPlaying' | 'volume' | 'progress' | 'duration'> | null>(null);
+    const miniWasPausedByAudio = useRef(false);
+    const [miniProgress, setMiniProgress] = useState(0);
+    const [miniDuration, setMiniDuration] = useState(0);
+    const handleMediaStateChange = useCallback((s: MediaStateChange) => {
+        setMiniTrack(s.track);
+        setMiniIsPlaying(s.isPlaying);
+        setMiniVolume(s.volume);
+        setMiniProgress(s.progress);
+        setMiniDuration(s.duration);
+        miniControlsRef.current = { toggle: s.toggle, prev: s.prev, next: s.next, setVol: s.setVol };
+    }, []);
+    const [playlistToShare, setPlaylistToShare] = useState<Playlist | null>(null);
+    const [playlistShareSearch, setPlaylistShareSearch] = useState('');
+    const [playlistPreview, setPlaylistPreview] = useState<PlaylistShareData | null>(null);
+    const [playlistSaving, setPlaylistSaving] = useState(false);
     // Scheduled messages
     const [scheduledMessages, setScheduledMessages] = useState<any[]>([]);
     const [showSchedulePicker, setShowSchedulePicker] = useState(false);
     const [scheduleDateTime, setScheduleDateTime] = useState('');
     const [decryptedTexts, setDecryptedTexts] = useState<Record<number, string>>({});
     const [newSupportReply, setNewSupportReply] = useState<{ msg_id: number; message_text: string; admin_id: number } | null>(null);
-    const [newSupportMsg, setNewSupportMsg] = useState<{ user_id: number; message_text: string; msg_id: number } | null>(null);
+    const [newSupportMsg, setNewSupportMsg] = useState<{ user_id: number; message_text: string; msg_id: number; file_path?: string; filename?: string } | null>(null);
     const [favoritesLastMsg, setFavoritesLastMsg] = useState<{ text?: string | null; time?: string | null; file?: string | null; filename?: string | null } | null>(null);
     const showSupportChatRef = useRef(false);
     const showAdminPanelRef = useRef(false);
@@ -123,6 +173,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [hoveredCommentId, setHoveredCommentId] = useState<number | null>(null);
     const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
     const [editingCommentText, setEditingCommentText] = useState('');
+    const [commentPendingFile, setCommentPendingFile] = useState<File | null>(null);
+    const [commentUploading, setCommentUploading] = useState(false);
+    const [commentShowEmoji, setCommentShowEmoji] = useState(false);
+    const commentFileInputRef = useRef<HTMLInputElement>(null);
+    const commentInputRef = useRef<HTMLTextAreaElement>(null);
 
     interface ToastItem {
         id: number;
@@ -140,6 +195,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [toasts, setToasts] = useState<ToastItem[]>([]);
     const [toastReplies, setToastReplies] = useState<Record<number, string>>({});
     const toastIdRef = useRef(0);
+    // Ref so WebSocket handler always calls the latest showInAppToast (avoids stale closure)
+    const showInAppToastRef = useRef<((t: Omit<ToastItem, 'id' | 'exiting'>) => void) | null>(null);
 
     // Sidebar search
     const [sidebarSearchQuery, setSidebarSearchQuery] = useState('');
@@ -148,6 +205,15 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [sidebarChannelResults, setSidebarChannelResults] = useState<any[]>([]);
     const [sidebarSearchLoading, setSidebarSearchLoading] = useState(false);
     const sidebarSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const sidebarLocalMatches = React.useMemo(() => {
+        const q = sidebarSearchQuery.trim().toLowerCase();
+        if (!q) return { users: [] as User[], groups: [] as Group[] };
+        return {
+            users: users.filter(u => u.username.toLowerCase().includes(q) || u.tag?.toLowerCase().includes(q)),
+            groups: groups.filter(g => g.name.toLowerCase().includes(q)),
+        };
+    }, [sidebarSearchQuery, users, groups]);
     const [searchHistory, setSearchHistory] = useState<User[]>(() => {
         try { return JSON.parse(localStorage.getItem('userSearchHistory') || '[]'); } catch { return []; }
     });
@@ -184,9 +250,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [showFolderManager, setShowFolderManager] = useState(false);
     const folderTabsRef = useRef<HTMLDivElement>(null);
 
+    // Per-user localStorage key helper
+    const lsKey = (name: string) => `aurora_${name}_${currentUserId}`;
+
     // Pinned chats
     const [pinnedChats, setPinnedChats] = useState<Set<string>>(() => {
-        try { return new Set(JSON.parse(localStorage.getItem('aurora_pinned') || '[]')); }
+        try { return new Set(JSON.parse(localStorage.getItem(`aurora_pinned_${currentUserId}`) || '[]')); }
         catch { return new Set(); }
     });
     const [pinMenu, setPinMenu] = useState<{ x: number; y: number; key: string } | null>(null);
@@ -194,7 +263,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         setPinnedChats(prev => {
             const next = new Set(prev);
             if (next.has(key)) next.delete(key); else next.add(key);
-            localStorage.setItem('aurora_pinned', JSON.stringify(Array.from(next)));
+            localStorage.setItem(lsKey('pinned'), JSON.stringify(Array.from(next)));
             return next;
         });
         setPinMenu(null);
@@ -202,7 +271,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
     // Muted chats
     const [mutedChats, setMutedChats] = useState<Set<string>>(() => {
-        try { return new Set(JSON.parse(localStorage.getItem('aurora_muted') || '[]')); }
+        try { return new Set(JSON.parse(localStorage.getItem(`aurora_muted_${currentUserId}`) || '[]')); }
         catch { return new Set(); }
     });
     const mutedChatsRef = useRef<Set<string>>(new Set());
@@ -211,7 +280,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         setMutedChats(prev => {
             const next = new Set(prev);
             if (next.has(key)) next.delete(key); else next.add(key);
-            localStorage.setItem('aurora_muted', JSON.stringify(Array.from(next)));
+            localStorage.setItem(lsKey('muted'), JSON.stringify(Array.from(next)));
             return next;
         });
         setPinMenu(null);
@@ -219,7 +288,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
     // Archived chats
     const [archivedChats, setArchivedChats] = useState<Set<string>>(() => {
-        try { return new Set(JSON.parse(localStorage.getItem('aurora_archived') || '[]')); }
+        try { return new Set(JSON.parse(localStorage.getItem(`aurora_archived_${currentUserId}`) || '[]')); }
         catch { return new Set(); }
     });
     const archivedChatsRef = useRef<Set<string>>(new Set());
@@ -227,14 +296,14 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
     // Hidden/deleted chats (persisted so they don't reappear on reload)
     const [hiddenChats, setHiddenChats] = useState<Set<string>>(() => {
-        try { return new Set(JSON.parse(localStorage.getItem('aurora_hidden') || '[]')); }
+        try { return new Set(JSON.parse(localStorage.getItem(`aurora_hidden_${currentUserId}`) || '[]')); }
         catch { return new Set(); }
     });
     const hideChat = (key: string) => {
         setHiddenChats(prev => {
             const next = new Set(prev);
             next.add(key);
-            localStorage.setItem('aurora_hidden', JSON.stringify(Array.from(next)));
+            localStorage.setItem(lsKey('hidden'), JSON.stringify(Array.from(next)));
             return next;
         });
     };
@@ -243,7 +312,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         setArchivedChats(prev => {
             const next = new Set(prev);
             if (next.has(key)) next.delete(key); else next.add(key);
-            localStorage.setItem('aurora_archived', JSON.stringify(Array.from(next)));
+            localStorage.setItem(lsKey('archived'), JSON.stringify(Array.from(next)));
             return next;
         });
         setPinMenu(null);
@@ -251,13 +320,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
     // Pinned messages within chats (localStorage only)
     const [pinnedMessages, setPinnedMessages] = useState<Record<string, { id: number; text: string; sender: string } | null>>(() => {
-        try { return JSON.parse(localStorage.getItem('aurora_pinned_msgs') || '{}'); }
+        try { return JSON.parse(localStorage.getItem(`aurora_pinned_msgs_${currentUserId}`) || '{}'); }
         catch { return {}; }
     });
     const togglePinMessage = (chatKey: string, msg: any) => {
         setPinnedMessages(prev => {
             const next = { ...prev, [chatKey]: prev[chatKey]?.id === msg.id ? null : { id: msg.id, text: msg.message_text || (lang === 'en' ? '[file]' : '[файл]'), sender: (msg as any).sender_name || t('You') } };
-            localStorage.setItem('aurora_pinned_msgs', JSON.stringify(next));
+            localStorage.setItem(lsKey('pinned_msgs'), JSON.stringify(next));
             return next;
         });
         setMenuMessageId(null);
@@ -372,6 +441,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const [showScrollDown, setShowScrollDown] = useState(false);
+    const scrollPositions = useRef<Map<string, number>>(new Map());
     const currentUploadXHR = useRef<XMLHttpRequest | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -458,6 +528,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     }, [messages]);
 
     const playGlobalAudio = React.useCallback((src: string, filename: string) => {
+        // Pause music player while chat audio is playing
+        if (miniControlsRef.current && miniIsPlaying) {
+            miniControlsRef.current.toggle();
+            miniWasPausedByAudio.current = true;
+        }
         const index = mediaPlaylist.findIndex(x => x.src === src);
         setNowPlaying({ src, filename, index: index >= 0 ? index : 0 });
         setGlobalDuration(0);
@@ -466,9 +541,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         const audio = globalAudioRef.current;
         if (!audio) return;
         audio.src = src;
-        audio.load(); // force metadata load before play
+        audio.load();
         audio.play().catch(() => {});
-    }, [mediaPlaylist]);
+    }, [mediaPlaylist, miniIsPlaying]);
 
     const prevTrack = () => {
         if (!nowPlaying || mediaPlaylist.length === 0) return;
@@ -482,12 +557,30 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         playGlobalAudio(mediaPlaylist[idx].src, mediaPlaylist[idx].filename);
     };
 
+    const resumeMiniIfNeeded = () => {
+        if (miniWasPausedByAudio.current && miniControlsRef.current) {
+            miniWasPausedByAudio.current = false;
+            miniControlsRef.current.toggle();
+        }
+    };
+
+    // Stop global audio without resuming music (used when music track starts)
+    const stopGlobalOnly = React.useCallback(() => {
+        globalAudioRef.current?.pause();
+        setNowPlaying(null);
+        setGlobalPlaying(false);
+        setGlobalCurrentTime(0);
+        setGlobalDuration(0);
+        miniWasPausedByAudio.current = false;
+    }, []);
+
     const stopGlobal = () => {
         globalAudioRef.current?.pause();
         setNowPlaying(null);
         setGlobalPlaying(false);
         setGlobalCurrentTime(0);
         setGlobalDuration(0);
+        resumeMiniIfNeeded();
     };
 
     const toggleGlobalPlay = () => {
@@ -534,6 +627,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const isGif = (text?: string | null) => !!text?.startsWith('__gif__');
     const isPoll = (text?: string | null) => !!text?.startsWith('__poll__:');
     const getPollId = (text?: string | null) => { const m = text?.match(/^__poll__:(\d+)$/); return m ? parseInt(m[1]) : null; };
+    const isCallEnded = (text?: string | null) => !!text?.startsWith('__call_ended__');
+    const getCallDuration = (text?: string | null) => { const m = text?.match(/^__call_ended__(\d+)$/); return m ? parseInt(m[1]) : 0; };
     const isSpecialMsg = (text?: string | null) => isSticker(text) || isGif(text);
 
     // Single emoji detection — renders big
@@ -568,14 +663,44 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     };
 
     // ─── E2E decryption ─────────────────────────────────────────────────────────
-    // Decrypt messages that match [AURORA_ENC]...[/AURORA_ENC] when rendered.
-    // We cache results in `decryptedTexts` so each message is only decrypted once.
+    const [decryptedPreviews, setDecryptedPreviews] = useState<Record<number, string>>({});
+
+    // Bulk-decrypt all encrypted messages in a list and store results
+    const decryptBatch = useCallback(async (msgs: any[], partnerId: number) => {
+        const pubKey = getCachedPublicKey(partnerId);
+        if (!pubKey) return;
+        const updates: Record<number, string> = {};
+        await Promise.all(msgs.map(async m => {
+            if (!isEncryptedMessage(m.message_text)) return;
+            if (decryptedTexts[m.id] !== undefined) return;
+            const { text } = await decryptMessage(m.message_text, pubKey);
+            updates[m.id] = text;
+        }));
+        if (Object.keys(updates).length > 0) {
+            setDecryptedTexts(prev => ({ ...prev, ...updates }));
+        }
+    }, [decryptedTexts]);
+
     const decryptAndCache = useCallback(async (msgId: number, raw: string, partnerId: number) => {
         if (decryptedTexts[msgId] !== undefined) return;
         const partnerPubKey = getCachedPublicKey(partnerId);
+        if (!partnerPubKey) return;
         const { text } = await decryptMessage(raw, partnerPubKey);
         setDecryptedTexts(prev => ({ ...prev, [msgId]: text }));
     }, [decryptedTexts]);
+
+    // Decrypt sidebar last-message previews for private chats
+    useEffect(() => {
+        users.forEach(u => {
+            const raw = u.last_msg_text;
+            if (!raw || !isEncryptedMessage(raw)) return;
+            const pubKey = getCachedPublicKey(u.id);
+            if (!pubKey) return;
+            decryptMessage(raw, pubKey).then(({ text }) => {
+                setDecryptedPreviews(prev => prev[u.id] === text ? prev : { ...prev, [u.id]: text });
+            });
+        });
+    }, [users]);
 
     // Resolve display text (decrypt if needed)
     const getDisplayText = (msg: any, partnerId: number): string => {
@@ -650,13 +775,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             const res = await api.getConversation(token, userId);
             if (res.messages) {
                 setMessages(res.messages);
-                // Populate reactions from loaded messages
                 const rxMap: Record<number, {emoji: string; user_id: number}[]> = {};
                 for (const msg of res.messages) {
                     if (msg.reactions?.length) rxMap[msg.id] = msg.reactions;
                 }
                 setReactions(prev => ({ ...prev, ...rxMap }));
-                scrollToBottom();
+                restoreOrBottom();
                 wsService.markRead(userId);
             }
         } catch (e) { console.error(e); }
@@ -675,7 +799,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 }
                 setReactions(prev => ({ ...prev, ...rxMap }));
                 setPostViews(prev => ({ ...prev, ...viewMap }));
-                scrollToBottom();
+                restoreOrBottom();
             }
         } catch (e) { console.error(e); }
     }, [token]);
@@ -776,6 +900,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         ea.onNotificationClick?.((data: any) => {
             notificationClickHandlerRef.current?.(data);
         });
+
+        const handleOpenServerSettings = () => setShowSettings(true);
+        window.addEventListener('electron:open-server-settings', handleOpenServerSettings);
+        return () => window.removeEventListener('electron:open-server-settings', handleOpenServerSettings);
     }, []);
 
     useEffect(() => {
@@ -871,6 +999,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     if (data.data.scheduled_id) {
                         setScheduledMessages(prev => prev.filter(m => m.id !== data.data.scheduled_id));
                     }
+                    if (chat) scrollPositions.current.delete(`${chat.type}-${chat.id}`);
                     scrollToBottom(true);
                 } else if (chat?.type === 'private' && chat.id === data.data.sender_id) {
                     setMessages(prev =>
@@ -884,36 +1013,6 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         setUnreadCounts(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
                     }
                 }
-                // Show in-app toast
-                const senderUser = usersRef.current.find((u: User) => u.id === data.data.sender_id);
-                const isChatActive = activeChatRef.current?.type === 'private' && activeChatRef.current?.id === data.data.sender_id;
-                if (!isChatActive && data.data.sender_id !== currentUserId && !mutedChatsRef.current.has(`private-${data.data.sender_id}`) && !archivedChatsRef.current.has(`private-${data.data.sender_id}`)) {
-                    const senderDisplayName = senderUser?.username || data.data.sender_name || t('New message');
-                    showInAppToast({
-                        title: senderDisplayName,
-                        body: getMsgPreview(data.data),
-                        chatType: 'private',
-                        chatId: data.data.sender_id,
-                        senderId: data.data.sender_id,
-                        avatarLetter: (senderUser?.username?.[0] || data.data.sender_name?.[0] || '?').toUpperCase(),
-                        avatarColor: senderUser?.avatar_color || '#1a73e8',
-                        avatarSrc: senderUser?.avatar,
-                    });
-                    // Native notification when window not focused
-                    if (!document.hasFocus()) {
-                        (window as any).electronAPI?.showNotification?.(
-                            senderDisplayName,
-                            getMsgPreview(data.data),
-                            { chatType: 'private', chatId: data.data.sender_id, senderId: data.data.sender_id }
-                        );
-                        if ('Notification' in window && Notification.permission === 'granted' && !(window as any).electronAPI) {
-                            new Notification(senderDisplayName, {
-                                body: getMsgPreview(data.data),
-                                icon: '/logo192.png',
-                            });
-                        }
-                    }
-                }
                 // Add sender to contacts if not present, update last message
                 const senderId = data.data.sender_id;
                 if (senderId && senderId !== currentUserId) {
@@ -925,12 +1024,44 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         return [updated, ...prev.filter(x => x.id !== senderId)];
                     });
                 }
+                // Show in-app toast (after state update so errors here don't block setUsers)
+                try {
+                    const senderUser = usersRef.current.find((u: User) => u.id === data.data.sender_id);
+                    const isChatActive = activeChatRef.current?.type === 'private' && activeChatRef.current?.id === data.data.sender_id;
+                    if (!isChatActive && data.data.sender_id !== currentUserId && !mutedChatsRef.current.has(`private-${data.data.sender_id}`) && !archivedChatsRef.current.has(`private-${data.data.sender_id}`)) {
+                        const senderDisplayName = senderUser?.username || data.data.sender_name || t('New message');
+                        showInAppToastRef.current?.({
+                            title: senderDisplayName,
+                            body: getMsgPreview(data.data),
+                            chatType: 'private',
+                            chatId: data.data.sender_id,
+                            senderId: data.data.sender_id,
+                            avatarLetter: (senderUser?.username?.[0] || data.data.sender_name?.[0] || '?').toUpperCase(),
+                            avatarColor: senderUser?.avatar_color || '#1a73e8',
+                            avatarSrc: senderUser?.avatar,
+                        });
+                        if (!document.hasFocus()) {
+                            (window as any).electronAPI?.showNotification?.(
+                                senderDisplayName,
+                                getMsgPreview(data.data),
+                                { chatType: 'private', chatId: data.data.sender_id, senderId: data.data.sender_id }
+                            );
+                            if ('Notification' in window && Notification.permission === 'granted' && !(window as any).electronAPI) {
+                                new Notification(senderDisplayName, {
+                                    body: getMsgPreview(data.data),
+                                    icon: '/logo192.png',
+                                });
+                            }
+                        }
+                    }
+                } catch (e) { console.error('toast error:', e); }
 
             } else if (data.type === 'message_sent') {
                 if (chat?.type === 'private' && chat.id === data.data.receiver_id) {
                     setMessages(prev =>
                         prev.some(m => m.id === data.data.id) ? prev : [...prev, data.data]
                     );
+                    if (chat) scrollPositions.current.delete(`${chat.type}-${chat.id}`);
                     scrollToBottom(true);
                 }
                 // Self-message (Favorites): update sidebar
@@ -942,10 +1073,14 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 const recvId = data.data.receiver_id;
                 if (recvId && recvId !== currentUserId) {
                     setUsers(prev => {
-                        if (!prev.some(u => u.id === recvId)) return prev;
+                        if (!prev.some(u => u.id === recvId)) {
+                            // New contact not yet in list — reload to add them
+                            loadUsers();
+                            return prev;
+                        }
                         const u = prev.find(u => u.id === recvId)!;
                         const _f0s = data.data.files?.[0];
-                        const updated = { ...u, last_msg_text: data.data.message_text || null, last_msg_file: data.data.file_path || _f0s?.file_path || null, last_msg_filename: data.data.filename || _f0s?.filename || null, last_msg_time: data.data.timestamp, last_msg_sender_id: currentUserId };
+                        const updated = { ...u, last_msg_text: data.data.message_text || null, last_msg_file: data.data.file_path || _f0s?.file_path || null, last_msg_filename: data.data.filename || _f0s?.filename || null, last_msg_time: data.data.timestamp, last_msg_sender_id: currentUserId, last_msg_is_read: 0 };
                         return [updated, ...prev.filter(x => x.id !== recvId)];
                     });
                     // New unread message for receiver — clear read receipt until they read it
@@ -957,6 +1092,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     setMessages(prev =>
                         prev.some(m => m.id === data.data.id) ? prev : [...prev, data.data]
                     );
+                    if (data.data.sender_id === currentUserId && chat) scrollPositions.current.delete(`${chat.type}-${chat.id}`);
                     scrollToBottom(true);
                 } else if (data.data.sender_id !== currentUserId) {
                     const key = `group-${data.data.group_id}`;
@@ -979,7 +1115,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         const groupObj = groupsRef.current.find((g: Group) => g.id === data.data.group_id);
                         const groupName = groupObj?.name || t('Group');
                         const senderName = data.data.sender_name || t('Member');
-                        showInAppToast({
+                        showInAppToastRef.current?.({
                             title: groupName,
                             body: `${senderName}: ${getMsgPreview(data.data)}`,
                             chatType: 'group',
@@ -1147,6 +1283,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     setUsers(prev => prev.map(u => u.id === reader_id ? { ...u, last_msg_is_read: 1 } : u));
                 }
 
+            } else if (data.type === 'now_playing') {
+                const { user_id, title, artist } = data.data;
+                setUsers(prev => prev.map(u =>
+                    u.id === user_id ? { ...u, now_playing: title ? (artist ? `${title} — ${artist}` : title) : null } : u
+                ));
+
             } else if (data.type === 'group_messages_read') {
                 const { message_ids } = data.data;
                 setMessages(prev => prev.map(m =>
@@ -1173,9 +1315,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 ));
 
             } else if (data.type === 'user_status') {
-                setUsers(prev => prev.map(u =>
-                    u.id === data.data.user_id ? { ...u, is_online: data.data.is_online } : u
-                ));
+                setUsers(prev => prev.map(u => {
+                    if (u.id !== data.data.user_id) return u;
+                    const patch: any = { is_online: data.data.is_online };
+                    if (!data.data.is_online && data.data.last_seen) patch.last_seen = data.data.last_seen;
+                    return { ...u, ...patch };
+                }));
 
             } else if (data.type === 'profile_updated') {
                 setUsers(prev => prev.map(u =>
@@ -1203,7 +1348,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 // Admin replied to current user
                 setNewSupportReply({ ...data.data });
                 if (!showSupportChatRef.current) {
-                    showInAppToast({
+                    showInAppToastRef.current?.({
                         title: 'Поддержка Aurora',
                         body: data.data.message_text,
                         chatType: 'private',
@@ -1260,15 +1405,21 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         setShowScrollDown(false);
         setScheduledMessages([]);
         setMessages([]);
+        setChatKey(k => k + 1);
         setActiveChat({ type: 'private', id: user.id, name: user.username });
         setUnreadCounts(prev => { const next = { ...prev }; delete next[`private-${user.id}`]; return next; });
         restoreDraft(`private-${user.id}`);
         // Add to contacts list if not present
         setUsers(prev => prev.some(u => u.id === user.id) ? prev : [...prev, user]);
         loadPrivateMessages(user.id);
-        // Fetch partner public key for E2E
+        // Fetch partner public key for decrypting any old encrypted messages
         if (!getCachedPublicKey(user.id)) {
-            api.getUserPublicKey(token, user.id).then(pk => { if (pk) cachePublicKey(user.id, pk); }).catch(() => {});
+            api.getUserPublicKey(token, user.id).then(pk => {
+                if (!pk) return;
+                cachePublicKey(user.id, pk);
+                // Trigger re-render so decryptAndCache runs with the new key
+                setDecryptedTexts(prev => ({ ...prev }));
+            }).catch(() => {});
         }
         loadScheduled({ type: 'private', id: user.id, name: user.username });
         setTimeout(() => inputRef.current?.focus(), 50);
@@ -1282,6 +1433,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         setShowScrollDown(false);
         setScheduledMessages([]);
         setMessages([]);
+        setChatKey(k => k + 1);
         setActiveChat({ type: 'group', id: group.id, name: group.name });
         setUnreadCounts(prev => { const next = { ...prev }; delete next[`group-${group.id}`]; return next; });
         restoreDraft(`group-${group.id}`);
@@ -1323,6 +1475,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     // === Отправка ===
 
     const sendMessage = async () => {
+        // If in edit mode — submit edit instead of sending new message
+        if (editingMessageId) {
+            handleEditSubmit();
+            return;
+        }
+
         const text = (inputRef.current?.value || '').trim();
         const hasFiles = pendingFiles.length > 0;
         if (!text && !hasFiles) return;
@@ -1334,20 +1492,15 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; }
         setReplyTo(null);
 
-        // Text only — send immediately via WS (with E2E encryption for private chats)
+        // Text only — send immediately via WS
         if (text && !hasFiles) {
             if (targetChat.type === 'private') {
-                const partnerPubKey = getCachedPublicKey(targetChat.id);
-                const msgText = partnerPubKey
-                    ? (await encryptMessage(text, partnerPubKey)) ?? text
-                    : text;
-                wsService.sendMessage(targetChat.id, msgText, undefined, undefined, undefined,
+                wsService.sendMessage(targetChat.id, text, undefined, undefined, undefined,
                     targetReplyTo?.id, targetReplyTo?.message_text, targetReplyTo?.sender_name);
             } else {
                 wsService.sendGroupMessage(targetChat.id, text, undefined, undefined, undefined,
                     targetReplyTo?.id, targetReplyTo?.message_text, targetReplyTo?.sender_name);
             }
-            if (targetChat.type === 'private') loadUsers();
             return;
         }
 
@@ -1521,9 +1674,27 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         e.preventDefault();
         e.stopPropagation();
         setMenuMessageId(msg.id);
-        // Store raw click position; useLayoutEffect will clamp after the menu renders
         setMenuPosition({ x: e.clientX, y: e.clientY });
     };
+
+    // Long-press for iOS/touch devices (context menu via touch)
+    const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const longPressMoved = useRef(false);
+    const makeLongPressHandlers = (msg: any) => ({
+        onTouchStart: (e: React.TouchEvent) => {
+            longPressMoved.current = false;
+            longPressTimer.current = setTimeout(() => {
+                if (!longPressMoved.current) {
+                    const touch = e.touches[0];
+                    setMenuMessageId(msg.id);
+                    setMenuPosition({ x: touch.clientX, y: touch.clientY });
+                }
+            }, 500);
+        },
+        onTouchMove: () => { longPressMoved.current = true; if (longPressTimer.current) clearTimeout(longPressTimer.current); },
+        onTouchEnd: () => { if (longPressTimer.current) clearTimeout(longPressTimer.current); },
+        onTouchCancel: () => { if (longPressTimer.current) clearTimeout(longPressTimer.current); },
+    });
 
     // Clamp context menu inside viewport after it renders
     useLayoutEffect(() => {
@@ -1543,19 +1714,29 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         setEditingMessageId(messageId);
         setEditingText(currentText);
         setMenuMessageId(null);
+        // Move text to main input
+        if (inputRef.current) {
+            inputRef.current.value = currentText;
+            inputRef.current.style.height = 'auto';
+            inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 150) + 'px';
+            inputRef.current.focus();
+        }
     };
 
-    const handleEditSubmit = (messageId: number) => {
-        if (editingText.trim()) {
+    const handleEditSubmit = (messageId?: number) => {
+        const id = messageId ?? editingMessageId;
+        const text = (inputRef.current?.value || editingText).trim();
+        if (id && text) {
             wsService.sendRaw({
                 type: 'edit_message',
-                message_id: messageId,
-                new_text: editingText.trim(),
+                message_id: id,
+                new_text: text,
                 is_group: activeChatRef.current?.type === 'group',
             });
         }
         setEditingMessageId(null);
         setEditingText('');
+        if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; }
     };
 
     const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
@@ -1662,6 +1843,22 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         return parsed.mainText;
     };
 
+    // restoreOrBottom: on initial chat load — restore saved scroll position if exists, else go to bottom
+    const restoreOrBottom = () => {
+        setTimeout(() => {
+            const chat = activeChatRef.current;
+            if (chat) {
+                const key = `${chat.type}-${chat.id}`;
+                const saved = scrollPositions.current.get(key);
+                if (saved !== undefined) {
+                    const el = messagesContainerRef.current;
+                    if (el) { el.scrollTop = saved; return; }
+                }
+            }
+            messagesEndRef.current?.scrollIntoView();
+        }, 40);
+    };
+
     const scrollToBottom = (smooth = false) => {
         setTimeout(() => {
             if (!messagesEndRef.current) return;
@@ -1675,6 +1872,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
     const getMsgPreview = (d: any): string => {
         const text = d.message_text?.trim() || '';
+        if (isEncryptedMessage(text)) return lang === 'en' ? 'Message' : 'Сообщение';
+        if (text.startsWith('__gif__')) return lang === 'en' ? '🎞 GIF' : '🎞 GIF';
+        if (text.startsWith('__sticker__')) return lang === 'en' ? '🎭 Sticker' : '🎭 Стикер';
+        if (text.startsWith('__poll__:')) return lang === 'en' ? '📊 Poll' : '📊 Опрос';
+        if (text.startsWith('__call_ended__')) return lang === 'en' ? '📞 Call ended' : '📞 Звонок завершён';
         const files: any[] = d.files?.length ? d.files : d.file_path ? [{ filename: d.filename || t('File') }] : [];
         if (!files.length) return text || '...';
         if (files.length === 1) return text ? `📎 ${text}` : `📎 ${files[0].filename || t('File')}`;
@@ -1693,9 +1895,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         file: string | null | undefined,
         filename: string | null | undefined,
         fallback: string,
-        prefix?: string
+        prefix?: string,
+        userId?: number
     ) => {
-        const subColor = dm ? '#5a5a8a' : '#9ca3af';
+        const subColor = isOled ? '#7c7caa' : dm ? '#5a5a8a' : '#9ca3af';
         const subStyle: React.CSSProperties = { fontSize: 13, color: subColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 };
         if (typingText) return <span style={{ ...subStyle, color: '#6366f1', fontStyle: 'italic' }}>{typingText}</span>;
         if (file && !text?.trim()) {
@@ -1708,28 +1911,33 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             const fileLabel = isAudio && /^voice_/i.test(rawLabel) ? t('Voice message') : rawLabel;
             return (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden', minWidth: 0 }}>
-                    {prefix && <span style={{ color: subColor, fontSize: 13, flexShrink: 0 }}>{prefix}</span>}
-                    {isGifFile ? (
-                        <span style={{ fontSize: 14, flexShrink: 0 }}>🎞</span>
-                    ) : isImg ? (
-                        <img src={config.fileUrl(file) ?? undefined} alt="" style={{ width: 22, height: 22, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
-                    ) : isVideo ? (
-                        <span style={{ fontSize: 14, flexShrink: 0 }}>🎬</span>
-                    ) : isAudio ? (
-                        <span style={{ fontSize: 14, flexShrink: 0 }}>🎤</span>
-                    ) : (
-                        <span style={{ fontSize: 14, flexShrink: 0 }}>📎</span>
-                    )}
+                    {prefix && <span style={{ color: subColor, fontSize: 13, flexShrink: 0 }}>{prefix.trimEnd()}</span>}
+                    {(() => {
+                        const ic = isOled ? '#a78bfa' : dm ? '#818cf8' : '#6366f1';
+                        const sp = (svg: React.ReactNode) => <span style={{ flexShrink: 0, display: 'inline-flex', color: ic }}>{svg}</span>;
+                        if (isGifFile) return sp(<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="20" rx="2"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>);
+                        if (isImg) return <img src={config.fileUrl(file) ?? undefined} alt="" style={{ width: 22, height: 22, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />;
+                        if (isVideo) return sp(<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>);
+                        if (isAudio) return sp(<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>);
+                        return sp(<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>);
+                    })()}
                     <span style={subStyle}>{isGifFile ? 'GIF' : fileLabel}</span>
                 </div>
             );
         }
         const rawPreview = text?.trim() || fallback;
         let preview: string;
-        if (rawPreview.startsWith('__gif__')) preview = '🎞 GIF';
+        if (isEncryptedMessage(rawPreview)) {
+            if (userId && decryptedPreviews[userId]) preview = decryptedPreviews[userId];
+            else return <span style={subStyle}>{prefix ? `${prefix}${fallback}` : fallback}</span>;
+        } else if (rawPreview.startsWith('__gif__')) preview = '🎞 GIF';
         else if (rawPreview.startsWith('__sticker__')) preview = `🎭 ${t('Stickers')}`;
         else if (rawPreview.startsWith('__poll__:')) preview = `📊 ${lang === 'en' ? 'Poll' : 'Опрос'}`;
-        else if (rawPreview.startsWith('↪️ ')) {
+        else if (rawPreview.startsWith('__call_ended__')) preview = `📞 ${lang === 'en' ? 'Call ended' : 'Звонок завершён'}`;
+        else if (rawPreview.startsWith(PLAYLIST_MSG_PREFIX)) {
+            try { const d = JSON.parse(rawPreview.slice(PLAYLIST_MSG_PREFIX.length)); preview = `🎵 ${d.name || (lang === 'en' ? 'Playlist' : 'Плейлист')}`; }
+            catch { preview = `🎵 ${lang === 'en' ? 'Playlist' : 'Плейлист'}`; }
+        } else if (rawPreview.startsWith('↪️ ')) {
             const nl = rawPreview.indexOf('\n');
             const body = nl !== -1 ? rawPreview.slice(nl + 1).trim() : '';
             preview = `↪ ${body || (lang === 'en' ? 'Forwarded message' : 'Пересланное сообщение')}`;
@@ -1795,9 +2003,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         setToasts(prev => [...prev.slice(-4), { ...toast, id }]);
         playNotificationSound();
         const timer = setTimeout(() => dismissToast(id), 5000);
-        // Store timer to cancel on hover — handled via CSS animation instead
         return () => clearTimeout(timer);
     };
+    // Keep ref current so WebSocket handler (stale closure) always fires the latest toast
+    showInAppToastRef.current = showInAppToast;
 
     const replyFromToast = (toast: ToastItem, text: string) => {
         if (!text.trim()) return;
@@ -1874,44 +2083,42 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     };
 
     const darkStyles = {
-        sidebar: { ...styles.sidebar, backgroundColor: dm ? C.bg1 : '#f7f8fc', boxShadow: dm ? (isOled ? 'none' : '2px 0 16px rgba(0,0,0,0.3)') : styles.sidebar.boxShadow, borderRight: 'none' },
-        chatArea: { ...styles.chatArea, backgroundColor: theme.chatBg || (dm ? C.bg0 : '#f2f4f8'), backgroundImage: isOled ? 'linear-gradient(to right, rgba(100,70,200,0.04) 0px, transparent 32px)' : 'none' },
-        chatHeader: { ...styles.chatHeader, borderBottom: 'none', background: dm ? (isOled ? 'linear-gradient(90deg, #1a0038 0%, #000000 320px)' : `linear-gradient(135deg, ${C.bg1} 0%, #1a1830 100%)`) : '#f7f8fc', backgroundAttachment: isOled ? 'fixed' : undefined, boxShadow: isOled ? '0 4px 32px rgba(139,92,246,0.08)' : dm ? '0 2px 16px rgba(0,0,0,0.25)' : '0 2px 12px rgba(99,102,241,0.08)' },
-        inputArea: { ...styles.inputArea, backgroundColor: dm ? C.bg1 : '#f7f8fc', borderTop: 'none', boxShadow: isOled ? '0 -4px 24px rgba(139,92,246,0.06)' : dm ? '0 -2px 12px rgba(0,0,0,0.18)' : '0 -2px 10px rgba(99,102,241,0.07)' },
-        input: { ...styles.input, backgroundColor: dm ? (isOled ? '#0a0a12' : C.bg4) : '#eef0f8', border: 'none', boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.14), 0 2px 12px rgba(139,92,246,0.08)' : dm ? '0 0 0 1.5px rgba(99,102,241,0.2)' : '0 0 0 1.5px rgba(99,102,241,0.15)', color: dm ? '#e2e8f0' : 'inherit' },
+        sidebar: { ...styles.sidebar, backgroundColor: dm ? C.bg1 : '#f7f8fc', boxShadow: isOled ? 'none' : dm ? '2px 0 12px rgba(99,102,241,0.05)' : '2px 0 12px rgba(99,102,241,0.05)', borderRight: 'none' },
+        chatArea: { ...styles.chatArea, backgroundColor: theme.chatBg || (dm ? C.bg0 : '#f2f4f8') },
+        chatHeader: { ...styles.chatHeader, borderBottom: 'none', background: dm ? (isOled ? 'linear-gradient(90deg, #1a0038 0%, #000000 320px)' : `linear-gradient(135deg, ${C.bg1} 0%, #1a1830 100%)`) : '#f7f8fc', backgroundAttachment: (isOled && !isMobile) ? 'fixed' : undefined, boxShadow: isOled ? '0 4px 32px rgba(139,92,246,0.08)' : dm ? '0 2px 16px rgba(0,0,0,0.25)' : '0 2px 12px rgba(99,102,241,0.08)' },
+        inputArea: { ...styles.inputArea, backgroundColor: dm ? C.bg1 : '#f7f8fc', borderTop: 'none', boxShadow: isMobile ? 'none' : (isOled ? '0 -4px 24px rgba(139,92,246,0.06)' : dm ? '0 -2px 12px rgba(0,0,0,0.18)' : '0 -2px 10px rgba(99,102,241,0.07)'), padding: '8px 12px', gap: 8 },
+        input: { ...styles.input, backgroundColor: 'transparent', border: 'none', boxShadow: 'none', padding: '8px 4px', color: dm ? '#e2e8f0' : 'inherit', flex: '1 1 0', minWidth: 0, fontSize: 14 },
+        inputPill: { display: 'flex' as const, alignItems: 'flex-end' as const, gap: 0, flex: 1, minWidth: 0, background: isOled ? '#08080f' : dm ? C.bg4 : '#eef0f8', borderRadius: 24, border: 'none', padding: '2px 4px 2px 12px' },
+        pillBtn: { background: 'none' as const, border: 'none' as const, cursor: 'pointer' as const, fontSize: 19, padding: '5px 4px', borderRadius: 8, color: dm ? (isOled ? '#6b5fa0' : '#5a5a7a') : '#b0b0c8', lineHeight: 1, flexShrink: 0, alignSelf: 'flex-end' as const, marginBottom: 3, transition: 'color 0.15s' as const },
+        sendBtn2: { width: 40, height: 40, borderRadius: 20, background: isOled ? 'linear-gradient(135deg,#5b21b6,#7c3aed)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: 'white', border: 'none', cursor: 'pointer', display: 'flex' as const, alignItems: 'center' as const, justifyContent: 'center' as const, flexShrink: 0, alignSelf: 'flex-end' as const, marginBottom: 1, boxShadow: isOled ? '0 2px 12px rgba(124,58,237,0.45)' : '0 2px 10px rgba(99,102,241,0.4)', transition: 'all 0.15s' as const },
         chatName: { ...styles.chatName, color: dm ? '#e2e8f0' : '#1e1b4b' },
         chatItem: { ...styles.chatItem },
         sectionTitle: { ...styles.sectionTitle, color: dm ? (isOled ? 'rgba(167,139,250,0.45)' : '#4c4c7a') : '#a5b4fc' },
         headerText: { color: dm ? '#e2e8f0' : 'inherit' },
-        profileCard: { ...styles.profileCard, backgroundColor: dm ? (isOled ? '#000000' : '#161625') : '#f0f1f8', borderTop: 'none', boxShadow: isOled ? '0 -4px 20px rgba(139,92,246,0.07)' : dm ? '0 -2px 12px rgba(0,0,0,0.18)' : '0 -2px 10px rgba(99,102,241,0.07)' },
+        profileCard: { ...styles.profileCard, backgroundColor: dm ? (isOled ? '#000000' : '#161625') : '#f0f1f8', borderTop: 'none', padding: '8px 16px', boxShadow: isMobile ? 'none' : (isOled ? '0 -4px 20px rgba(139,92,246,0.07)' : dm ? '0 -2px 12px rgba(0,0,0,0.18)' : '0 -2px 10px rgba(99,102,241,0.07)') },
         profileName: { ...styles.profileName, color: dm ? '#e2e8f0' : '#1e1b4b' },
         sidebarScroll: { ...styles.sidebarScroll, backgroundColor: dm ? C.bg1 : '#f7f8fc' },
         noChat: { ...styles.noChat, color: dm ? C.bdr3 : '#c4b5fd' },
         activeChatItem: {
             background: isOled
-                ? 'linear-gradient(90deg, rgba(167,139,250,0.22) 0%, rgba(139,92,246,0.08) 50%, transparent 100%)'
+                ? 'radial-gradient(ellipse 100% 100% at 0% 50%, rgba(167,139,250,0.22) 0%, rgba(139,92,246,0.07) 55%, transparent 80%)'
                 : dm
-                    ? 'linear-gradient(90deg, rgba(99,102,241,0.28) 0%, rgba(99,102,241,0.08) 55%, transparent 100%)'
-                    : 'linear-gradient(90deg, rgba(99,102,241,0.13) 0%, rgba(139,92,246,0.05) 55%, transparent 100%)',
-            boxShadow: isOled
-                ? 'inset 3px 0 0 #a78bfa, 0 2px 16px rgba(167,139,250,0.14)'
-                : dm
-                    ? 'inset 3px 0 0 #818cf8, 0 2px 12px rgba(99,102,241,0.18)'
-                    : 'inset 3px 0 0 #6366f1, 0 1px 8px rgba(99,102,241,0.1)',
+                    ? 'radial-gradient(ellipse 100% 100% at 0% 50%, rgba(99,102,241,0.26) 0%, rgba(99,102,241,0.08) 55%, transparent 80%)'
+                    : 'radial-gradient(ellipse 100% 100% at 0% 50%, rgba(99,102,241,0.28) 0%, rgba(139,92,246,0.12) 55%, transparent 85%)',
         },
-        iconBtn: { ...styles.iconBtn, background: isOled ? 'rgba(167,139,250,0.07)' : dm ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.05)', border: 'none', color: dm ? (isOled ? '#c4b5fd' : '#a5b4fc') : '#6366f1', borderRadius: 12, padding: '0', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.12), 0 2px 10px rgba(139,92,246,0.1)' : dm ? '0 0 0 1px rgba(99,102,241,0.18)' : '0 0 0 1px rgba(99,102,241,0.14)' },
+        iconBtn: { ...styles.iconBtn, background: isOled ? 'rgba(167,139,250,0.07)' : dm ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.05)', border: 'none', color: dm ? (isOled ? '#c4b5fd' : '#a5b4fc') : '#6366f1', borderRadius: isMobile ? 10 : 12, padding: '0', width: isMobile ? 32 : 36, height: isMobile ? 32 : 36, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.12), 0 2px 10px rgba(139,92,246,0.1)' : dm ? '0 0 0 1px rgba(99,102,241,0.18)' : '0 0 0 1px rgba(99,102,241,0.14)' },
         fileBtn: { ...styles.fileBtn, backgroundColor: dm ? (isOled ? '#0a0a12' : C.bg4) : '#eef0f8', border: 'none', boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.12)' : dm ? '0 0 0 1.5px rgba(99,102,241,0.2)' : '0 0 0 1.5px rgba(99,102,241,0.15)', color: dm ? (isOled ? '#a78bfa' : '#7c7caa') : '#6366f1' },
     };
 
     return (
-        <div style={{ ...styles.container, backgroundColor: dm ? C.bg0 : '#eef0f5', ...(isMobile ? { position: 'relative' as const, overflow: 'hidden' } : {}) }}>
+        <div className={isMobile ? 'mobile-root-container' : undefined} style={{ ...styles.container, backgroundColor: dm ? C.bg0 : '#eef0f5', ...(isMobile ? { position: 'relative' as const, overflow: 'hidden' } : {}) }}>
             {/* Persistent audio element */}
             <audio
                 ref={globalAudioRef}
                 preload="auto"
                 onPlay={() => setGlobalPlaying(true)}
                 onPause={() => setGlobalPlaying(false)}
-                onEnded={() => { setNowPlaying(null); setGlobalPlaying(false); setGlobalCurrentTime(0); setGlobalDuration(0); }}
+                onEnded={() => { setNowPlaying(null); setGlobalPlaying(false); setGlobalCurrentTime(0); setGlobalDuration(0); resumeMiniIfNeeded(); }}
                 onLoadedMetadata={e => {
                     const a = e.target as HTMLAudioElement;
                     if (isFinite(a.duration) && a.duration > 0) setGlobalDuration(a.duration);
@@ -1950,6 +2157,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     transition: 'transform 0.28s cubic-bezier(0.4,0,0.2,1)',
                     overflow: 'hidden',
                     visibility: 'visible',
+                    willChange: 'transform',
                 } : {
                     width: sidebarHidden ? 0 : sidebarCompact ? 64 : 320,
                     minWidth: 0,
@@ -1962,14 +2170,14 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     <div style={{
                         ...styles.sidebarHeader,
                         background: !dm ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' : (isOled ? 'linear-gradient(90deg, #1a0038 0%, #000000 320px)' : 'linear-gradient(135deg, #1e1a3d 0%, #2d2060 100%)'),
-                        backgroundAttachment: isOled ? 'fixed' : undefined,
+                        backgroundAttachment: (isOled && !isMobile) ? 'fixed' : undefined,
                         justifyContent: sidebarCompact ? 'center' : undefined,
                         padding: sidebarCompact ? '16px 0' : '16px',
                     }}>
                         <button
                             onClick={() => setShowArchive(false)}
-                            style={{ background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 10, color: 'white', cursor: 'pointer', fontSize: 16, padding: '4px 10px', fontWeight: 700, flexShrink: 0, lineHeight: 1 }}
-                        >←</button>
+                            style={{ background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 10, color: 'white', cursor: 'pointer', padding: '6px 10px', fontWeight: 700, flexShrink: 0, display: 'flex', alignItems: 'center' }}
+                        ><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
                         {!sidebarCompact && (
                             <div style={{ flex: 1, lineHeight: 1.1, paddingLeft: 8 }}>
                                 <span style={{ fontWeight: 800, fontSize: 18, color: 'white' }}>{lang === 'en' ? 'Archive' : 'Архив'}</span>
@@ -1980,11 +2188,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 <div style={{
                     ...styles.sidebarHeader,
                     background: !dm ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' : (isOled ? 'linear-gradient(90deg, #1a0038 0%, #000000 320px)' : 'linear-gradient(135deg, #1e1a3d 0%, #2d2060 100%)'),
-                    backgroundAttachment: isOled ? 'fixed' : undefined,
+                    backgroundAttachment: (isOled && !isMobile) ? 'fixed' : undefined,
                     justifyContent: sidebarCompact ? 'center' : undefined,
                     padding: sidebarCompact ? '16px 0' : '16px',
                 }}>
-                    <img src={dm ? '/logo-dark.png' : '/logo-light.png'} alt="Aurora" style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, objectFit: 'cover' }} />
+                    <img src="/logo192.png" alt="Aurora" style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, objectFit: 'cover' }} />
                     {!sidebarCompact && <>
                         <div style={{ flex: 1, lineHeight: 1.1 }}>
                             <span style={isOled
@@ -1996,10 +2204,15 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <button
+                                onClick={() => setShowMediaPlayer(v => !v)}
+                                style={{ padding: '6px 10px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: miniTrack ? (isOled ? 'rgba(167,139,250,0.25)' : (dm ? 'rgba(99,102,241,0.3)' : 'rgba(255,255,255,0.3)')) : (isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)')), color: dm ? '#c4b5fd' : 'white', border: isOled ? '1px solid rgba(167,139,250,0.3)' : (dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 4, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none' }}
+                                title={lang === 'en' ? 'Media Player' : 'Медиаплеер'}
+                            ><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></button>
+                            <button
                                 onClick={() => setShowHelp(true)}
                                 style={{ padding: '6px 10px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)'), color: dm ? '#c4b5fd' : 'white', border: isOled ? '1px solid rgba(167,139,250,0.3)' : (dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 4, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none' }}
                                 title={lang === 'en' ? "What's new" : 'Что нового'}
-                            >🆕</button>
+                            ><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>
                         <div style={{ position: 'relative' }}>
                             <button
                                 onClick={() => setShowCreateDropdown(v => !v)}
@@ -2010,21 +2223,21 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             {showCreateDropdown && (
                                 <div
                                     className="floating-enter"
-                                    style={{ position: 'absolute', top: '110%', right: 0, zIndex: 300, background: dm ? C.bg2 : 'white', border: `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.22)', minWidth: 170, overflow: 'hidden' }}
+                                    style={{ position: 'absolute', top: '110%', right: 0, zIndex: 300, background: isOled ? '#080810' : (dm ? C.bg2 : 'white'), borderRadius: 14, boxShadow: isOled ? '0 0 30px rgba(124,58,237,0.3), 0 16px 40px rgba(0,0,0,0.9)' : dm ? '0 0 24px rgba(99,102,241,0.2), 0 12px 36px rgba(0,0,0,0.5)' : '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)', minWidth: 180, overflow: 'hidden', padding: '4px 0' }}
                                     onMouseLeave={() => setShowCreateDropdown(false)}
                                 >
                                     {[
-                                        { icon: '👥', label: t('Create group'), action: () => { setShowCreateDropdown(false); setShowCreateGroup(true); } },
-                                        { icon: '📢', label: t('Create channel'), action: () => { setShowCreateDropdown(false); setShowCreateChannel(true); } },
+                                        { svg: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>, label: t('Create group'), action: () => { setShowCreateDropdown(false); setShowCreateGroup(true); } },
+                                        { svg: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 8.01c0-2.18-2.24-3.93-5-3.93-1.33 0-2.54.43-3.43 1.13C12.68 4.51 11.47 4.08 10.14 4.08c-2.76 0-5 1.75-5 3.93 0 .69.23 1.34.62 1.9L3 16.51l3.5-1.17c.85.52 1.9.83 3.03.83 1.33 0 2.54-.43 3.43-1.13.89.7 2.1 1.13 3.43 1.13 1.13 0 2.18-.31 3.03-.83L23 16.51l-2.76-6.6c.39-.56.62-1.21.62-1.9z"/></svg>, label: t('Create channel'), action: () => { setShowCreateDropdown(false); setShowCreateChannel(true); } },
                                     ].map(item => (
                                         <div
                                             key={item.label}
                                             onClick={item.action}
-                                            style={{ padding: '10px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: dm ? '#e0e0f0' : '#1e1b4b', fontWeight: 500 }}
-                                            onMouseEnter={e => (e.currentTarget.style.background = dm ? 'rgba(99,102,241,0.1)' : '#f5f3ff')}
+                                            style={{ padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: dm ? '#e0e0f0' : '#1e1b4b', fontWeight: 500 }}
+                                            onMouseEnter={e => (e.currentTarget.style.background = dm ? 'rgba(99,102,241,0.12)' : '#f5f3ff')}
                                             onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                                         >
-                                            <span style={{ fontSize: 15 }}>{item.icon}</span>
+                                            <span style={{ color: isOled ? '#a78bfa' : (dm ? '#a5b4fc' : '#6366f1') }}>{item.svg}</span>
                                             {item.label}
                                         </div>
                                     ))}
@@ -2069,14 +2282,58 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         }}
                         style={{ width: '100%', boxSizing: 'border-box', padding: '7px 12px', borderRadius: 10, border: 'none', background: !dm ? '#f5f3ff' : (isOled ? C.bg4 : '#1e1e3a'), color: dm ? '#e0e0f0' : '#1e1b4b', fontSize: 13, outline: 'none', boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.14), 0 2px 10px rgba(139,92,246,0.08)' : dm ? '0 0 0 1px rgba(99,102,241,0.2)' : '0 0 0 1px rgba(99,102,241,0.2)', transition: 'box-shadow 0.15s' }}
                     />
-                    {sidebarSearchFocused && (sidebarSearchResults.length > 0 || sidebarChannelResults.length > 0 || sidebarSearchLoading || (!sidebarSearchQuery && (searchHistory.length > 0 || recentUsers.length > 0))) && (
+                    {sidebarSearchFocused && (sidebarLocalMatches.users.length > 0 || sidebarLocalMatches.groups.length > 0 || sidebarSearchResults.length > 0 || sidebarChannelResults.length > 0 || sidebarSearchLoading || (!sidebarSearchQuery && (searchHistory.length > 0 || recentUsers.length > 0))) && (
                         <div className="sidebar-search-dropdown" style={{ position: 'absolute', top: '100%', left: 10, right: 10, zIndex: 200, background: dm ? C.bg2 : 'white', border: `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 12, boxShadow: isOled ? '0 8px 32px rgba(0,0,0,0.8), 0 0 0 1px rgba(167,139,250,0.1)' : '0 8px 32px rgba(0,0,0,0.18)', overflow: 'hidden', maxHeight: 420, overflowY: 'auto' }}>
                             {sidebarSearchQuery ? (
                                 <>
+                                    {/* My chats — local matches from users + groups */}
+                                    {(sidebarLocalMatches.users.length > 0 || sidebarLocalMatches.groups.length > 0) && (
+                                        <>
+                                            <div style={{ padding: '6px 12px 4px', fontSize: 11, fontWeight: 600, color: dm ? '#5a5a8a' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{lang === 'en' ? 'My chats' : 'Мои чаты'}</div>
+                                            {sidebarLocalMatches.users.map(u => {
+                                                const avatarBg = (u as any).avatar_color || '#6366f1';
+                                                return (
+                                                    <div key={`lu-${u.id}`}
+                                                        onMouseDown={() => { selectPrivateChat(u); setSidebarSearchQuery(''); setSidebarSearchResults([]); setSidebarChannelResults([]); setSidebarSearchFocused(false); }}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
+                                                        className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
+                                                        <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? (dm ? C.bg1 : '#f7f8fc') : avatarBg, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
+                                                            {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
+                                                        </div>
+                                                        <div style={{ minWidth: 0, flex: 1 }}>
+                                                            <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
+                                                            <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{u.tag ? `@${u.tag}` : (u.is_online ? `🟢 ${t('Online')}` : t('Offline'))}</div>
+                                                        </div>
+                                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={dm ? '#5a5a8a' : '#c4b5fd'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                                    </div>
+                                                );
+                                            })}
+                                            {sidebarLocalMatches.groups.map(g => {
+                                                return (
+                                                    <div key={`lg-${g.id}`}
+                                                        onMouseDown={() => { selectGroupChat(g); setSidebarSearchQuery(''); setSidebarSearchResults([]); setSidebarChannelResults([]); setSidebarSearchFocused(false); }}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
+                                                        className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
+                                                        <div style={{ width: 34, height: 34, borderRadius: '50%', background: g.avatar ? (dm ? C.bg1 : '#f7f8fc') : '#8b5cf6', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
+                                                            {g.avatar ? <img src={config.fileUrl(g.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : g.name[0]?.toUpperCase()}
+                                                        </div>
+                                                        <div style={{ minWidth: 0, flex: 1 }}>
+                                                            <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</div>
+                                                            <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{g.is_channel ? (lang === 'en' ? 'Channel' : 'Канал') : (lang === 'en' ? 'Group' : 'Группа')} · {g.member_count ?? ''} {lang === 'en' ? 'members' : 'участников'}</div>
+                                                        </div>
+                                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={dm ? '#5a5a8a' : '#c4b5fd'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                                    </div>
+                                                );
+                                            })}
+                                            {(sidebarSearchResults.length > 0 || sidebarChannelResults.length > 0 || sidebarSearchLoading) && (
+                                                <div style={{ height: 1, background: dm ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)', margin: '4px 0' }} />
+                                            )}
+                                        </>
+                                    )}
                                     {sidebarSearchLoading && (
                                         <div style={{ padding: '10px 12px', fontSize: 13, color: dm ? '#5a5a8a' : '#9ca3af', textAlign: 'center' }}>{t('Searching...')}</div>
                                     )}
-                                    {!sidebarSearchLoading && sidebarSearchResults.length === 0 && sidebarChannelResults.length === 0 && (
+                                    {!sidebarSearchLoading && sidebarSearchResults.length === 0 && sidebarChannelResults.length === 0 && sidebarLocalMatches.users.length === 0 && sidebarLocalMatches.groups.length === 0 && (
                                         <div style={{ padding: '10px 12px', fontSize: 13, color: dm ? '#5a5a8a' : '#9ca3af', textAlign: 'center' }}>{t('No results found')}</div>
                                     )}
                                     {sidebarChannelResults.length > 0 && (
@@ -2100,7 +2357,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                         </div>
                                                         <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{ch.channel_tag ? `@${ch.channel_tag}` : ''}{ch.member_count ? ` · ${formatMembers(ch.member_count, 'subscriber', lang)}` : ''}</div>
                                                     </div>
-                                                    {ch.is_member ? <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 600 }}>✓</span> : null}
+                                                    {ch.is_member ? <span style={{ color: '#22c55e', display: 'inline-flex' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span> : null}
                                                 </div>
                                             ))}
                                         </>
@@ -2118,7 +2375,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     <div style={{ minWidth: 0, flex: 1 }}>
                                                         <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
                                                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</span>
-                                                            {(u.tag === 'kayano' || u.tag === 'durov') && <span title={t('developer of Aurora')} style={{ fontSize: 12, flexShrink: 0, lineHeight: 1 }}>🔧</span>}
+                                                            {(u.tag === 'kayano' || u.tag === 'durov') && <span title={t('developer of Aurora')} style={{ flexShrink: 0, display: 'inline-flex', color: '#f59e0b' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
                                                         </div>
                                                         <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{u.tag ? `@${u.tag}` : ((users.find(lu => lu.id === u.id) ?? u).is_online ? `🟢 ${t('Online')}` : t('Offline'))}</div>
                                                     </div>
@@ -2146,7 +2403,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     <div style={{ minWidth: 0, flex: 1 }}>
                                                         <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
                                                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</span>
-                                                            {(u.tag === 'kayano' || u.tag === 'durov') && <span title={t('developer of Aurora')} style={{ fontSize: 12, flexShrink: 0, lineHeight: 1 }}>🔧</span>}
+                                                            {(u.tag === 'kayano' || u.tag === 'durov') && <span title={t('developer of Aurora')} style={{ flexShrink: 0, display: 'inline-flex', color: '#f59e0b' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
                                                         </div>
                                                         <div style={{ fontSize: 11, color: (users.find(lu => lu.id === u.id) ?? u).is_online ? '#22c55e' : (dm ? '#5a5a8a' : '#9ca3af') }}>{(users.find(lu => lu.id === u.id) ?? u).is_online ? `🟢 ${t('Online')}` : t('Offline')}</div>
                                                     </div>
@@ -2167,7 +2424,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     <div style={{ minWidth: 0, flex: 1 }}>
                                                         <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
                                                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</span>
-                                                            {(u.tag === 'kayano' || u.tag === 'durov') && <span title={t('developer of Aurora')} style={{ fontSize: 12, flexShrink: 0, lineHeight: 1 }}>🔧</span>}
+                                                            {(u.tag === 'kayano' || u.tag === 'durov') && <span title={t('developer of Aurora')} style={{ flexShrink: 0, display: 'inline-flex', color: '#f59e0b' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
                                                         </div>
                                                         <div style={{ fontSize: 11, color: (users.find(lu => lu.id === u.id) ?? u).is_online ? '#22c55e' : (dm ? '#5a5a8a' : '#9ca3af') }}>{(users.find(lu => lu.id === u.id) ?? u).is_online ? `🟢 ${t('Online')}` : t('Offline')}</div>
                                                     </div>
@@ -2184,9 +2441,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 {/* Folder tabs */}
                 {!sidebarCompact && !showArchive && folders.length > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', borderBottom: 'none' }}>
-                        <button onClick={() => { if (folderTabsRef.current) folderTabsRef.current.scrollLeft -= 120; }}
-                            style={{ flexShrink: 0, width: 24, height: '100%', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', fontSize: 14, padding: '0 2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
-                    <div ref={folderTabsRef} style={{ display: 'flex', overflowX: 'auto', gap: 4, padding: '6px 4px', flex: 1, scrollbarWidth: 'thin', scrollbarColor: dm ? '#3a3a5e transparent' : '#c4b5fd transparent' }}>
+                    <div ref={folderTabsRef} style={{ display: 'flex', overflowX: 'auto', gap: 4, padding: '6px 8px', flex: 1, scrollbarWidth: 'none' }}>
                         <button
                             onClick={() => setActiveFolder(null)}
                             style={{ flexShrink: 0, padding: '4px 12px', borderRadius: 20, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
@@ -2211,8 +2466,6 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             );
                         })}
                     </div>
-                        <button onClick={() => { if (folderTabsRef.current) folderTabsRef.current.scrollLeft += 120; }}
-                            style={{ flexShrink: 0, width: 24, height: '100%', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', fontSize: 14, padding: '0 2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
                     </div>
                 )}
 
@@ -2269,7 +2522,18 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     {lastTime && <span style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', whiteSpace: 'nowrap', flexShrink: 0 }}>{formatSidebarTime(lastTime)}</span>}
                                                 </div>
                                                 <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', minWidth: 0, height: 18 }}>
-                                                    {renderSidebarSub(undefined, lastText, lastFile, lastFilename, lang === 'en' ? 'No messages' : 'Нет сообщений')}
+                                                    {(() => {
+                                                        const lastSenderId = (item as any).last_msg_sender_id;
+                                                        const isOwnMsg = lastSenderId === currentUserId;
+                                                        let archPrefix: string | undefined;
+                                                        if (type === 'user') {
+                                                            archPrefix = isOwnMsg ? (lang === 'en' ? 'You: ' : 'Вы: ') : undefined;
+                                                        } else {
+                                                            const g = item as any;
+                                                            archPrefix = g.is_channel ? undefined : (isOwnMsg ? (lang === 'en' ? 'You: ' : 'Вы: ') : (g.last_msg_sender_name ? `${g.last_msg_sender_name}: ` : undefined));
+                                                        }
+                                                        return renderSidebarSub(undefined, lastText, lastFile, lastFilename, lang === 'en' ? 'No messages' : 'Нет сообщений', archPrefix, type === 'user' ? item.id : undefined);
+                                                    })()}
                                                 </div>
                                             </div>
                                             {unread > 0 && (
@@ -2295,7 +2559,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
                         type ChatEntry = { kind: 'group'; data: Group } | { kind: 'user'; data: User } | { kind: 'favorites' };
                         const favKey = `private-${currentUserId}`;
-                        const showFavorites = !archivedChats.has(favKey) && !hiddenChats.has(favKey);
+                        const showFavorites = !archivedChats.has(favKey) && !hiddenChats.has(favKey)
+                            && (!folderUserIds || folderUserIds.has(currentUserId));
                         const entries: ChatEntry[] = [
                             ...(showFavorites ? [{ kind: 'favorites' as const }] : []),
                             ...visibleGroups.map(g => ({ kind: 'group' as const, data: g })),
@@ -2332,23 +2597,22 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     style={{ ...darkStyles.chatItem, ...(activeChat?.type === 'private' && activeChat.id === currentUserId ? darkStyles.activeChatItem : {}), ...(sidebarCompact ? { justifyContent: 'center', padding: '6px 0' } : {}), position: 'relative' }}
                                 >
                                     <div style={{ position: 'relative', flexShrink: 0 }}>
-                                        <div style={{ ...styles.avatar, background: 'linear-gradient(135deg,#f59e0b,#f97316)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, overflow: 'hidden' }}>⭐</div>
-                                        {pinnedChats.has(favKey) && <div style={{ position: 'absolute', top: -1, right: -1, width: 14, height: 14, borderRadius: '50%', background: dm ? C.bg4 : 'white', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, lineHeight: 1, zIndex: 2 }}>📌</div>}
+                                        <div style={{ ...styles.avatar, background: 'linear-gradient(135deg,#f59e0b,#f97316)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', color: 'white' }}><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
+                                        {pinnedChats.has(favKey) && <div style={{ position: 'absolute', top: -1, right: -1, width: 14, height: 14, borderRadius: '50%', background: dm ? C.bg4 : 'white', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, color: '#6366f1' }}><svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg></div>}
                                     </div>
                                     {!sidebarCompact && <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 4 }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 4 }}>
                                             <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{lang === 'en' ? 'Favorites' : 'Избранное'}</div>
-                                            {favoritesLastMsg?.time && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', flexShrink: 0, whiteSpace: 'nowrap' }}>{formatSidebarTime(favoritesLastMsg.time)}</div>}
+                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, flexShrink: 0 }}>
+                                                {favoritesLastMsg?.time && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', whiteSpace: 'nowrap' }}>{formatSidebarTime(favoritesLastMsg.time)}</div>}
+                                                {unreadCounts[favKey] > 0 && <div className="badge-pop" style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[favKey] > 99 ? '99+' : unreadCounts[favKey]}</div>}
+                                            </div>
                                         </div>
                                         <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', minWidth: 0, height: 18 }}>
                                             {renderSidebarSub(undefined, favoritesLastMsg?.text, favoritesLastMsg?.file, favoritesLastMsg?.filename, lang === 'en' ? 'Your saved messages' : 'Ваши сохранённые сообщения')}
                                         </div>
                                     </div>}
-                                    {unreadCounts[favKey] > 0 && (
-                                        sidebarCompact
-                                            ? <div className="badge-pop" style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>{unreadCounts[favKey] > 99 ? '99+' : unreadCounts[favKey]}</div>
-                                            : <div className="badge-pop unread-badge" style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0 }}>{unreadCounts[favKey] > 99 ? '99+' : unreadCounts[favKey]}</div>
-                                    )}
+                                    {sidebarCompact && unreadCounts[favKey] > 0 && <div className="badge-pop" style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>{unreadCounts[favKey] > 99 ? '99+' : unreadCounts[favKey]}</div>}
                                 </div>
                             ); } else if (entry.kind === 'group') { const group = entry.data; return (
                                 <div
@@ -2371,20 +2635,20 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             }
                                         </div>
                                         {pinnedChats.has(`group-${group.id}`) && (
-                                            <div style={{ position: 'absolute', top: -1, right: -1, width: 14, height: 14, borderRadius: '50%', background: dm ? C.bg4 : 'white', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, lineHeight: 1, zIndex: 2 }}>📌</div>
+                                            <div style={{ position: 'absolute', top: -1, right: -1, width: 14, height: 14, borderRadius: '50%', background: dm ? C.bg4 : 'white', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, color: '#6366f1' }}><svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg></div>
                                         )}
-                                        {mutedChats.has(`group-${group.id}`)
-                                            ? <div style={{ position: 'absolute', bottom: 1, right: 1, width: 13, height: 13, borderRadius: '50%', background: dm ? C.bg6 : '#e0e0e0', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, lineHeight: 1 }}>🔕</div>
-                                            : group.is_channel
-                                                ? <div style={{ position: 'absolute', bottom: 1, right: 1, width: 14, height: 14, borderRadius: '50%', background: dm ? C.bg4 : 'white', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, lineHeight: 1 }}>📢</div>
-                                                : <div style={{ position: 'absolute', bottom: 1, right: 1, width: 14, height: 14, borderRadius: '50%', background: dm ? C.bg4 : 'white', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                                    <svg width="9" height="9" viewBox="0 0 16 16" fill={dm ? '#a5b4fc' : '#6366f1'}><path d="M8 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-5 6a5 5 0 0 1 10 0H3zm10-9a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm2 5a3 3 0 0 0-4-2.83A6 6 0 0 1 14 16h2a4 4 0 0 0-1-2.71z"/></svg>
-                                                </div>
-                                        }
+                                        {mutedChats.has(`group-${group.id}`) && (
+                                            <div style={{ position: 'absolute', bottom: 1, right: 1, width: 13, height: 13, borderRadius: '50%', background: dm ? C.bg6 : '#e0e0e0', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: dm ? '#9090b0' : '#6b7280' }}><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg></div>
+                                        )}
                                     </div>
                                     {!sidebarCompact && <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 4 }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
                                             <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                <span style={{ flexShrink: 0, display: 'inline-flex', color: dm ? '#7c7caa' : '#9ca3af' }}>
+                                                    {group.is_channel
+                                                        ? <svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M18 3a1 1 0 00-1.447-.894L8.763 6H5a3 3 0 000 6h.28l1.771 5.316A1 1 0 008 18h1a1 1 0 001-1v-4.382l6.553 3.276A1 1 0 0018 15V3z" clipRule="evenodd"/></svg>
+                                                        : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>}
+                                                </span>
                                                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.name}</span>
                                                 {!!group.is_channel && group.channel_tag === 'auroramessenger' && (
                                                     <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', flexShrink: 0 }}>
@@ -2392,7 +2656,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     </span>
                                                 )}
                                             </div>
-                                            {group.last_msg_time && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', flexShrink: 0, whiteSpace: 'nowrap' }}>{formatSidebarTime(group.last_msg_time)}</div>}
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+                                                {group.last_msg_time && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', whiteSpace: 'nowrap' }}>{formatSidebarTime(group.last_msg_time)}</div>}
+                                            </div>
                                         </div>
                                         <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', minWidth: 0, height: 18 }}>
                                             {(() => {
@@ -2407,15 +2673,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             })()}
                                         </div>
                                     </div>}
-                                    {unreadCounts[`group-${group.id}`] > 0 && (
-                                        sidebarCompact
-                                            ? <div className="badge-pop" style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>
-                                                {unreadCounts[`group-${group.id}`] > 99 ? '99+' : unreadCounts[`group-${group.id}`]}
-                                            </div>
-                                            : <div className="badge-pop unread-badge" style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0, boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>
-                                                {unreadCounts[`group-${group.id}`] > 99 ? '99+' : unreadCounts[`group-${group.id}`]}
-                                            </div>
-                                    )}
+                                    {!sidebarCompact && unreadCounts[`group-${group.id}`] > 0 && <div className="badge-pop" style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0, boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[`group-${group.id}`] > 99 ? '99+' : unreadCounts[`group-${group.id}`]}</div>}
+                                    {sidebarCompact && unreadCounts[`group-${group.id}`] > 0 && <div className="badge-pop" style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[`group-${group.id}`] > 99 ? '99+' : unreadCounts[`group-${group.id}`]}</div>}
                                 </div>
                             ); } else { const user = entry.data as User; return (
                                 <div
@@ -2435,24 +2694,24 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             <div style={{ ...styles.avatar, backgroundColor: isBlocked ? (dm ? C.bg6 : '#e5e7eb') : (user.avatar ? (dm ? C.bg1 : '#f7f8fc') : (user.avatar_color || '#6366f1')), overflow: 'hidden', color: isBlocked ? (dm ? '#6b7280' : '#9ca3af') : 'white', fontWeight: 700, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                                 {!isBlocked && user.avatar
                                                     ? <img src={config.fileUrl(user.avatar) ?? undefined} alt={user.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                                    : <span style={{ fontSize: isBlocked ? 18 : 16 }}>{isBlocked ? '👤' : user.username[0]?.toUpperCase()}</span>}
+                                                    : isBlocked ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> : <span style={{ fontSize: 16 }}>{user.username[0]?.toUpperCase()}</span>}
                                             </div>
-                                            {pinnedChats.has(`private-${user.id}`) && <div style={{ position: 'absolute', top: -1, right: -1, width: 14, height: 14, borderRadius: '50%', background: dm ? C.bg4 : 'white', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, lineHeight: 1, zIndex: 2 }}>📌</div>}
-                                            {isBlockedByMe && <div style={{ position: 'absolute', bottom: 1, right: 1, width: 13, height: 13, borderRadius: '50%', background: dm ? C.bg6 : '#f3f4f6', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, lineHeight: 1 }}>🚫</div>}
+                                            {pinnedChats.has(`private-${user.id}`) && <div style={{ position: 'absolute', top: -1, right: -1, width: 14, height: 14, borderRadius: '50%', background: dm ? C.bg4 : 'white', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, color: '#6366f1' }}><svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg></div>}
+                                            {isBlockedByMe && <div style={{ position: 'absolute', bottom: 1, right: 1, width: 13, height: 13, borderRadius: '50%', background: dm ? C.bg6 : '#f3f4f6', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444' }}><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></div>}
                                             {!isBlocked && liveUser.is_online && <div style={{ position: 'absolute', bottom: 1, right: 1, width: 11, height: 11, borderRadius: '50%', background: '#22c55e', border: `2px solid ${dm ? C.bg1 : 'white'}` }} />}
-                                            {!isBlockedByMe && mutedChats.has(`private-${user.id}`) && <div style={{ position: 'absolute', bottom: 1, right: 1, width: 13, height: 13, borderRadius: '50%', background: dm ? C.bg6 : '#e0e0e0', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, lineHeight: 1 }}>🔕</div>}
+                                            {!isBlockedByMe && mutedChats.has(`private-${user.id}`) && <div style={{ position: 'absolute', bottom: 1, right: 1, width: 13, height: 13, borderRadius: '50%', background: dm ? C.bg6 : '#e0e0e0', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: dm ? '#9090b0' : '#6b7280' }}><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg></div>}
                                         </div>
                                         );
                                     })()}
                                     {!sidebarCompact && <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 4 }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
                                             <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, display: 'flex', alignItems: 'center', gap: 3 }}>
                                                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.username}</span>
-                                                {user.is_developer && <span title={t('developer of Aurora')} style={{ fontSize: 12, flexShrink: 0, cursor: 'default', lineHeight: 1 }}>🔧</span>}
+                                                {user.is_developer && <span title={t('developer of Aurora')} style={{ flexShrink: 0, cursor: 'default', display: 'inline-flex', color: '#f59e0b' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
                                             </div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
                                                 {user.last_msg_sender_id === currentUserId && (
-                                                    <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+                                                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                                                         {(lastReadByOther[user.id] || user.last_msg_is_read) ? (
                                                             <svg width="18" height="11" viewBox="0 0 18 11" fill="none"><path d="M1 5.5L4.5 9L11 2" stroke={isOled ? '#7c6aaa' : (dm ? '#5a5a8a' : '#9ca3af')} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/><path d="M6 5.5L9.5 9L16 2" stroke={isOled ? '#a78bfa' : '#93c5fd'} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>
                                                         ) : (
@@ -2467,21 +2726,44 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             {renderSidebarSub(
                                                 (typingChats[`private-${user.id}`] && user.id !== currentUserId) ? `✍️ ${t('is typing...')}` : undefined,
                                                 user.last_msg_text, user.last_msg_file, user.last_msg_filename,
-                                                user.last_msg_time ? '' : blockedUserIds.has(user.id) ? (lang === 'en' ? '🚫 Blocked' : '🚫 Заблокирован') : user.last_seen === 'blocked_you' ? (lang === 'en' ? 'last seen a long time ago' : 'был(а) давно') : (user.is_online ? `🟢 ${t('Online')}` : user.last_seen === 'hidden' ? t('last seen recently') : user.last_seen ? `${t('last seen')} ${formatLastSeen(user.last_seen)}` : user.status || t('private chat'))
+                                                user.last_msg_time ? '' : blockedUserIds.has(user.id) ? (lang === 'en' ? '🚫 Blocked' : '🚫 Заблокирован') : user.last_seen === 'blocked_you' ? (lang === 'en' ? 'last seen a long time ago' : 'был(а) давно') : (user.is_online ? `🟢 ${t('Online')}` : user.last_seen === 'hidden' ? t('last seen recently') : user.last_seen ? `${t('last seen')} ${formatLastSeen(user.last_seen)}` : user.status || t('private chat')),
+                                                undefined,
+                                                user.id
                                             )}
                                         </div>
                                     </div>}
-                                    {unreadCounts[`private-${user.id}`] > 0 && (
-                                        sidebarCompact
-                                            ? <div className="badge-pop" style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[`private-${user.id}`] > 99 ? '99+' : unreadCounts[`private-${user.id}`]}</div>
-                                            : <div className="badge-pop unread-badge" style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0, boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[`private-${user.id}`] > 99 ? '99+' : unreadCounts[`private-${user.id}`]}</div>
-                                    )}
+                                    {!sidebarCompact && unreadCounts[`private-${user.id}`] > 0 && <div className="badge-pop" style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0, boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[`private-${user.id}`] > 99 ? '99+' : unreadCounts[`private-${user.id}`]}</div>}
+                                    {sidebarCompact && unreadCounts[`private-${user.id}`] > 0 && <div className="badge-pop" style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[`private-${user.id}`] > 99 ? '99+' : unreadCounts[`private-${user.id}`]}</div>}
                                 </div>
                             ); } })}
                         </div>
                         );
                     })()}
                 </div>
+
+                {/* Mini player dock — music + chat audio */}
+                {(miniTrack || nowPlaying) && !sidebarHidden && (
+                    <MiniPlayer
+                        track={miniTrack}
+                        isPlaying={miniIsPlaying}
+                        volume={miniVolume}
+                        trackProgress={miniProgress}
+                        trackDuration={miniDuration}
+                        dm={dm}
+                        isOled={isOled}
+                        onToggle={() => miniControlsRef.current?.toggle()}
+                        onPrev={() => miniControlsRef.current?.prev()}
+                        onNext={() => miniControlsRef.current?.next()}
+                        onVolume={v => { setMiniVolume(v); miniControlsRef.current?.setVol(v); }}
+                        onOpen={() => setShowMediaPlayer(true)}
+                        chatAudio={nowPlaying ? { filename: nowPlaying.filename, currentTime: globalCurrentTime, duration: globalDuration } : null}
+                        chatAudioPlaying={globalPlaying}
+                        onChatAudioToggle={toggleGlobalPlay}
+                        onChatAudioStop={stopGlobal}
+                        onChatAudioPrev={mediaPlaylist.length > 1 ? prevTrack : undefined}
+                        onChatAudioNext={mediaPlaylist.length > 1 ? nextTrack : undefined}
+                    />
+                )}
 
                 {/* Profile card */}
                 <div className="sidebar-profile-card" style={{ ...darkStyles.profileCard, ...(sidebarCompact ? { justifyContent: 'center', padding: '8px 0' } : {}) }}>
@@ -2495,11 +2777,25 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         <div style={styles.profileInfo}>
                             <div style={{ ...darkStyles.profileName, display: 'flex', alignItems: 'center', gap: 4 }}>
                                 {currentUsername}
-                                {(currentUserTag === 'kayano' || currentUserTag === 'durov') && <span title={t('developer of Aurora')} style={{ fontSize: 12, cursor: 'default', lineHeight: 1 }}>🔧</span>}
+                                {(currentUserTag === 'kayano' || currentUserTag === 'durov') && <span title={t('developer of Aurora')} style={{ cursor: 'default', display: 'inline-flex', color: '#f59e0b', flexShrink: 0 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
                             </div>
                             {currentUserTag && <div style={styles.profileStatus}>@{currentUserTag}</div>}
                         </div>
-                        <button onClick={() => setShowSettings(true)} style={styles.settingsBtn} title={t('Settings')}>⚙️</button>
+                        <button onClick={() => setShowSettings(true)} style={{
+                            ...styles.settingsBtn,
+                            width: 32, height: 32, padding: 0,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            border: `1px solid ${isOled ? 'rgba(167,139,250,0.2)' : dm ? 'rgba(99,102,241,0.22)' : 'rgba(99,102,241,0.18)'}`,
+                            background: isOled ? 'rgba(167,139,250,0.06)' : dm ? 'rgba(99,102,241,0.07)' : 'rgba(99,102,241,0.05)',
+                            borderRadius: 10,
+                            color: isOled ? '#a78bfa' : dm ? '#818cf8' : '#6366f1',
+                            boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.2), 0 2px 12px rgba(139,92,246,0.18)' : dm ? '0 0 0 1px rgba(99,102,241,0.22), 0 2px 10px rgba(99,102,241,0.14)' : 'none',
+                            transition: 'all 0.15s',
+                        }} title={t('Settings')}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                            </svg>
+                        </button>
                     </>}
                 </div>
             </div>
@@ -2529,7 +2825,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         pointerEvents: 'none',
                     }}>
                         <div style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: 48 }}>📎</div>
+                            <div style={{ color: '#6366f1' }}><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></div>
                             <div style={{ fontSize: 16, fontWeight: 600, color: '#6366f1', marginTop: 8 }}>{t('Drop files to send')}</div>
                         </div>
                     </div>
@@ -2537,14 +2833,14 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 {activeChat ? (
                     <>
                         {/* Шапка */}
-                        <div style={darkStyles.chatHeader}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 12, flex: 1, minWidth: 0 }}>
+                        <div className={isMobile ? 'mobile-chat-header' : undefined} style={{ ...darkStyles.chatHeader, ...(isMobile ? { padding: '0 10px', height: 56, minHeight: 56, maxHeight: 56 } : {}) }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 6 : 12, flex: 1, minWidth: 0 }}>
                                 {/* Кнопка назад (мобильная) */}
                                 {isMobile && (
                                     <button
                                         onClick={() => setActiveChat(null)}
-                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', fontSize: 22, padding: '4px 6px 4px 0', borderRadius: 8, lineHeight: 1, flexShrink: 0, display: 'flex', alignItems: 'center' }}
-                                    >←</button>
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: '4px 4px 4px 0', borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center' }}
+                                    ><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
                                 )}
                                 {/* Аватар активного чата */}
                                 {(() => {
@@ -2561,7 +2857,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     const canClickGroup = activeChat.type === 'group';
                                     return (
                                         <div
-                                            style={{ width: 44, height: 44, borderRadius: '50%', background: isSelf ? 'linear-gradient(135deg,#f59e0b,#f97316)' : (src ? 'transparent' : bg), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, cursor: (canClick || canClickGroup) ? 'pointer' : 'default', boxShadow: isBlocked ? 'none' : `0 0 14px ${bg}66` }}
+                                            style={{ width: isMobile ? 36 : 44, height: isMobile ? 36 : 44, borderRadius: '50%', background: isSelf ? 'linear-gradient(135deg,#f59e0b,#f97316)' : (src ? 'transparent' : bg), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, cursor: (canClick || canClickGroup) ? 'pointer' : 'default', boxShadow: isBlocked ? 'none' : `0 0 10px ${bg}66` }}
                                             onClick={() => {
                                                 if (canClick) { const u = users.find(u => u.id === activeChat.id); if (u) setSelectedUserForProfile(u); }
                                                 if (canClickGroup) { setSelectedGroupId(activeChat.id); setShowGroupInfo(true); }
@@ -2588,21 +2884,25 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             placeholder={t('Search in chat...')}
                                             style={{ flex: 1, padding: '7px 12px', borderRadius: 10, border: 'none', background: dm ? (isOled ? '#0a0a12' : C.bg4) : '#eef0f8', color: dm ? '#e2e8f0' : '#1e1b4b', fontSize: 14, outline: 'none', minWidth: 0, boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.14)' : dm ? '0 0 0 1.5px rgba(99,102,241,0.2)' : '0 0 0 1.5px rgba(99,102,241,0.15)' }}
                                         />
-                                        {chatSearchQuery.trim() && (
+                                        {chatSearchQuery.length > 0 && (
                                             <span style={{ fontSize: 12, color: dm ? '#7c7caa' : '#9ca3af', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                                                {chatSearchMatches.length > 0 ? `${chatSearchIdx + 1} / ${chatSearchMatches.length}` : t('No results')}
+                                                {!chatSearchQuery.trim()
+                                                    ? (lang === 'en' ? `${messages.length} messages` : `${messages.length} сообщений`)
+                                                    : chatSearchMatches.length > 0
+                                                        ? `${chatSearchIdx + 1} / ${chatSearchMatches.length}`
+                                                        : t('No results')}
                                             </span>
                                         )}
-                                        <button onClick={() => goToChatSearchMatch(chatSearchIdx - 1)} disabled={chatSearchMatches.length === 0} style={{ ...darkStyles.iconBtn, fontSize: 11 }} title={lang === 'en' ? 'Previous (Shift+Enter)' : 'Предыдущий (Shift+Enter)'}>▲</button>
-                                        <button onClick={() => goToChatSearchMatch(chatSearchIdx + 1)} disabled={chatSearchMatches.length === 0} style={{ ...darkStyles.iconBtn, fontSize: 11 }} title={lang === 'en' ? 'Next (Enter)' : 'Следующий (Enter)'}>▼</button>
-                                        <button onClick={() => { setChatSearchOpen(false); setChatSearchQuery(''); }} style={darkStyles.iconBtn} title={t('Close')}>✕</button>
+                                        <button onClick={() => goToChatSearchMatch(chatSearchIdx - 1)} disabled={chatSearchMatches.length === 0} style={darkStyles.iconBtn} title={lang === 'en' ? 'Previous (Shift+Enter)' : 'Предыдущий (Shift+Enter)'}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
+                                        <button onClick={() => goToChatSearchMatch(chatSearchIdx + 1)} disabled={chatSearchMatches.length === 0} style={darkStyles.iconBtn} title={lang === 'en' ? 'Next (Enter)' : 'Следующий (Enter)'}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+                                        <button onClick={() => { setChatSearchOpen(false); setChatSearchQuery(''); }} style={darkStyles.iconBtn} title={t('Close')}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                                     </div>
                                 ) : (
                                     <>
                                         <div style={{ minWidth: 0, overflow: 'hidden' }}>
                                             <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: dm ? '#e2e8f0' : '#1e1b4b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
                                                 {activeChat.name.replace(/^⭐\s*/, '')}
-                                                {activeChat.type === 'private' && users.find(u => u.id === activeChat.id)?.is_developer && <span title={t('developer of Aurora')} style={{ fontSize: 15, flexShrink: 0, cursor: 'default' }}>🔧</span>}
+                                                {activeChat.type === 'private' && users.find(u => u.id === activeChat.id)?.is_developer && <span title={t('developer of Aurora')} style={{ flexShrink: 0, cursor: 'default', display: 'inline-flex', color: '#f59e0b' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
                                                 {!!isChannelChat && activeGroup?.channel_tag === 'auroramessenger' && (
                                                     <span title={t('Official Aurora channel')} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', flexShrink: 0 }}>
                                                         <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6.5L4.5 9L10 3" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -2619,6 +2919,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                         if (!u) return t('private chat');
                                                         if (blockedUserIds.has(activeChat.id)) return lang === 'en' ? '🚫 Blocked' : '🚫 Заблокирован';
                                                         if (u.last_seen === 'blocked_you') return lang === 'en' ? 'last seen a long time ago' : 'был(а) давно';
+                                                        if (u.now_playing) return `🎵 ${u.now_playing}`;
                                                         if (u.is_online) return t('Online');
                                                         if (u.last_seen === 'hidden') return t('last seen recently');
                                                         if (u.last_seen) return `${t('last seen')} ${formatLastSeen(u.last_seen)}`;
@@ -2635,53 +2936,47 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     </>
                                 )}
                             </div>
-                            <div style={{ display: 'flex', gap: 8 }}>
-                                <button onClick={() => { setChatSearchOpen(p => !p); setChatSearchQuery(''); setChatSearchIdx(0); }} style={{ ...darkStyles.iconBtn, ...(chatSearchOpen ? { background: dm ? 'rgba(99,102,241,0.2)' : '#ede9fe', color: '#6366f1' } : {}) }} title={t('Search in chat...')}>🔍</button>
-                                {(activeChat.type === 'private' || isGroupAdmin) && (
-                                    <button onClick={handleClearChat} style={darkStyles.iconBtn} title={t('Clear')}>🗑️</button>
+                            <div style={{ display: 'flex', gap: isMobile ? 4 : 8 }}>
+                                {/* Call buttons — only for DM (not self, not blocked), hidden on mobile to save space */}
+                                {!isMobile && !chatSearchOpen && activeChat.type === 'private' && activeChat.id !== currentUserId && !blockedUserIds.has(activeChat.id) && users.find(u => u.id === activeChat.id)?.last_seen !== 'blocked_you' && callInfo.state === 'idle' && (
+                                    <>
+                                        <button
+                                            onClick={() => startCall(activeChat.id, activeChat.name, 'audio')}
+                                            style={darkStyles.iconBtn}
+                                            title={lang === 'en' ? 'Audio call' : 'Аудиозвонок'}
+                                        >
+                                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                                        </button>
+                                        <button
+                                            onClick={() => startCall(activeChat.id, activeChat.name, 'video')}
+                                            style={darkStyles.iconBtn}
+                                            title={lang === 'en' ? 'Video call' : 'Видеозвонок'}
+                                        >
+                                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                                        </button>
+                                    </>
                                 )}
-                                {activeChat.type === 'group' && isGroupAdmin && !isChannelChat && (
-                                    <button onClick={() => { setSelectedGroupId(activeChat.id); setShowInviteModal(true); }} style={darkStyles.iconBtn} title={t('Invite')}>👤+</button>
+                                {/* Active call indicator */}
+                                {!chatSearchOpen && callInfo.state !== 'idle' && (
+                                    <button
+                                        onClick={callInfo.state === 'ringing' ? acceptCall : endCall}
+                                        style={{ ...darkStyles.iconBtn, background: 'linear-gradient(135deg,#22c55e,#16a34a)', color: 'white', border: 'none' }}
+                                        title={callInfo.state === 'ringing' ? (lang === 'en' ? 'Answer' : 'Ответить') : (lang === 'en' ? 'Return to call' : 'Вернуться в звонок')}
+                                    >
+                                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                                    </button>
+                                )}
+                                <button onClick={() => { setChatSearchOpen(p => !p); setChatSearchQuery(''); setChatSearchIdx(0); }} style={{ ...darkStyles.iconBtn, ...(chatSearchOpen ? { background: dm ? 'rgba(99,102,241,0.2)' : '#ede9fe', color: '#6366f1' } : {}) }} title={t('Search in chat...')}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
+                                {!chatSearchOpen && (activeChat.type === 'private' || isGroupAdmin) && (
+                                    <button onClick={handleClearChat} style={darkStyles.iconBtn} title={t('Clear')}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
+                                )}
+                                {!chatSearchOpen && activeChat.type === 'group' && isGroupAdmin && !isChannelChat && (
+                                    <button onClick={() => { setSelectedGroupId(activeChat.id); setShowInviteModal(true); }} style={darkStyles.iconBtn} title={t('Invite')}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></button>
                                 )}
                             </div>
                         </div>
 
 
-                        {/* Mini player */}
-                        {nowPlaying && (() => {
-                            const mpBg = dm ? C.bg2 : 'white';
-                            const mpBorder = dm ? 'rgba(99,102,241,0.2)' : '#ede9fe';
-                            const mpText = dm ? 'white' : '#1e1b4b';
-                            const mpSub = dm ? 'rgba(255,255,255,0.4)' : '#9ca3af';
-                            const mpTrack = dm ? 'rgba(255,255,255,0.12)' : '#ddd9f7';
-                            const mpBtn = dm ? 'rgba(255,255,255,0.08)' : '#f5f3ff';
-                            const mpBtnColor = dm ? 'rgba(255,255,255,0.6)' : '#6366f1';
-                            return (
-                                <div className="bar-enter" style={{
-                                    display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px',
-                                    background: mpBg,
-                                    borderBottom: `1px solid ${mpBorder}`,
-                                    flexShrink: 0,
-                                }}>
-                                    <button onClick={prevTrack} style={{ background: 'none', border: 'none', color: mpBtnColor, cursor: 'pointer', fontSize: 15, padding: '0 2px' }}>⏮</button>
-                                    <button onClick={toggleGlobalPlay} style={{ background: '#6366f1', border: 'none', color: 'white', cursor: 'pointer', fontSize: 14, width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                        {globalPlaying ? '⏸' : '▶'}
-                                    </button>
-                                    <button onClick={nextTrack} style={{ background: 'none', border: 'none', color: mpBtnColor, cursor: 'pointer', fontSize: 15, padding: '0 2px' }}>⏭</button>
-                                    <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={seekGlobal}>
-                                        <div style={{ fontSize: 12, fontWeight: 600, color: mpText, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3 }}>{/^voice_/i.test(nowPlaying.filename) ? `🎤 ${t('Voice message')}` : nowPlaying.filename}</div>
-                                        <div style={{ height: 3, borderRadius: 3, background: mpTrack, position: 'relative' }}>
-                                            <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', borderRadius: 3, background: '#6366f1', width: globalDuration ? `${(globalCurrentTime / globalDuration) * 100}%` : '0%', transition: 'width 0.2s linear' }} />
-                                        </div>
-                                    </div>
-                                    <span style={{ fontSize: 11, color: mpSub, whiteSpace: 'nowrap' }}>
-                                        {`${Math.floor(globalCurrentTime / 60)}:${String(Math.floor(globalCurrentTime % 60)).padStart(2,'0')}`}
-                                        {globalDuration > 0 && ` / ${Math.floor(globalDuration / 60)}:${String(Math.floor(globalDuration % 60)).padStart(2,'0')}`}
-                                    </span>
-                                    <button onClick={stopGlobal} style={{ background: mpBtn, border: 'none', color: mpBtnColor, cursor: 'pointer', fontSize: 15, width: 28, height: 28, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
-                                </div>
-                            );
-                        })()}
 
                         {/* Закреплённое сообщение */}
                         {(() => {
@@ -2693,24 +2988,25 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     onClick={() => { const el = document.getElementById(`msg-${pinned.id}`); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.style.transition = 'background 0.3s'; el.style.background = 'rgba(99,102,241,0.18)'; setTimeout(() => { el.style.background = ''; }, 1500); } }}>
                                     <div style={{ width: 3, height: 32, borderRadius: 2, background: '#6366f1', flexShrink: 0 }} />
                                     <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ fontSize: 11, fontWeight: 600, color: '#6366f1' }}>📌 {t('Pinned message')}</div>
+                                        <div style={{ fontSize: 11, fontWeight: 600, color: '#6366f1', display: 'flex', alignItems: 'center', gap: 4 }}><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.5 5H19l-4.5 3.3 1.7 5.2L12 12.3l-4.2 3.2 1.7-5.2L5 7h5.5z"/><line x1="12" y1="17" x2="12" y2="22" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg> {t('Pinned message')}</div>
                                         <div style={{ fontSize: 12, color: dm ? '#9090b0' : '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pinned.text}</div>
                                     </div>
-                                    <button onClick={e => { e.stopPropagation(); togglePinMessage(`${activeChat.type}-${activeChat.id}`, { id: pinned.id, message_text: pinned.text }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#aaa', fontSize: 16, lineHeight: 1, padding: '0 2px' }}>✕</button>
+                                    <button onClick={e => { e.stopPropagation(); togglePinMessage(`${activeChat.type}-${activeChat.id}`, { id: pinned.id, message_text: pinned.text }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#aaa', padding: '0 2px', display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                                 </div>
                             );
                         })()}
 
                         {/* Сообщения */}
                         <div
-                            key={`${activeChat.type}-${activeChat.id}`}
+                            key={chatKey}
                             ref={messagesContainerRef}
-                            className="panel-slide-in"
-                            style={{ ...styles.messagesArea, backgroundColor: dm ? C.bg0 : '#f2f4f8', overflowAnchor: 'none', paddingRight: (isChannelChat && commentPostId !== null) ? 354 : (isMobile ? 10 : 24), paddingLeft: isMobile ? 10 : 24, paddingTop: isMobile ? 12 : 20, position: 'relative' }}
+                            className="chat-enter"
+                            style={{ ...styles.messagesArea, backgroundColor: dm ? C.bg0 : '#f2f4f8', overflowAnchor: 'none', paddingRight: isMobile ? 10 : 24, paddingLeft: isMobile ? 10 : 24, paddingTop: isMobile ? 12 : 20, position: 'relative' }}
                             onScroll={e => {
                                 const el = e.currentTarget;
                                 const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
                                 setShowScrollDown(distFromBottom > 200);
+                                if (activeChat) scrollPositions.current.set(`${activeChat.type}-${activeChat.id}`, el.scrollTop);
                             }}
                         >
                             {(() => {
@@ -2755,7 +3051,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             <div key={msg.id} id={`msg-${msg.id}`} className="msg-in"
                                                 onMouseEnter={() => setHoveredMsgId(msg.id)}
                                                 onMouseLeave={() => setHoveredMsgId(null)}
-                                                style={{ position: 'relative', margin: '0 auto 10px auto', maxWidth: 600, background: isOled ? (isActive ? '#0a0014' : '#03030a') : (dm ? (isActive ? '#1e1e40' : '#16162a') : (isActive ? '#f0eeff' : 'white')), borderRadius: 14, border: `1.5px solid ${isActive ? (isOled ? '#a78bfa' : '#6366f1') : (isOled ? 'rgba(167,139,250,0.18)' : (dm ? 'rgba(99,102,241,0.15)' : '#ede9fe'))}`, padding: '12px 14px', boxShadow: isActive ? (isOled ? '0 0 0 2px rgba(167,139,250,0.2)' : '0 0 0 2px rgba(99,102,241,0.25)') : (isOled ? '0 2px 16px rgba(0,0,0,0.6)' : '0 2px 8px rgba(0,0,0,0.06)'), transition: 'all 0.18s' }}>
+                                                style={{ position: 'relative', margin: '0 auto 12px auto', maxWidth: 600, background: isOled ? (isActive ? 'rgba(124,58,237,0.08)' : 'rgba(255,255,255,0.02)') : (dm ? (isActive ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.04)') : (isActive ? 'rgba(99,102,241,0.05)' : 'rgba(255,255,255,0.9)')), backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderRadius: 18, padding: '14px 16px', boxShadow: isActive ? (isOled ? '0 0 0 1.5px rgba(167,139,250,0.5), 0 8px 32px rgba(124,58,237,0.25)' : dm ? '0 0 0 1.5px rgba(99,102,241,0.5), 0 8px 28px rgba(99,102,241,0.2)' : '0 0 0 1.5px rgba(99,102,241,0.35), 0 6px 24px rgba(99,102,241,0.12)') : (isOled ? '0 4px 20px rgba(0,0,0,0.7), 0 0 0 1px rgba(167,139,250,0.06)' : dm ? '0 4px 16px rgba(0,0,0,0.35), 0 0 0 1px rgba(99,102,241,0.06)' : '0 2px 12px rgba(99,102,241,0.07), 0 0 0 1px rgba(99,102,241,0.04)'), transition: 'all 0.2s' }}>
                                                 {/* Post header */}
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                                                     <div style={{ width: 30, height: 30, borderRadius: '50%', background: avatarSrc ? (dm ? '#16162a' : 'white') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: 13, overflow: 'hidden', flexShrink: 0 }}>
@@ -2770,56 +3066,38 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
                                                             {(isGroupAdmin || msg.sender_id === currentUserId) && (
                                                                 <button onClick={e => { e.stopPropagation(); handleEdit(msg.id, msg.message_text ?? ''); }}
-                                                                    style={{ background: dm ? 'rgba(99,102,241,0.15)' : '#f0eeff', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', color: '#6366f1', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={t('Edit')}>✏️</button>
+                                                                    style={{ background: dm ? 'rgba(99,102,241,0.15)' : '#f0eeff', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', color: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={t('Edit')}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
                                                             )}
                                                             {(isGroupAdmin || msg.sender_id === currentUserId) && (
                                                                 <button onClick={e => { e.stopPropagation(); handleDelete(msg.id); }}
-                                                                    style={{ background: dm ? 'rgba(239,68,68,0.1)' : '#fff0f0', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', color: '#f87171', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={t('Delete')}>🗑️</button>
+                                                                    style={{ background: dm ? 'rgba(239,68,68,0.1)' : '#fff0f0', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', color: '#f87171', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={t('Delete')}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                                                             )}
                                                         </div>
                                                     )}
                                                 </div>
-                                                {/* Post content / edit mode */}
-                                                {editingMessageId === msg.id ? (
-                                                    <div onClick={e => e.stopPropagation()}>
-                                                        <textarea
-                                                            autoFocus
-                                                            value={editingText}
-                                                            onChange={e => setEditingText(e.target.value)}
-                                                            onKeyDown={e => {
-                                                                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEditSubmit(msg.id); }
-                                                                if (e.key === 'Escape') { setEditingMessageId(null); setEditingText(''); }
-                                                            }}
-                                                            rows={Math.min(8, (editingText.match(/\n/g)?.length || 0) + 2)}
-                                                            style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: `1.5px solid #6366f1`, fontSize: 14, outline: 'none', resize: 'none', fontFamily: 'inherit', backgroundColor: dm ? '#1e1e3a' : '#f5f3ff', color: dm ? '#e0e0f0' : '#1e1b4b', boxSizing: 'border-box' as const, marginBottom: 8 }}
-                                                        />
-                                                        <div style={{ display: 'flex', gap: 8 }}>
-                                                            <button onClick={() => handleEditSubmit(msg.id)} style={{ flex: 1, padding: '7px 0', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>✓ {t('Save')}</button>
-                                                            <button onClick={() => { setEditingMessageId(null); setEditingText(''); }} style={{ padding: '7px 14px', background: 'none', border: `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, color: dm ? '#9090b0' : '#6b7280', borderRadius: 10, cursor: 'pointer', fontSize: 13 }}>{t('Cancel')}</button>
+                                                {/* Post content */}
+                                                <div style={editingMessageId === msg.id ? { outline: `2px solid ${isOled ? '#a78bfa' : '#6366f1'}`, borderRadius: 12, outlineOffset: 2 } : {}}>
+                                                    {filesArr.length > 0 && (
+                                                        <div style={{ marginBottom: msg.message_text ? 8 : 0 }}>
+                                                            {filesArr.filter((f: any) => isImgFile(f.filename || '')).length > 0
+                                                                ? <ImageGrid images={filesArr.filter((f: any) => isImgFile(f.filename || '')).map((f: any) => ({ url: f.file_path?.startsWith('http') ? f.file_path : `${BASE_URL}${f.file_path}`, name: f.filename || '' }))} />
+                                                                : filesArr.map((f: any, i: number) => <FileMessage key={i} filePath={f.file_path} filename={f.filename || ''} fileSize={f.file_size} isOwn={false} isDark={dm} />)
+                                                            }
                                                         </div>
-                                                    </div>
-                                                ) : (
-                                                    <>
-                                                        {filesArr.length > 0 && (
-                                                            <div style={{ marginBottom: msg.message_text ? 8 : 0 }}>
-                                                                {filesArr.filter((f: any) => isImgFile(f.filename || '')).length > 0
-                                                                    ? <ImageGrid images={filesArr.filter((f: any) => isImgFile(f.filename || '')).map((f: any) => ({ url: f.file_path?.startsWith('http') ? f.file_path : `${BASE_URL}${f.file_path}`, name: f.filename || '' }))} />
-                                                                    : filesArr.map((f: any, i: number) => <FileMessage key={i} filePath={f.file_path} filename={f.filename || ''} fileSize={f.file_size} isOwn={false} isDark={dm} />)
-                                                                }
-                                                            </div>
-                                                        )}
-                                                        {!filesArr.length && msg.file_path && <FileMessage filePath={msg.file_path} filename={msg.filename || ''} fileSize={msg.file_size} isOwn={false} isDark={dm} />}
-                                                        {msg.message_text && (isSticker(msg.message_text)
-                                                            ? <img src={specialUrl(msg.message_text)} alt={lang === 'en' ? 'sticker' : 'стикер'} style={{ maxWidth: 160, maxHeight: 160, display: 'block', objectFit: 'contain', borderRadius: 8 }} />
-                                                            : isGif(msg.message_text)
-                                                            ? <img src={specialUrl(msg.message_text)} alt="GIF" style={{ maxWidth: 240, borderRadius: 10, display: 'block' }} />
-                                                            : <div style={{ fontSize: 14, color: dm ? '#d0d0e8' : '#374151', lineHeight: 1.55, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{msg.message_text}</div>
-                                                        )}
-                                                    </>
-                                                )}
+                                                    )}
+                                                    {!filesArr.length && msg.file_path && <FileMessage filePath={msg.file_path} filename={msg.filename || ''} fileSize={msg.file_size} isOwn={false} isDark={dm} />}
+                                                    {msg.message_text && (isSticker(msg.message_text)
+                                                        ? <img src={specialUrl(msg.message_text)} alt={lang === 'en' ? 'sticker' : 'стикер'} style={{ maxWidth: 160, maxHeight: 160, display: 'block', objectFit: 'contain', borderRadius: 8 }} />
+                                                        : isGif(msg.message_text)
+                                                        ? <img src={specialUrl(msg.message_text)} alt="GIF" style={{ maxWidth: 240, borderRadius: 10, display: 'block' }} />
+                                                        : isPoll(msg.message_text)
+                                                        ? (() => { const pid = getPollId(msg.message_text); return pid ? <PollMessage key={`poll-${pid}`} pollId={pid} token={token} isDark={dm} isOled={isOled} isOwn={false} /> : null; })()
+                                                        : <div style={{ fontSize: 14, color: dm ? '#d0d0e8' : '#374151', lineHeight: 1.55, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{msg.message_text}</div>
+                                                    )}
+                                                </div>
                                                 {/* Footer: reactions + comment button */}
                                                 {editingMessageId !== msg.id && (
-                                                    <div style={{ marginTop: 8, borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.15)' : '#ede9fe'}`, paddingTop: 8 }}>
+                                                    <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${isOled ? 'rgba(167,139,250,0.07)' : dm ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.06)'}` }}>
                                                         {/* Reaction bubbles */}
                                                         {reactions[msg.id]?.length > 0 && (() => {
                                                             const grouped: Record<string, number[]> = {};
@@ -2853,29 +3131,57 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                             />
                                                             <button
                                                                 onClick={() => setCommentPostId(isActive ? null : msg.id)}
-                                                                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 8, border: 'none', background: isActive ? 'rgba(99,102,241,0.15)' : (dm ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'), cursor: 'pointer', color: isActive ? '#6366f1' : (dm ? '#9090b0' : '#6b7280'), fontSize: 13, fontWeight: isActive ? 700 : 400, transition: 'all 0.15s' }}>
-                                                                💬 {commentCount > 0 ? (lang === 'en' ? `${commentCount} comment${commentCount === 1 ? '' : 's'}` : `${commentCount} комментар${commentCount === 1 ? 'ий' : commentCount < 5 ? 'ия' : 'иев'}`) : (lang === 'en' ? 'Comment' : 'Комментировать')}
+                                                                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 10, border: 'none', background: isActive ? (isOled ? 'rgba(167,139,250,0.15)' : 'rgba(99,102,241,0.12)') : 'transparent', cursor: 'pointer', color: isActive ? (isOled ? '#a78bfa' : '#6366f1') : (dm ? '#5a5a8a' : '#9ca3af'), fontSize: 13, fontWeight: isActive ? 700 : 500, transition: 'all 0.15s' }}>
+                                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                                                {commentCount > 0 ? (lang === 'en' ? `${commentCount} comment${commentCount === 1 ? '' : 's'}` : `${commentCount} комментар${commentCount === 1 ? 'ий' : commentCount < 5 ? 'ия' : 'иев'}`) : (lang === 'en' ? 'Comment' : 'Комментировать')}
                                                             </button>
                                                             {/* Emoji picker button */}
-                                                            <div style={{ position: 'relative', marginLeft: 'auto' }}>
-                                                                <button
-                                                                    onClick={e => { e.stopPropagation(); setReactionPickerMsgId(p => p === msg.id ? null : msg.id); }}
-                                                                    style={{ background: dm ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                                                    😊
-                                                                </button>
-                                                                {reactionPickerMsgId === msg.id && (
-                                                                    <div className="reaction-picker-enter" onClick={e => e.stopPropagation()} style={{ position: 'absolute', bottom: 36, right: 0, background: dm ? C.bg4 : 'white', border: `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 12, padding: 6, display: 'flex', gap: 4, flexWrap: 'wrap', width: 200, zIndex: 200, boxShadow: '0 4px 16px rgba(0,0,0,0.18)' }}>
-                                                                        {['👍','❤️','😂','😮','😢','😡','🔥','👏','🎉','✅'].map(emoji => (
-                                                                            <button key={emoji} onClick={() => {
-                                                                                toggleReaction(msg.id, true, emoji);
-                                                                                setReactionPickerMsgId(null);
-                                                                            }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, padding: 2, borderRadius: 6, lineHeight: 1 }}>
-                                                                                {emoji}
-                                                                            </button>
-                                                                        ))}
-                                                                    </div>
-                                                                )}
-                                                            </div>
+                                                            {(() => {
+                                                                const quickReactions = (() => { try { return JSON.parse(localStorage.getItem('aurora_quick_reactions') || 'null') || ['👍','❤️','😂','😮','😢','🔥','🎉','👏']; } catch { return ['👍','❤️','😂','😮','😢','🔥','🎉','👏']; } })();
+                                                                const msgRx = reactions[msg.id] || [];
+                                                                const [showPostFullPicker, setShowPostFullPicker] = [reactionPickerMsgId === msg.id && showFullReactionPicker, (v: boolean) => { if (v) { setReactionPickerMsgId(msg.id); setShowFullReactionPicker(true); } else setShowFullReactionPicker(false); }];
+                                                                return (
+                                                                <div style={{ position: 'relative', marginLeft: 'auto' }}>
+                                                                    <button
+                                                                        onClick={e => { e.stopPropagation(); setReactionPickerMsgId(p => p === msg.id ? null : msg.id); setShowFullReactionPicker(false); }}
+                                                                        style={{ background: dm ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                                        😊
+                                                                    </button>
+                                                                    {reactionPickerMsgId === msg.id && (
+                                                                        <div className="reaction-picker-enter" onClick={e => e.stopPropagation()} style={{ position: 'absolute', bottom: 36, right: 0, background: dm ? C.bg4 : 'white', border: `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 12, zIndex: 200, boxShadow: '0 4px 16px rgba(0,0,0,0.18)', overflow: 'hidden', width: showPostFullPicker ? 280 : 'auto' }}>
+                                                                            {showPostFullPicker ? (
+                                                                                <>
+                                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderBottom: `1px solid ${dm ? C.bdr2 : '#ede9fe'}` }}>
+                                                                                        <button onClick={() => setShowPostFullPicker(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: '2px 6px', display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+                                                                                        <span style={{ fontSize: 12, fontWeight: 600, color: dm ? '#e2e8f0' : '#1e1b4b' }}>Реакция</span>
+                                                                                    </div>
+                                                                                    <FullReactionPicker dm={dm} onSelect={emoji => { toggleReaction(msg.id, true, emoji); setReactionPickerMsgId(null); setShowFullReactionPicker(false); }} onClose={() => setReactionPickerMsgId(null)} />
+                                                                                </>
+                                                                            ) : (
+                                                                                <div style={{ display: 'flex', alignItems: 'center', padding: '6px 6px', gap: 2 }}>
+                                                                                    {quickReactions.slice(0, 7).map((emoji: string) => {
+                                                                                        const active = msgRx.some(r => r.user_id === currentUserId && r.emoji === emoji);
+                                                                                        return (
+                                                                                            <button key={emoji} onClick={() => { toggleReaction(msg.id, true, emoji); setReactionPickerMsgId(null); }}
+                                                                                                style={{ background: active ? (dm ? 'rgba(99,102,241,0.25)' : '#ede9fe') : 'none', border: active ? '1.5px solid #6366f1' : '1.5px solid transparent', borderRadius: 10, cursor: 'pointer', fontSize: 20, padding: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.12s' }}
+                                                                                                onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.25)')}
+                                                                                                onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}>
+                                                                                                {emoji}
+                                                                                            </button>
+                                                                                        );
+                                                                                    })}
+                                                                                    <button onClick={() => setShowPostFullPicker(true)}
+                                                                                        style={{ background: 'none', border: '1.5px solid transparent', borderRadius: 10, cursor: 'pointer', fontSize: 18, padding: '3px 5px', color: dm ? '#a5b4fc' : '#6366f1', marginLeft: 2 }}
+                                                                                        title="Все эмодзи">
+                                                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+                                                                                    </button>
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                                );
+                                                            })()}
                                                         </div>
                                                     </div>
                                                 )}
@@ -2941,9 +3247,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             </div>
                                         )}
 
-                                        <div style={{ position: 'relative', display: 'inline-block', maxWidth: isMediaOnlyMsg(msg) ? (isMobile ? '88%' : '72%') : (isMobile ? '82%' : '62%'), marginRight: isOwn ? 10 : 0 }}>
+                                        <div style={{ position: 'relative', display: 'inline-block', maxWidth: isMediaOnlyMsg(msg) ? (isMobile ? '88%' : '72%') : (isMobile ? '82%' : '62%') }}>
                                         <div
                                             onContextMenu={(e) => handleContextMenu(e, msg)}
+                                            {...(isMobile ? makeLongPressHandlers(msg) : {})}
                                             style={(() => {
                                                 const noBubble = isSpecialMsg(msg.message_text) || isMediaOnlyMsg(msg);
                                                 if (noBubble) return {
@@ -2971,7 +3278,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                         : isOled
                                                             ? { background: `linear-gradient(135deg, #04040e, #080818)`, color: '#c4b5fd' }
                                                             : dm
-                                                                ? { background: theme.bubbleOtherColor === '#e8e8e8' ? `linear-gradient(135deg, #1e1e38, #252550)` : `linear-gradient(135deg, ${theme.bubbleOtherColor}, ${theme.bubbleOtherColor}cc)`, color: '#e2e8f0' }
+                                                                ? { background: theme.bubbleOtherColor === '#e8e8e8' ? `linear-gradient(135deg, #18183a, #1e1e52)` : `linear-gradient(135deg, ${theme.bubbleOtherColor}, ${theme.bubbleOtherColor}cc)`, color: '#dde0f8' }
                                                                 : { background: theme.bubbleOtherColor === '#e8e8e8' ? `linear-gradient(135deg, #f5f3ff, #ede9fe)` : `linear-gradient(135deg, ${theme.bubbleOtherColor}ee, ${theme.bubbleOtherColor})`, color: '#1e1b4b' }
                                                     ),
                                                 };
@@ -2979,12 +3286,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         >
                                             {!isOwn && 'sender_name' in msg && (() => {
                                                 const bubbleBg = isOled ? '#04040e' : dm
-                                                    ? (theme.bubbleOtherColor === '#e8e8e8' ? '#1e1e38' : theme.bubbleOtherColor)
+                                                    ? (theme.bubbleOtherColor === '#e8e8e8' ? '#18183a' : theme.bubbleOtherColor)
                                                     : (theme.bubbleOtherColor === '#e8e8e8' ? '#f5f3ff' : theme.bubbleOtherColor);
                                                 const nameColor = isBgDark(bubbleBg) ? '#c4b5fd' : '#6366f1';
                                                 return <div style={{ ...styles.senderName, color: nameColor, display: 'flex', alignItems: 'center', gap: 4 }}>
                                                     {msg.sender_name}
-                                                    {((msg as any).sender_is_developer || users.find(u => u.id === (msg as any).sender_id)?.is_developer) && <span title={t('developer of Aurora')} style={{ fontSize: 12, lineHeight: 1, cursor: 'default' }}>🔧</span>}
+                                                    {((msg as any).sender_is_developer || users.find(u => u.id === (msg as any).sender_id)?.is_developer) && <span title={t('developer of Aurora')} style={{ flexShrink: 0, cursor: 'default', display: 'inline-flex', color: '#f59e0b' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
                                                 </div>;
                                             })()}
 
@@ -3018,27 +3325,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 );
                                             })()}
 
-                                            {editingMessageId === msg.id ? (
-                                                <div style={{ marginTop: 4 }} onClick={e => e.stopPropagation()}>
-                                                    <div style={{ fontSize: 10, fontWeight: 700, color: isOwn ? 'rgba(255,255,255,0.6)' : '#8b5cf6', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>✏️ {t('Edit')}</div>
-                                                    <textarea
-                                                        autoFocus
-                                                        value={editingText}
-                                                        onChange={e => setEditingText(e.target.value)}
-                                                        onKeyDown={e => {
-                                                            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEditSubmit(msg.id); }
-                                                            if (e.key === 'Escape') { setEditingMessageId(null); setEditingText(''); }
-                                                        }}
-                                                        rows={Math.min(5, (editingText.match(/\n/g)?.length || 0) + 1)}
-                                                        style={{ width: '100%', padding: '8px 10px', borderRadius: 10, border: isOwn ? '1.5px solid rgba(255,255,255,0.4)' : `1.5px solid ${dm ? C.bdr2 : '#c4b5fd'}`, fontSize: theme.fontSize, outline: 'none', minWidth: 160, resize: 'none', fontFamily: 'inherit', backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (dm ? C.bg4 : '#f5f3ff'), color: isOwn ? 'white' : (dm ? '#e2e8f0' : '#1e1b4b'), boxSizing: 'border-box' as const }}
-                                                    />
-                                                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                                                        <button onClick={() => handleEditSubmit(msg.id)} style={{ flex: 1, padding: '6px 0', background: isOwn ? 'rgba(255,255,255,0.25)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>✓ {t('Save')}</button>
-                                                        <button onClick={() => { setEditingMessageId(null); setEditingText(''); }} style={{ padding: '6px 10px', backgroundColor: 'transparent', border: isOwn ? '1px solid rgba(255,255,255,0.3)' : `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, color: isOwn ? 'rgba(255,255,255,0.7)' : (dm ? '#9090b0' : '#6b7280'), borderRadius: 8, cursor: 'pointer', fontSize: 12 }}>✕</button>
-                                                    </div>
-                                                    <div style={{ fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.4)' : (dm ? '#5a5a8a' : '#c4b5fd'), marginTop: 4, textAlign: 'right' }}>{lang === 'en' ? 'Enter — save, Esc — cancel' : 'Enter — сохранить, Esc — отмена'}</div>
-                                                </div>
-                                            ) : null}
+                                            {/* Editing highlight handled by input bar */}
 
                                             {/* Forwarded-from banner — always at the top, before file content */}
                                             {msg.message_text?.startsWith('↪️ ') && (() => {
@@ -3053,7 +3340,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                         background: isOwn ? 'rgba(255,255,255,0.1)' : (isOled ? 'rgba(167,139,250,0.07)' : dm ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.06)'),
                                                         maxWidth: 'fit-content',
                                                     }}>
-                                                        <span style={{ fontSize: 12, opacity: 0.65 }}>↪</span>
+                                                        <span style={{ opacity: 0.65, display: 'inline-flex' }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg></span>
                                                         <span style={{ fontSize: 11.5, fontStyle: 'italic', fontWeight: 500, color: isOwn ? 'rgba(255,255,255,0.72)' : (isOled ? '#c4b5fd' : dm ? '#a5b4fc' : '#7c3aed') }}>
                                                             {lang === 'en' ? 'Forwarded from' : 'Переслано от'}&nbsp;
                                                             <strong style={{ fontWeight: 700, fontStyle: 'normal' }}>{from}</strong>
@@ -3150,6 +3437,19 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 const displayText = isPrivate ? getDisplayText(msg, activeChat!.id) : (msg.message_text || '');
                                                 const encLocked = isEncryptedMessage(msg.message_text) && displayText === '🔒';
 
+                                                const playlistData = !encLocked ? parsePlaylistMsg(displayText) : null;
+                                                if (playlistData) {
+                                                    return (
+                                                        <PlaylistBubble
+                                                            data={playlistData}
+                                                            isOwn={isOwn}
+                                                            dm={dm}
+                                                            isOled={isOled}
+                                                            onClick={() => setPlaylistPreview(playlistData)}
+                                                        />
+                                                    );
+                                                }
+
                                                 if (!encLocked && (isSticker(msg.message_text) || isGif(msg.message_text))) {
                                                     const stickerIsSt = isSticker(msg.message_text);
                                                     const stickerData = stickerIsSt ? parseStickerData(msg.message_text!) : null;
@@ -3171,6 +3471,17 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     const pid = getPollId(msg.message_text);
                                                     if (pid) return <PollMessage key={`poll-${pid}`} pollId={pid} token={token} isDark={dm} isOled={isOled} isOwn={isOwn} />;
                                                 }
+                                                if (!encLocked && isCallEnded(msg.message_text)) {
+                                                    const dur = getCallDuration(msg.message_text);
+                                                    const mins = Math.floor(dur / 60), secs = dur % 60;
+                                                    const durStr = dur > 0 ? ` · ${mins > 0 ? `${mins} мин ` : ''}${secs} сек` : '';
+                                                    return (
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0', color: isOwn ? 'rgba(255,255,255,0.85)' : (dm ? '#a5b4fc' : '#6366f1') }}>
+                                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.68 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.08 6.08l1.8-1.8a2 2 0 0 1 2.11-.45c.9.32 1.85.55 2.81.68a2 2 0 0 1 1.72 2.03z"/></svg>
+                                                            <span style={{ fontSize: 13, fontWeight: 500 }}>{lang === 'en' ? 'Call ended' : 'Звонок завершён'}{durStr}</span>
+                                                        </div>
+                                                    );
+                                                }
                                                 if (!encLocked && isSingleEmoji(displayText)) {
                                                     return <div style={{ fontSize: 52, lineHeight: 1.1, marginTop: (('file_path' in msg && msg.file_path) || (msg as any).files?.length) ? 6 : 0, userSelect: 'none' }}>{displayText}</div>;
                                                 }
@@ -3186,11 +3497,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 }
                                                 return (
                                                     <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', marginTop: hasFile ? 6 : 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                                        {isEncryptedMessage(msg.message_text) && !fwdMatch && (
-                                                            <span title="E2E зашифровано" style={{ fontSize: 13, opacity: 0.7, flexShrink: 0 }}>🔒</span>
-                                                        )}
                                                         {encLocked ? (
-                                                            <span style={{ opacity: 0.7, fontStyle: 'italic' }}>🔒 Зашифровано</span>
+                                                            <span style={{ opacity: 0.7, fontStyle: 'italic', display: 'inline-flex', alignItems: 'center', gap: 4 }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Зашифровано</span>
                                                         ) : fwdMatch ? (
                                                             renderTextWithLinks(fwdBody, (uname => { const u = users.find(x => x.tag === uname || x.username === uname) || (groupMembersCache[activeChat!.id]?.find(x => (x as any).tag === uname || x.username === uname) as any); if (u) setSelectedUserForProfile(u as any); }), isOwn ? 'rgba(255,255,255,0.9)' : (isOled ? '#c4b5fd' : (dm ? '#a78bfa' : '#6366f1')))
                                                         ) : (
@@ -3256,6 +3564,16 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         );
                                     })()}
                                     </div>
+                                    {isOwn && !selectionMode && (
+                                        <div
+                                            style={{ width: 28, height: 28, borderRadius: '50%', backgroundColor: currentUserAvatar ? (dm ? C.bg2 : '#f3f4f6') : avatarBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 12, color: 'white', fontWeight: 700, alignSelf: 'flex-end', marginBottom: hasReactions ? 32 : 2 }}
+                                        >
+                                            {currentUserAvatar
+                                                ? <img src={config.fileUrl(currentUserAvatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                : currentUsername[0]?.toUpperCase()
+                                            }
+                                        </div>
+                                    )}
                                     </div>
                                     );
                                 });
@@ -3292,8 +3610,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                         <button
                                                             onClick={() => cancelScheduled(sm.id)}
                                                             title={lang === 'en' ? 'Cancel' : 'Отменить'}
-                                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.6)', fontSize: 12, padding: '0 0 0 4px', lineHeight: 1 }}
-                                                        >✕</button>
+                                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.6)', padding: '0 0 0 4px', display: 'flex', alignItems: 'center' }}
+                                                        ><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -3316,30 +3634,65 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             )}
                         </div>
 
-                        {/* Channel: Comments panel */}
+                        {/* Channel: Comments overlay */}
                         {isChannelChat && commentPostId !== null && (() => {
                             const post = messages.find(m => m.id === commentPostId);
                             const comments = messages.filter(m => (m as any).reply_to_id === commentPostId && !m.is_deleted);
-                            const border2 = !dm ? '#ede9fe' : (isOled ? 'rgba(167,139,250,0.15)' : 'rgba(99,102,241,0.2)');
-                            const commentPanelBg = !dm ? '#ffffff' : (isOled ? '#000000' : '#13132a');
-                            const commentBubbleBg = !dm ? '#f5f3ff' : (isOled ? C.bg4 : '#1e1e3a');
+                            const border2 = isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.12)';
+                            const panelBg = isOled ? '#000000' : dm ? '#0b0b18' : '#f8f7ff';
+                            const sendComment = async () => {
+                                if (!commentText.trim() && !commentPendingFile) return;
+                                if (commentPendingFile) {
+                                    setCommentUploading(true);
+                                    try {
+                                        const result = await api.uploadFileWithProgress(token, commentPendingFile, () => {}, () => {});
+                                        if (result.success) {
+                                            wsService.sendGroupMessage(activeChat!.id, commentText.trim(), result.file_path, result.filename, result.file_size, commentPostId!);
+                                        }
+                                    } finally {
+                                        setCommentUploading(false);
+                                        setCommentPendingFile(null);
+                                    }
+                                } else {
+                                    const text = commentReplyTo ? `↩ ${commentReplyTo.name}: ${commentReplyTo.text?.slice(0, 60) || ''}...\n${commentText.trim()}` : commentText.trim();
+                                    wsService.sendGroupMessage(activeChat!.id, text, undefined, undefined, undefined, commentPostId!);
+                                }
+                                setCommentText(''); setCommentReplyTo(null);
+                            };
                             return (
-                                <div className="panel-slide-in" style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 340, background: commentPanelBg, borderLeft: `1.5px solid ${border2}`, display: 'flex', flexDirection: 'column', zIndex: 50, boxShadow: '-4px 0 20px rgba(0,0,0,0.12)' }}>
+                                <div className="panel-slide-in" style={{ position: 'absolute', inset: 0, background: panelBg, display: 'flex', flexDirection: 'column', zIndex: 200, alignItems: 'center' }}>
+                                <input ref={commentFileInputRef} type="file" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) setCommentPendingFile(f); e.target.value = ''; }} />
+                                <div style={{ width: '100%', maxWidth: 680, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                                     {/* Header */}
-                                    <div style={{ padding: '14px 16px', borderBottom: `1px solid ${border2}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-                                        <span style={{ fontWeight: 700, fontSize: 15, color: dm ? '#e0e0f0' : '#1e1b4b' }}>{lang === 'en' ? 'Comments' : 'Комментарии'}</span>
-                                        <button onClick={() => { setCommentPostId(null); setCommentReplyTo(null); setEditingCommentId(null); setEditingCommentText(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#9999bb' : '#9ca3af', fontSize: 18 }}>✕</button>
-                                    </div>
-                                    {/* Post preview */}
-                                    {post && (
-                                        <div style={{ padding: '12px 14px', borderBottom: `1px solid ${border2}`, background: dm ? C.bg2 : '#f5f3ff', flexShrink: 0 }}>
-                                            <div style={{ fontSize: 12, color: dm ? '#7c7caa' : '#6b7280', marginBottom: 4 }}>{lang === 'en' ? 'Post' : 'Пост'}</div>
-                                            <div style={{ fontSize: 13, color: dm ? '#c0c0d8' : '#374151', maxHeight: 60, overflow: 'hidden', textOverflow: 'ellipsis' }}>{post.message_text || `📎 ${lang === 'en' ? 'File' : 'Файл'}`}</div>
+                                    <div style={{ flexShrink: 0, padding: '12px 16px 0' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 10 }}>
+                                            <button onClick={() => { setCommentPostId(null); setCommentReplyTo(null); setEditingCommentId(null); setEditingCommentText(''); setCommentPendingFile(null); setCommentShowEmoji(false); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', width: 32, height: 32, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontWeight: 700, fontSize: 16, color: dm ? '#e0e0f0' : '#1e1b4b' }}>{lang === 'en' ? 'Comments' : 'Комментарии'}</div>
+                                                {comments.length > 0 && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 1 }}>{comments.length} {lang === 'en' ? (comments.length === 1 ? 'comment' : 'comments') : (comments.length === 1 ? 'комментарий' : comments.length < 5 ? 'комментария' : 'комментариев')}</div>}
+                                            </div>
                                         </div>
-                                    )}
+                                        {post && (
+                                            <div style={{ marginBottom: 6, padding: '8px 12px', borderRadius: 12, background: isOled ? 'rgba(167,139,250,0.06)' : dm ? 'rgba(255,255,255,0.04)' : 'rgba(99,102,241,0.05)', borderLeft: `3px solid ${isOled ? '#7c3aed' : dm ? '#6366f1' : '#8b5cf6'}` }}>
+                                                <div style={{ fontSize: 10, color: isOled ? '#7c6aaa' : dm ? '#7c7caa' : '#9ca3af', marginBottom: 2, fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase' as const }}>{lang === 'en' ? 'Post' : 'Пост'}</div>
+                                                <div style={{ fontSize: 13, color: dm ? '#c0c0d8' : '#374151', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any, lineHeight: 1.4 }}>{
+                                                    isSticker(post.message_text) ? `🎭 ${lang === 'en' ? 'Sticker' : 'Стикер'}`
+                                                    : isGif(post.message_text) ? `🎞 GIF`
+                                                    : isPoll(post.message_text) ? `📊 ${lang === 'en' ? 'Poll' : 'Опрос'}`
+                                                    : post.message_text || `📎 ${lang === 'en' ? 'File' : 'Файл'}`
+                                                }</div>
+                                            </div>
+                                        )}
+                                    </div>
                                     {/* Comments list */}
-                                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                                        {comments.length === 0 && <div style={{ textAlign: 'center', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13, marginTop: 20 }}>{lang === 'en' ? 'No comments yet' : 'Пока нет комментариев'}</div>}
+                                    <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                        {comments.length === 0 && (
+                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 10, opacity: 0.5, paddingTop: 40 }}>
+                                                <div style={{ color: dm ? '#3a3a5a' : '#c4b5fd' }}><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                                                <div style={{ fontSize: 14, color: dm ? '#5a5a8a' : '#9ca3af', fontWeight: 500 }}>{lang === 'en' ? 'No comments yet' : 'Пока нет комментариев'}</div>
+                                                <div style={{ fontSize: 12, color: dm ? '#3a3a5a' : '#c0bcd8' }}>{lang === 'en' ? 'Be the first!' : 'Будьте первым!'}</div>
+                                            </div>
+                                        )}
                                         {(() => {
                                             let lastCommentDay = '';
                                             return comments.map(c => {
@@ -3354,78 +3707,78 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             if (showDay) lastCommentDay = cDay;
                                             const sepEl = showDay ? (
                                                 <div key={`csep-${cDay}`} style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0 2px' }}>
-                                                    <div style={{ flex: 1, height: 1, backgroundColor: isOled ? 'rgba(167,139,250,0.15)' : (dm ? '#3a3a4a' : '#e0e0e0') }} />
-                                                    <span style={{ fontSize: 10, color: isOled ? 'rgba(167,139,250,0.55)' : (dm ? '#888' : '#aaa'), whiteSpace: 'nowrap', padding: '1px 8px', backgroundColor: isOled ? 'rgba(167,139,250,0.06)' : (dm ? C.bg6 : '#efefef'), borderRadius: 8 }}>
+                                                    <div style={{ flex: 1, height: 1, backgroundColor: border2 }} />
+                                                    <span style={{ fontSize: 10, color: isOled ? 'rgba(167,139,250,0.55)' : (dm ? '#888' : '#aaa'), whiteSpace: 'nowrap', padding: '2px 10px', backgroundColor: isOled ? 'rgba(167,139,250,0.06)' : (dm ? C.bg6 : '#efefef'), borderRadius: 8 }}>
                                                         {getDateLabel(c.timestamp)}
                                                     </span>
-                                                    <div style={{ flex: 1, height: 1, backgroundColor: isOled ? 'rgba(167,139,250,0.15)' : (dm ? '#3a3a4a' : '#e0e0e0') }} />
+                                                    <div style={{ flex: 1, height: 1, backgroundColor: border2 }} />
                                                 </div>
                                             ) : null;
                                             const openProfile = () => setSelectedUserForProfile({ id: c.sender_id, username: cName, email: '', created_at: '', avatar: (c as any).sender_avatar || undefined, avatar_color: (c as any).sender_avatar_color });
+                                            const ownBubbleBg = isOled ? 'linear-gradient(135deg,#3b1f6e,#4c1d95)' : `linear-gradient(135deg,${theme.bubbleOwnColor},#8b5cf6)`;
+                                            const otherBubbleBg = isOled ? 'rgba(20,12,40,0.9)' : (dm ? 'rgba(30,30,60,0.8)' : 'rgba(255,255,255,0.95)');
+                                            const otherBubbleBorder = isOled ? '1px solid rgba(167,139,250,0.12)' : dm ? '1px solid rgba(99,102,241,0.15)' : '1px solid rgba(99,102,241,0.1)';
+                                            const otherBubbleShadow = isOled ? '0 2px 12px rgba(0,0,0,0.5)' : dm ? '0 2px 8px rgba(0,0,0,0.2)' : '0 2px 8px rgba(99,102,241,0.08)';
                                             return (
                                                 <React.Fragment key={c.id}>
                                                 {sepEl}
                                                 <div
-                                                    style={{ display: 'flex', gap: 8, alignItems: 'flex-start', position: 'relative' }}
+                                                    style={{ display: 'flex', flexDirection: isOwn2 ? 'row-reverse' : 'row', gap: 8, alignItems: 'flex-end', position: 'relative' }}
                                                     onMouseEnter={() => setHoveredCommentId(c.id)}
                                                     onMouseLeave={() => setHoveredCommentId(null)}
                                                 >
-                                                    <div onClick={openProfile} style={{ width: 30, height: 30, borderRadius: '50%', background: cAvatar ? (dm ? C.bg2 : '#f3f4f6') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: 13, overflow: 'hidden', flexShrink: 0, cursor: 'pointer' }}>
+                                                    {!isOwn2 && <div onClick={openProfile} style={{ width: 30, height: 30, borderRadius: '50%', background: cAvatar ? 'transparent' : ((c as any).sender_avatar_color || '#6366f1'), display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: 12, overflow: 'hidden', flexShrink: 0, cursor: 'pointer', alignSelf: 'flex-start', marginTop: 2, boxShadow: '0 2px 6px rgba(0,0,0,0.2)' }}>
                                                         {cAvatar ? <img src={cAvatar} alt={cName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : cName[0]?.toUpperCase()}
-                                                    </div>
-                                                    <div style={{ flex: 1, minWidth: 0, background: commentBubbleBg, borderRadius: 12, padding: '8px 12px', borderTopLeftRadius: 4 }}>
-                                                        <div onClick={openProfile} style={{ fontSize: 12, fontWeight: 700, color: isOled ? '#c4b5fd' : (dm ? '#a5b4fc' : '#6366f1'), marginBottom: 3, cursor: 'pointer' }}>{cName}</div>
+                                                    </div>}
+                                                    <div style={{ maxWidth: '72%', minWidth: 0, background: isOwn2 ? ownBubbleBg : otherBubbleBg, borderRadius: isOwn2 ? '18px 18px 4px 18px' : '18px 18px 18px 4px', padding: '8px 12px', color: isOwn2 ? 'white' : (isOled ? '#c4b5fd' : dm ? '#dde0f8' : '#1e1b4b'), border: isOwn2 ? 'none' : otherBubbleBorder, boxShadow: isOwn2 ? '0 4px 16px rgba(99,102,241,0.3)' : otherBubbleShadow }}>
+                                                        {!isOwn2 && <div onClick={openProfile} style={{ fontSize: 11, fontWeight: 700, color: isOled ? '#c4b5fd' : (dm ? '#a5b4fc' : '#6366f1'), marginBottom: 3, cursor: 'pointer' }}>{cName}</div>}
                                                         {isEditingThis ? (
-                                                            <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
-                                                                <input
-                                                                    autoFocus
-                                                                    value={editingCommentText}
-                                                                    onChange={e => setEditingCommentText(e.target.value)}
+                                                            <div style={{ display: 'flex', gap: 6 }}>
+                                                                <input autoFocus value={editingCommentText} onChange={e => setEditingCommentText(e.target.value)}
                                                                     onKeyDown={e => {
-                                                                        if (e.key === 'Enter' && editingCommentText.trim()) {
-                                                                            wsService.sendRaw({ type: 'edit_message', message_id: c.id, new_text: editingCommentText.trim(), is_group: true });
-                                                                            setEditingCommentId(null); setEditingCommentText('');
-                                                                        }
+                                                                        if (e.key === 'Enter' && editingCommentText.trim()) { wsService.sendRaw({ type: 'edit_message', message_id: c.id, new_text: editingCommentText.trim(), is_group: true }); setEditingCommentId(null); setEditingCommentText(''); }
                                                                         if (e.key === 'Escape') { setEditingCommentId(null); setEditingCommentText(''); }
                                                                     }}
-                                                                    style={{ flex: 1, padding: '5px 8px', borderRadius: 8, border: !dm ? '1px solid #c4b5fd' : (isOled ? '1px solid rgba(167,139,250,0.25)' : '1px solid #4a4a7e'), background: !dm ? 'white' : (isOled ? '#000000' : '#13132a'), color: dm ? '#e0e0f0' : '#1e1b4b', fontSize: 13, outline: 'none' }}
+                                                                    style={{ flex: 1, padding: '5px 8px', borderRadius: 8, border: 'none', background: 'rgba(0,0,0,0.2)', color: 'inherit', fontSize: 13, outline: 'none' }}
                                                                 />
-                                                                <button onClick={() => { if (editingCommentText.trim()) { wsService.sendRaw({ type: 'edit_message', message_id: c.id, new_text: editingCommentText.trim(), is_group: true }); } setEditingCommentId(null); setEditingCommentText(''); }}
-                                                                    style={{ padding: '4px 10px', borderRadius: 8, background: 'linear-gradient(135deg,#6c47d4,#8b5cf6)', color: 'white', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>✓</button>
-                                                                <button onClick={() => { setEditingCommentId(null); setEditingCommentText(''); }}
-                                                                    style={{ padding: '4px 8px', borderRadius: 8, background: 'none', border: `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, color: dm ? '#9090b0' : '#6b7280', cursor: 'pointer', fontSize: 12 }}>✕</button>
+                                                                <button onClick={() => { if (editingCommentText.trim()) wsService.sendRaw({ type: 'edit_message', message_id: c.id, new_text: editingCommentText.trim(), is_group: true }); setEditingCommentId(null); setEditingCommentText(''); }} style={{ padding: '4px 8px', borderRadius: 8, background: 'rgba(255,255,255,0.2)', color: 'inherit', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+                                                                <button onClick={() => { setEditingCommentId(null); setEditingCommentText(''); }} style={{ padding: '4px 8px', borderRadius: 8, background: 'rgba(0,0,0,0.15)', color: 'inherit', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                                                             </div>
                                                         ) : (
                                                             <>
                                                                 {c.message_text && (() => {
-                                                                    const parsed = parseCommentReplyPrefix(c.message_text);
-                                                                    return (
-                                                                        <>
-                                                                            {parsed.replyAuthor && (
-                                                                                <div style={{ borderLeft: '3px solid #6366f1', backgroundColor: dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.07)', borderRadius: 6, padding: '4px 10px', marginBottom: 6, cursor: 'default' }}>
-                                                                                    <div style={{ fontSize: 11, fontWeight: 700, color: dm ? '#a5b4fc' : '#8b5cf6', marginBottom: 2 }}>↩ {parsed.replyAuthor}</div>
-                                                                                    <div style={{ fontSize: 12, color: dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: 'italic' }}>{parsed.replyQuote}</div>
-                                                                                </div>
-                                                                            )}
-                                                                            <div style={{ fontSize: 13, color: dm ? '#d0d0e8' : '#374151', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{parsed.mainText}{(c as any).edited_at && <span style={{ fontSize: 10, color: dm ? '#5a5a8a' : '#bbb', marginLeft: 4 }}>{t('edited')}</span>}</div>
-                                                                        </>
-                                                                    );
+                                                                    const txt = c.message_text;
+                                                                    if (isSticker(txt)) {
+                                                                        const sd = parseStickerData(txt);
+                                                                        return <img src={sd.url} alt="стикер" style={{ maxWidth: 140, maxHeight: 140, display: 'block', objectFit: 'contain', borderRadius: 8, cursor: sd.pack ? 'pointer' : 'default' }} onClick={sd.pack ? () => setStickerPackPreview(sd) : undefined} />;
+                                                                    }
+                                                                    if (isGif(txt)) {
+                                                                        return <img src={specialUrl(txt)} alt="GIF" style={{ maxWidth: 220, borderRadius: 10, display: 'block' }} />;
+                                                                    }
+                                                                    if (isPoll(txt)) {
+                                                                        const pid = getPollId(txt);
+                                                                        return pid ? <PollMessage key={`cpoll-${pid}`} pollId={pid} token={token} isDark={dm} isOled={isOled} isOwn={isOwn2} /> : null;
+                                                                    }
+                                                                    const parsed = parseCommentReplyPrefix(txt);
+                                                                    return <>
+                                                                        {parsed.replyAuthor && <div style={{ borderLeft: '3px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(0,0,0,0.15)', borderRadius: 6, padding: '3px 8px', marginBottom: 5 }}>
+                                                                            <div style={{ fontSize: 10, fontWeight: 700, marginBottom: 1, opacity: 0.9 }}>↩ {parsed.replyAuthor}</div>
+                                                                            <div style={{ fontSize: 11, opacity: 0.7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{parsed.replyQuote}</div>
+                                                                        </div>}
+                                                                        <div style={{ fontSize: 13, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{parsed.mainText}{(c as any).edited_at && <span style={{ fontSize: 10, opacity: 0.55, marginLeft: 4 }}>{t('edited')}</span>}</div>
+                                                                    </>;
                                                                 })()}
-                                                                {c.file_path && <FileMessage filePath={c.file_path} filename={(c as any).filename || ''} fileSize={(c as any).file_size} isOwn={false} isDark={dm} />}
+                                                                {c.file_path && <FileMessage filePath={c.file_path} filename={(c as any).filename || ''} fileSize={(c as any).file_size} isOwn={isOwn2} isDark={dm} onPlay={playGlobalAudio} nowPlayingSrc={nowPlaying?.src} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} />}
                                                             </>
                                                         )}
-                                                        <div style={{ fontSize: 10, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 4 }}>{new Date(c.timestamp).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ru-RU', { hour: '2-digit', minute: '2-digit' })}</div>
+                                                        <div style={{ fontSize: 10, opacity: 0.5, marginTop: 4, textAlign: isOwn2 ? 'right' : 'left' }}>{new Date(c.timestamp).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ru-RU', { hour: '2-digit', minute: '2-digit' })}</div>
                                                     </div>
                                                     {hoveredCommentId === c.id && !isEditingThis && (
-                                                        <div style={{ position: 'absolute', right: 0, top: -2, display: 'flex', gap: 2, background: !dm ? 'white' : commentBubbleBg, border: `1px solid ${dm ? C.bdr2 : '#e0deff'}`, borderRadius: 8, padding: '2px 4px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)', zIndex: 5 }}>
-                                                            <button title={t('Reply')} onClick={() => setCommentReplyTo({ id: c.id, name: cName, text: stripCommentReplyPrefix(c.message_text) })}
-                                                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: '2px 5px', color: dm ? '#a5b4fc' : '#6366f1' }}>↩</button>
-                                                            <button title={lang === 'en' ? 'Forward' : 'Переслать'} onClick={() => setForwardingMessages([{ ...c, message_text: stripCommentReplyPrefix(c.message_text) }])}
-                                                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: '2px 5px', color: dm ? '#a5b4fc' : '#6366f1' }}>↪</button>
-                                                            {canEdit && <button title={t('Edit')} onClick={() => { setEditingCommentId(c.id); setEditingCommentText(stripCommentReplyPrefix(c.message_text) || ''); }}
-                                                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: '2px 5px', color: dm ? '#a5b4fc' : '#6366f1' }}>✏️</button>}
-                                                            {canDelete && <button title={t('Delete')} onClick={() => { setDeleteConfirmId(c.id); setMenuMessageId(null); }}
-                                                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: '2px 5px', color: '#ef4444' }}>🗑</button>}
+                                                        <div style={{ position: 'absolute', [isOwn2 ? 'left' : 'right']: 40, bottom: 0, display: 'flex', gap: 2, background: isOled ? '#0a0a14' : dm ? C.bg3 : 'white', border: `1px solid ${dm ? C.bdr2 : '#e0deff'}`, borderRadius: 10, padding: '3px 6px', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', zIndex: 5 }}>
+                                                            <button title={t('Reply')} onClick={() => setCommentReplyTo({ id: c.id, name: cName, text: stripCommentReplyPrefix(c.message_text) })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', color: dm ? '#a5b4fc' : '#6366f1', display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg></button>
+                                                            <button title={lang === 'en' ? 'Forward' : 'Переслать'} onClick={() => setForwardingMessages([{ ...c, message_text: stripCommentReplyPrefix(c.message_text) }])} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', color: dm ? '#a5b4fc' : '#6366f1', display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg></button>
+                                                            {canEdit && <button title={t('Edit')} onClick={() => { setEditingCommentId(c.id); setEditingCommentText(stripCommentReplyPrefix(c.message_text) || ''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', color: dm ? '#a5b4fc' : '#6366f1', display: 'flex', alignItems: 'center' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>}
+                                                            {canDelete && <button title={t('Delete')} onClick={() => { setDeleteConfirmId(c.id); setMenuMessageId(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', color: '#ef4444', display: 'flex', alignItems: 'center' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>}
                                                         </div>
                                                     )}
                                                 </div>
@@ -3434,45 +3787,83 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         });
                                         })()}
                                     </div>
-                                    {/* Comment reply preview */}
-                                    {commentReplyTo && (
-                                        <div style={{ padding: '6px 14px', borderTop: `1px solid ${border2}`, background: !dm ? '#f0efff' : (isOled ? '#050508' : C.bg2), display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderLeft: '3px solid #6366f1', flexShrink: 0 }}>
-                                            <div style={{ minWidth: 0 }}>
-                                                <div style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6' }}>↩ {commentReplyTo.name}</div>
-                                                <div style={{ fontSize: 12, color: dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{commentReplyTo.text?.slice(0, 80) || `📎 ${lang === 'en' ? 'file' : 'файл'}`}</div>
-                                            </div>
-                                            <button onClick={() => setCommentReplyTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', fontSize: 14, padding: '2px 4px', flexShrink: 0 }}>✕</button>
+                                    {/* Emoji picker for comments */}
+                                    {commentShowEmoji && (
+                                        <div style={{ flexShrink: 0 }}>
+                                            <MediaPicker
+                                                onSelectEmoji={emoji => { setCommentText(t => t + emoji); setCommentShowEmoji(false); commentInputRef.current?.focus(); }}
+                                                onSendSticker={(url: string) => { wsService.sendGroupMessage(activeChat!.id, `__sticker__${url}`, undefined, undefined, undefined, commentPostId!); setCommentShowEmoji(false); }}
+                                                onSendGif={(url: string) => { wsService.sendGroupMessage(activeChat!.id, `__gif__${url}`, undefined, undefined, undefined, commentPostId!); setCommentShowEmoji(false); }}
+                                                onClose={() => setCommentShowEmoji(false)}
+                                                isDark={dm} token={token}
+                                            />
                                         </div>
                                     )}
-                                    {/* Comment input */}
-                                    <div style={{ padding: '10px 14px', borderTop: commentReplyTo ? 'none' : `1px solid ${border2}`, display: 'flex', gap: 8, flexShrink: 0 }}>
-                                        <input
-                                            value={commentText}
-                                            onChange={e => setCommentText(e.target.value)}
-                                            onKeyDown={e => {
-                                                if (e.key === 'Enter' && commentText.trim()) {
-                                                    const text = commentReplyTo ? `↩ ${commentReplyTo.name}: ${commentReplyTo.text?.slice(0, 60) || ''}...\n${commentText.trim()}` : commentText.trim();
-                                                    wsService.sendGroupMessage(activeChat!.id, text, undefined, undefined, undefined, commentPostId);
-                                                    setCommentText(''); setCommentReplyTo(null);
-                                                }
-                                            }}
-                                            placeholder={lang === 'en' ? 'Write a comment...' : 'Написать комментарий...'}
-                                            style={{ flex: 1, padding: '8px 12px', borderRadius: 10, border: `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, background: !dm ? '#f5f3ff' : (isOled ? C.bg4 : '#1e1e3a'), color: dm ? '#e0e0f0' : '#1e1b4b', fontSize: 13, outline: 'none' }}
-                                        />
+                                    {/* Pending file / reply bars */}
+                                    {commentPendingFile && (
+                                        <div style={{ padding: '5px 16px', background: isOled ? 'rgba(167,139,250,0.05)' : dm ? 'rgba(255,255,255,0.03)' : 'rgba(99,102,241,0.04)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                                            <span style={{ display: 'inline-flex', color: dm ? '#a5b4fc' : '#6366f1' }}>{/\.(jpg|jpeg|png|gif|webp)$/i.test(commentPendingFile.name) ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg> : /\.(mp4|webm|mov)$/i.test(commentPendingFile.name) ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg> : /\.(mp3|wav|ogg|flac)$/i.test(commentPendingFile.name) ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>}</span>
+                                            <span style={{ flex: 1, fontSize: 12, color: dm ? '#c0c0d8' : '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{commentPendingFile.name}</span>
+                                            <button onClick={() => setCommentPendingFile(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', display: 'flex', alignItems: 'center' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                                        </div>
+                                    )}
+                                    {commentReplyTo && (
+                                        <div style={{ padding: '5px 16px', background: isOled ? 'rgba(167,139,250,0.05)' : dm ? 'rgba(255,255,255,0.03)' : 'rgba(99,102,241,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderLeft: '3px solid #6366f1', flexShrink: 0 }}>
+                                            <div style={{ minWidth: 0 }}>
+                                                <div style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6' }}>↩ {commentReplyTo.name}</div>
+                                                <div style={{ fontSize: 12, color: dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{commentReplyTo.text?.slice(0, 80) || `📎 файл`}</div>
+                                            </div>
+                                            <button onClick={() => setCommentReplyTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', display: 'flex', alignItems: 'center' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                                        </div>
+                                    )}
+                                    {/* Input — same pill as main chat */}
+                                    <div style={{ ...darkStyles.inputArea, padding: '8px 12px' }}>
+                                        <div style={darkStyles.inputPill}>
+                                            <button onClick={() => setCommentShowEmoji(v => !v)} style={{ ...darkStyles.pillBtn, color: commentShowEmoji ? (dm ? '#a5b4fc' : '#6366f1') : (dm ? (isOled ? '#a78bfa' : '#7c7caa') : '#9ca3af') }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
+                                            <textarea
+                                                ref={commentInputRef}
+                                                value={commentText}
+                                                onChange={e => setCommentText(e.target.value)}
+                                                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendComment(); } }}
+                                                placeholder={lang === 'en' ? 'Write a comment...' : 'Написать комментарий...'}
+                                                rows={1}
+                                                style={{ ...darkStyles.input }}
+                                            />
+                                            <button onClick={() => commentFileInputRef.current?.click()} style={{ ...darkStyles.pillBtn, color: commentPendingFile ? '#6366f1' : (dm ? (isOled ? '#a78bfa' : '#7c7caa') : '#9ca3af') }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+                                        </div>
                                         <button
-                                            onClick={() => {
-                                                if (commentText.trim()) {
-                                                    const text = commentReplyTo ? `↩ ${commentReplyTo.name}: ${commentReplyTo.text?.slice(0, 60) || ''}...\n${commentText.trim()}` : commentText.trim();
-                                                    wsService.sendGroupMessage(activeChat!.id, text, undefined, undefined, undefined, commentPostId!);
-                                                    setCommentText(''); setCommentReplyTo(null);
-                                                }
-                                            }}
-                                            disabled={!commentText.trim()}
-                                            style={{ padding: '8px 14px', borderRadius: 10, background: commentText.trim() ? 'linear-gradient(135deg, #6c47d4, #8b5cf6)' : (dm ? C.bg6 : '#e0e0e8'), color: commentText.trim() ? 'white' : (dm ? '#5a5a8a' : '#9ca3af'), border: 'none', cursor: commentText.trim() ? 'pointer' : 'not-allowed', fontWeight: 600, fontSize: 13 }}>→</button>
+                                            onClick={sendComment}
+                                            disabled={(!commentText.trim() && !commentPendingFile) || commentUploading}
+                                            style={{ ...darkStyles.sendBtn2, opacity: (!commentText.trim() && !commentPendingFile) || commentUploading ? 0.5 : 1 }}>
+                                            {commentUploading ? (
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l2 2"/></svg>
+                                            ) : (
+                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                    <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                                                </svg>
+                                            )}
+                                        </button>
                                     </div>
+                                </div>
                                 </div>
                             );
                         })()}
+
+                        {/* Edit indicator above input */}
+                        {editingMessageId && (
+                            <div className="bar-enter" style={{ padding: '8px 16px', backgroundColor: dm ? C.bg2 : '#f0efff', borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.2)' : '#d9d6fe'}`, borderLeft: `3px solid ${isOled ? '#a78bfa' : '#6366f1'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isOled ? '#a78bfa' : '#6366f1'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                    <div style={{ minWidth: 0 }}>
+                                        <div style={{ fontSize: 11, fontWeight: 700, color: isOled ? '#a78bfa' : '#6366f1', marginBottom: 1 }}>{lang === 'en' ? 'Editing message' : 'Редактирование'}</div>
+                                        <div style={{ fontSize: 12, color: dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{editingText.slice(0, 80)}</div>
+                                    </div>
+                                </div>
+                                <button onClick={() => { setEditingMessageId(null); setEditingText(''); if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; } }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', padding: '2px 4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
+                            </div>
+                        )}
 
                         {/* Панель ответа */}
                         {replyTo && (() => {
@@ -3501,7 +3892,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             </div>
                                         </div>
                                     </div>
-                                    <button onClick={() => setReplyTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', fontSize: 14, padding: '2px 4px', flexShrink: 0, lineHeight: 1 }}>✕</button>
+                                    <button onClick={() => setReplyTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', padding: '2px 4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                                 </div>
                             );
                         })()}
@@ -3510,17 +3901,17 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         {pendingFiles.length > 0 && (
                             <div className="bar-enter" style={{ padding: '8px 16px', backgroundColor: dm ? C.bg2 : '#f5f3ff', borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.2)' : '#ede9fe'}` }}>
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                                    <span style={{ fontSize: 11, color: dm ? '#7c7caa' : '#9ca3af', fontWeight: 500 }}>
-                                        📎 {pendingFiles.length} / 10 {lang === 'en' ? `file${pendingFiles.length === 1 ? '' : 's'}` : `файл${pendingFiles.length === 1 ? '' : pendingFiles.length < 5 ? 'а' : 'ов'}`}
+                                    <span style={{ fontSize: 11, color: dm ? '#7c7caa' : '#9ca3af', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg> {pendingFiles.length} / 10 {lang === 'en' ? `file${pendingFiles.length === 1 ? '' : 's'}` : `файл${pendingFiles.length === 1 ? '' : pendingFiles.length < 5 ? 'а' : 'ов'}`}
                                     </span>
                                     <button onClick={() => setPendingFiles([])} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', fontSize: 12, padding: 0 }}>{lang === 'en' ? 'Remove all' : 'Убрать все'}</button>
                                 </div>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                                     {pendingFiles.map((f, i) => (
                                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', backgroundColor: dm ? C.bg5 : 'white', border: `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 10, fontSize: 12, maxWidth: 180 }}>
-                                            <span style={{ fontSize: 16 }}>{/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(f.name) ? '🖼️' : /\.(mp4|webm|mov)$/i.test(f.name) ? '🎬' : /\.(mp3|ogg|wav|flac|aac|m4a)$/i.test(f.name) ? '🎵' : '📄'}</span>
+                                            <span style={{ display: 'inline-flex', color: dm ? '#a5b4fc' : '#6366f1' }}>{/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(f.name) ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg> : /\.(mp4|webm|mov)$/i.test(f.name) ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg> : /\.(mp3|ogg|wav|flac|aac|m4a)$/i.test(f.name) ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>}</span>
                                             <span style={{ color: dm ? '#c0c0d8' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{f.name}</span>
-                                            <button onClick={() => setPendingFiles(prev => prev.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', fontSize: 14, padding: 0, lineHeight: 1, flexShrink: 0 }}>✕</button>
+                                            <button onClick={() => setPendingFiles(prev => prev.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                                         </div>
                                     ))}
                                 </div>
@@ -3531,12 +3922,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         {uploading && (
                             <div style={{ padding: '8px 16px 6px', borderTop: `1px solid ${dm ? C.bdr1 : '#ede9fe'}`, backgroundColor: dm ? C.bg1 : 'white' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-                                    <span style={{ fontSize: 12, color: dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '68%' }}>
-                                        📤 {uploadingFileName}
+                                    <span style={{ fontSize: 12, color: dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '68%', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> {uploadingFileName}
                                     </span>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                                         <span style={{ fontSize: 12, fontWeight: 700, color: '#6366f1' }}>{uploadProgress}%</span>
-                                        <button onClick={() => { currentUploadXHR.current?.abort(); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#7070a0' : '#9ca3af', fontSize: 14, padding: 0, lineHeight: 1 }} title={lang === 'en' ? 'Cancel upload' : 'Отменить загрузку'}>✕</button>
+                                        <button onClick={() => { currentUploadXHR.current?.abort(); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#7070a0' : '#9ca3af', padding: 0, display: 'flex', alignItems: 'center' }} title={lang === 'en' ? 'Cancel upload' : 'Отменить загрузку'}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                                     </div>
                                 </div>
                                 <div style={{ height: 3, backgroundColor: dm ? C.bdr1 : '#e0e0f0', borderRadius: 3, overflow: 'hidden' }}>
@@ -3549,20 +3940,20 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         {selectionMode && (
                             <div className="bar-enter" style={{ ...darkStyles.inputArea, justifyContent: 'space-between', padding: '10px 16px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                    <button onClick={exitSelectionMode} style={{ background: 'none', border: `1.5px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 10, padding: '7px 14px', cursor: 'pointer', color: dm ? '#c0c0d8' : '#6b7280', fontSize: 13 }}>✕ {t('Cancel')}</button>
+                                    <button onClick={exitSelectionMode} style={{ background: 'none', border: `1.5px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 10, padding: '7px 14px', cursor: 'pointer', color: dm ? '#c0c0d8' : '#6b7280', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> {t('Cancel')}</button>
                                     <span style={{ fontSize: 13, color: dm ? '#a0a0c0' : '#6b7280', fontWeight: 500 }}>{t('selected')}: {selectedMsgIds.size}</span>
                                 </div>
                                 <div style={{ display: 'flex', gap: 8 }}>
                                     <button
                                         onClick={handleBulkForward}
                                         disabled={selectedMsgIds.size === 0}
-                                        style={{ padding: '8px 14px', background: dm ? '#1e1e3a' : '#f5f3ff', color: '#6366f1', border: `1.5px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 10, cursor: selectedMsgIds.size === 0 ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: selectedMsgIds.size === 0 ? 0.5 : 1 }}
-                                    >↪️ {t('Forward')}</button>
+                                        style={{ padding: '8px 14px', background: dm ? '#1e1e3a' : '#f5f3ff', color: '#6366f1', border: `1.5px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 10, cursor: selectedMsgIds.size === 0 ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: selectedMsgIds.size === 0 ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: 6 }}
+                                    ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg> {t('Forward')}</button>
                                     <button
                                         onClick={() => setBulkDeleteConfirm(true)}
                                         disabled={selectedMsgIds.size === 0}
-                                        style={{ padding: '8px 14px', background: 'none', color: '#ef4444', border: '1.5px solid #fca5a5', borderRadius: 10, cursor: selectedMsgIds.size === 0 ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: selectedMsgIds.size === 0 ? 0.5 : 1 }}
-                                    >🗑️ {t('Delete')}</button>
+                                        style={{ padding: '8px 14px', background: 'none', color: '#ef4444', border: '1.5px solid #fca5a5', borderRadius: 10, cursor: selectedMsgIds.size === 0 ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: selectedMsgIds.size === 0 ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: 6 }}
+                                    ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> {t('Delete')}</button>
                                 </div>
                             </div>
                         )}
@@ -3579,19 +3970,92 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             setPreviewGroup(null);
                                         }
                                     }}
-                                    style={{ padding: '10px 28px', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white', border: 'none', borderRadius: 14, cursor: 'pointer', fontSize: 14, fontWeight: 700, boxShadow: '0 2px 12px rgba(99,102,241,0.35)', transition: 'opacity 0.15s' }}
+                                    style={{ padding: '10px 28px', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white', border: 'none', borderRadius: 14, cursor: 'pointer', fontSize: 14, fontWeight: 700, boxShadow: '0 2px 12px rgba(99,102,241,0.35)', transition: 'opacity 0.15s', display: 'flex', alignItems: 'center', gap: 8 }}
                                     onMouseEnter={e => (e.currentTarget.style.opacity = '0.88')}
                                     onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
                                 >
-                                    📢 {t('Subscribe')}
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5.882V19.24a1.76 1.76 0 0 1-3.417.592l-2.147-6.15M18 13a4 4 0 0 0 0-8M5 6.236A15.7 15.7 0 0 1 16 2v20a15.7 15.7 0 0 1-11-5.764"/></svg> {t('Subscribe')}
                                 </button>
                             </div>
                         )}
-                        {!selectionMode && isChannelChat && isChannelMember && !isGroupAdmin && (
-                            <div style={{ padding: '14px 18px', textAlign: 'center', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13, borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}` }}>
-                                🔒 {lang === 'en' ? 'Only admins can post' : 'Только администраторы могут публиковать'}
-                            </div>
-                        )}
+                        {!selectionMode && isChannelChat && isChannelMember && !isGroupAdmin && (() => {
+                            const muteKey = `group_${activeChat!.id}`;
+                            const isMuted = mutedChats.has(muteKey);
+                            return (
+                                <div style={{
+                                    padding: '8px 16px',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    background: isOled
+                                        ? 'linear-gradient(180deg, rgba(0,0,0,0) 0%, #000000 100%)'
+                                        : dm
+                                            ? `linear-gradient(180deg, rgba(22,22,37,0) 0%, ${C.bg1} 100%)`
+                                            : 'linear-gradient(180deg, rgba(247,248,252,0) 0%, #f7f8fc 100%)',
+                                    boxShadow: isOled
+                                        ? '0 -8px 32px rgba(139,92,246,0.08)'
+                                        : dm
+                                            ? '0 -6px 24px rgba(0,0,0,0.2)'
+                                            : '0 -6px 20px rgba(99,102,241,0.06)',
+                                    minHeight: 56,
+                                    position: 'relative',
+                                }}>
+                                    {/* Subtle ambient glow behind button */}
+                                    <div style={{
+                                        position: 'absolute', inset: 0, pointerEvents: 'none',
+                                        background: isOled
+                                            ? 'radial-gradient(ellipse 60% 80% at 50% 100%, rgba(139,92,246,0.12) 0%, transparent 70%)'
+                                            : dm
+                                                ? 'radial-gradient(ellipse 60% 80% at 50% 100%, rgba(99,102,241,0.1) 0%, transparent 70%)'
+                                                : 'radial-gradient(ellipse 60% 80% at 50% 100%, rgba(99,102,241,0.07) 0%, transparent 70%)',
+                                    }} />
+                                    <button
+                                        onClick={() => toggleMute(muteKey)}
+                                        style={{
+                                            display: 'flex', alignItems: 'center', gap: 8,
+                                            padding: '10px 22px',
+                                            background: isMuted
+                                                ? (isOled ? 'rgba(167,139,250,0.07)' : dm ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.06)')
+                                                : (isOled
+                                                    ? 'linear-gradient(135deg, rgba(124,58,237,0.3), rgba(167,139,250,0.15))'
+                                                    : dm
+                                                        ? 'linear-gradient(135deg, rgba(99,102,241,0.22), rgba(139,92,246,0.12))'
+                                                        : 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(139,92,246,0.07))'),
+                                            border: `1px solid ${isMuted
+                                                ? (isOled ? 'rgba(167,139,250,0.12)' : dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.1)')
+                                                : (isOled ? 'rgba(167,139,250,0.35)' : dm ? 'rgba(99,102,241,0.35)' : 'rgba(99,102,241,0.25)')}`,
+                                            borderRadius: 24,
+                                            color: isMuted
+                                                ? (isOled ? '#6b5fa0' : dm ? '#5a5a8a' : '#9ca3af')
+                                                : (isOled ? '#c4b5fd' : dm ? '#a5b4fc' : '#6366f1'),
+                                            fontSize: 13, fontWeight: 600,
+                                            cursor: 'pointer',
+                                            boxShadow: isMuted
+                                                ? 'none'
+                                                : (isOled
+                                                    ? '0 0 24px rgba(167,139,250,0.25), 0 2px 12px rgba(124,58,237,0.2), inset 0 1px 0 rgba(255,255,255,0.05)'
+                                                    : dm
+                                                        ? '0 0 18px rgba(99,102,241,0.2), 0 2px 10px rgba(99,102,241,0.15)'
+                                                        : '0 0 14px rgba(99,102,241,0.15), 0 2px 8px rgba(99,102,241,0.1)'),
+                                            transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
+                                            backdropFilter: 'blur(8px)',
+                                            letterSpacing: 0.1,
+                                            position: 'relative',
+                                        }}
+                                    >
+                                        {isMuted ? (
+                                            <>
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                                                {lang === 'en' ? 'Unmute' : 'Включить уведомления'}
+                                            </>
+                                        ) : (
+                                            <>
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                                                {lang === 'en' ? 'Mute notifications' : 'Отключить уведомления'}
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+                            );
+                        })()}
                         {!selectionMode && isDeletedUser && (
                             <div style={{ padding: '14px 18px', textAlign: 'center', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13, borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}`, background: dm ? C.bg1 : '#f7f8fc' }}>
                                 🗑 {lang === 'en' ? 'This account has been deleted' : 'Этот аккаунт был удалён'}
@@ -3679,95 +4143,95 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     </div>
                                 );
                             })()}
-                            {isMobile && (
-                                <button onClick={() => setShowEmojiPicker(p => !p)} className="chat-icon-btn" style={darkStyles.fileBtn} title="Эмодзи">😊</button>
-                            )}
-                            <textarea
-                                ref={inputRef}
-                                rows={1}
-                                defaultValue=""
-                                onKeyDown={(e) => {
-                                    if (mentionQuery !== null && activeChat?.type === 'group') {
-                                        const members = groupMembersCache[activeChat.id] || [];
-                                        const filtered = members.filter(m => (m.username.toLowerCase().includes(mentionQuery.toLowerCase()) || (m.tag || '').toLowerCase().includes(mentionQuery.toLowerCase()))).slice(0, 6);
-                                        if (filtered.length > 0) {
-                                            if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex(i => Math.min(i + 1, filtered.length - 1)); return; }
-                                            if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIndex(i => Math.max(i - 1, 0)); return; }
-                                            if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
-                                                e.preventDefault();
-                                                const m = filtered[mentionIndex];
-                                                if (m && inputRef.current) {
-                                                    const val = inputRef.current.value;
-                                                    const pos = mentionAnchorPos.current;
-                                                    const before = val.slice(0, pos);
-                                                    const match = before.match(/@(\w*)$/);
-                                                    const handle = m.tag || m.username;
-                                                    if (match) {
-                                                        const start = pos - match[0].length;
-                                                        inputRef.current.value = val.slice(0, start) + `@${handle} ` + val.slice(pos);
-                                                        const cur = start + handle.length + 2;
-                                                        inputRef.current.setSelectionRange(cur, cur);
-                                                        autoResize(inputRef.current);
-                                                    } else {
-                                                        inputRef.current.value += `@${handle} `;
-                                                        autoResize(inputRef.current);
+                            {/* Input pill */}
+                            <div style={darkStyles.inputPill}>
+                                <button onClick={() => setShowEmojiPicker(p => !p)} style={{ ...darkStyles.pillBtn, color: showEmojiPicker ? (dm ? '#a5b4fc' : '#6366f1') : (dm ? (isOled ? '#a78bfa' : '#7c7caa') : '#9ca3af') }} title="Эмодзи"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
+                                <textarea
+                                    ref={inputRef}
+                                    rows={1}
+                                    defaultValue=""
+                                    onKeyDown={(e) => {
+                                        if (mentionQuery !== null && activeChat?.type === 'group') {
+                                            const members = groupMembersCache[activeChat.id] || [];
+                                            const filtered = members.filter(m => (m.username.toLowerCase().includes(mentionQuery.toLowerCase()) || (m.tag || '').toLowerCase().includes(mentionQuery.toLowerCase()))).slice(0, 6);
+                                            if (filtered.length > 0) {
+                                                if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex(i => Math.min(i + 1, filtered.length - 1)); return; }
+                                                if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIndex(i => Math.max(i - 1, 0)); return; }
+                                                if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+                                                    e.preventDefault();
+                                                    const m = filtered[mentionIndex];
+                                                    if (m && inputRef.current) {
+                                                        const val = inputRef.current.value;
+                                                        const pos = mentionAnchorPos.current;
+                                                        const before = val.slice(0, pos);
+                                                        const match = before.match(/@(\w*)$/);
+                                                        const handle = m.tag || m.username;
+                                                        if (match) {
+                                                            const start = pos - match[0].length;
+                                                            inputRef.current.value = val.slice(0, start) + `@${handle} ` + val.slice(pos);
+                                                            const cur = start + handle.length + 2;
+                                                            inputRef.current.setSelectionRange(cur, cur);
+                                                            autoResize(inputRef.current);
+                                                        } else {
+                                                            inputRef.current.value += `@${handle} `;
+                                                            autoResize(inputRef.current);
+                                                        }
+                                                        setMentionQuery(null);
                                                     }
-                                                    setMentionQuery(null);
+                                                    return;
                                                 }
-                                                return;
+                                                if (e.key === 'Escape') { setMentionQuery(null); return; }
                                             }
-                                            if (e.key === 'Escape') { setMentionQuery(null); return; }
                                         }
-                                    }
-                                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-                                }}
-                                onKeyUp={handleTyping}
-                                onInput={(e) => {
-                                    autoResize(e.currentTarget);
-                                    if (activeChat?.type === 'group') {
-                                        const val = e.currentTarget.value;
-                                        const pos = e.currentTarget.selectionStart || 0;
-                                        const before = val.slice(0, pos);
-                                        const match = before.match(/@(\w*)$/);
-                                        if (match) {
-                                            mentionAnchorPos.current = pos;
-                                            setMentionQuery(match[1]);
-                                            setMentionIndex(0);
+                                        if (e.key === 'Escape' && editingMessageId) { setEditingMessageId(null); setEditingText(''); if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; } return; }
+                                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+                                    }}
+                                    onKeyUp={handleTyping}
+                                    onInput={(e) => {
+                                        autoResize(e.currentTarget);
+                                        if (activeChat?.type === 'group') {
+                                            const val = e.currentTarget.value;
+                                            const pos = e.currentTarget.selectionStart || 0;
+                                            const before = val.slice(0, pos);
+                                            const match = before.match(/@(\w*)$/);
+                                            if (match) {
+                                                mentionAnchorPos.current = pos;
+                                                setMentionQuery(match[1]);
+                                                setMentionIndex(0);
+                                            } else {
+                                                setMentionQuery(null);
+                                            }
+                                        }
+                                    }}
+                                    onBlur={() => setTimeout(() => setMentionQuery(null), 250)}
+                                    onPaste={(e) => {
+                                        const items = e.clipboardData?.items;
+                                        if (!items) return;
+                                        const imgs = Array.from(items).filter(i => i.kind === 'file' && i.type.startsWith('image/'));
+                                        if (imgs.length > 0) {
+                                            e.preventDefault();
+                                            addPendingFiles(imgs.map(i => i.getAsFile()!).filter(Boolean));
                                         } else {
-                                            setMentionQuery(null);
+                                            setTimeout(() => { if (inputRef.current) autoResize(inputRef.current); }, 0);
                                         }
-                                    }
-                                }}
-                                onBlur={() => setTimeout(() => setMentionQuery(null), 250)}
-                                onPaste={(e) => {
-                                    const items = e.clipboardData?.items;
-                                    if (!items) return;
-                                    const imgs = Array.from(items).filter(i => i.kind === 'file' && i.type.startsWith('image/'));
-                                    if (imgs.length > 0) {
-                                        e.preventDefault();
-                                        addPendingFiles(imgs.map(i => i.getAsFile()!).filter(Boolean));
-                                    } else {
-                                        setTimeout(() => { if (inputRef.current) autoResize(inputRef.current); }, 0);
-                                    }
-                                }}
-                                placeholder={isChannelChat ? t('Write a post...') : t('Type a message...')}
-                                style={{ ...darkStyles.input, ...(isMobile ? { fontSize: 16, flex: '1 1 0', minWidth: 0 } : {}) }}
-                            />
-                            {!isMobile && (
-                                <button onClick={() => setShowEmojiPicker(p => !p)} style={darkStyles.fileBtn} title="Эмодзи">😊</button>
-                            )}
-                            <div style={{ position: 'relative' }}>
-                                <button onClick={() => setShowAttachMenu(p => !p)} className={isMobile ? 'chat-icon-btn' : ''} style={{ ...darkStyles.fileBtn, ...(showAttachMenu ? { background: isOled ? 'rgba(167,139,250,0.15)' : (dm ? 'rgba(99,102,241,0.2)' : '#ede9fe'), color: isOled ? '#a78bfa' : '#6366f1', borderColor: isOled ? 'rgba(167,139,250,0.35)' : undefined } : {}) }}>
-                                    {uploading ? '📤' : '📎'}
-                                </button>
+                                    }}
+                                    placeholder={isChannelChat ? t('Write a post...') : t('Type a message...')}
+                                    style={{ ...darkStyles.input, ...(isMobile ? { fontSize: 16 } : {}) }}
+                                />
+                                <div style={{ position: 'relative', alignSelf: 'flex-end', marginBottom: 2 }}>
+                                    <button onClick={() => setShowAttachMenu(p => !p)} style={{ ...darkStyles.pillBtn, marginBottom: 0, color: showAttachMenu ? (dm ? '#a5b4fc' : '#6366f1') : (dm ? (isOled ? '#a78bfa' : '#7c7caa') : '#9ca3af') }}>
+                                        {uploading ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>}
+                                    </button>
                                 {showAttachMenu && (
                                     <div style={{ position: 'absolute', bottom: '110%', left: 0, zIndex: 200, background: isOled ? '#000000' : (dm ? '#1a1a2e' : 'white'), border: `1px solid ${isOled ? 'rgba(167,139,250,0.2)' : (dm ? 'rgba(99,102,241,0.25)' : '#e5e7eb')}`, borderRadius: 12, boxShadow: isOled ? '0 4px 32px rgba(0,0,0,0.9), 0 0 0 1px rgba(167,139,250,0.1)' : '0 4px 24px rgba(0,0,0,0.2)', overflow: 'hidden', minWidth: 160 }} onMouseLeave={() => setShowAttachMenu(false)}>
                                         <button onClick={() => { setShowAttachMenu(false); fileInputRef.current?.click(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '11px 16px', background: 'none', border: 'none', cursor: 'pointer', color: isOled ? '#c4b5fd' : (dm ? '#e2e8f0' : '#1e1b4b'), fontSize: 14, textAlign: 'left', WebkitTapHighlightColor: 'transparent' }}>
-                                            📎 {lang === 'en' ? 'File' : 'Файл'}
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg> {lang === 'en' ? 'File' : 'Файл'}
                                         </button>
+                                        {activeChat?.type === 'group' && (
                                         <button onClick={() => { setShowAttachMenu(false); setShowPollCreator(true); }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '11px 16px', background: 'none', border: 'none', cursor: 'pointer', color: isOled ? '#c4b5fd' : (dm ? '#e2e8f0' : '#1e1b4b'), fontSize: 14, textAlign: 'left', WebkitTapHighlightColor: 'transparent' }}>
-                                            📊 {lang === 'en' ? 'Poll' : 'Опрос'}
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> {lang === 'en' ? 'Poll' : 'Опрос'}
                                         </button>
+                                        )}
                                         {serverInfo?.storage === 'cloudinary' && (
                                             <div style={{ padding: '6px 16px 10px', fontSize: 11, color: isOled ? 'rgba(167,139,250,0.5)' : (dm ? '#6060a0' : '#9ca3af'), borderTop: `1px solid ${isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.12)' : '#f0eeff')}` }}>
                                                 ☁️ {lang === 'en'
@@ -3780,67 +4244,37 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             </div>
                             <button
                                 onClick={isRecording ? stopRecording : startRecording}
-                                className={isMobile ? 'chat-icon-btn' : ''}
-                                style={{ ...darkStyles.fileBtn, ...(isRecording ? { background: 'rgba(239,68,68,0.15)', color: '#ef4444', borderColor: '#ef4444' } : {}), minWidth: isMobile ? undefined : 44 }}
+                                style={{ ...darkStyles.pillBtn, marginBottom: 0, alignSelf: 'flex-end', ...(isRecording ? { color: '#ef4444' } : {}), padding: '5px 4px' }}
                                 title={isRecording ? 'Остановить запись' : 'Записать голосовое'}
                             >
-                                {isRecording ? (isMobile ? `⏹` : `⏹ ${recordingTime}s`) : '🎤'}
-                            </button>
-                            <button onClick={sendMessage} className={isMobile ? 'chat-send-btn-mobile' : ''} style={isMobile ? undefined : styles.sendBtn}>
-                                {isMobile ? (
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                        <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                                    </svg>
-                                ) : t('Send')}
+                                {isRecording ? (
+                                    <span style={{ fontWeight: 600, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg> {recordingTime}s</span>
+                                ) : (
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                                )}
                             </button>
                             {!isMobile && (
-                                <button
-                                    onClick={() => setShowSchedulePicker(p => !p)}
-                                    title={lang === 'en' ? 'Schedule message' : 'Запланировать сообщение'}
-                                    style={{
-                                        position: 'relative',
-                                        padding: '10px 13px',
-                                        borderRadius: 12,
-                                        cursor: 'pointer',
-                                        fontSize: 16,
-                                        border: showSchedulePicker
-                                            ? '1.5px solid rgba(139,92,246,0.6)'
-                                            : (dm ? `1.5px solid ${isOled ? 'rgba(167,139,250,0.25)' : 'rgba(99,102,241,0.25)'}` : '1.5px solid rgba(99,102,241,0.25)'),
-                                        background: showSchedulePicker
-                                            ? (isOled ? 'linear-gradient(135deg,rgba(124,58,237,0.35),rgba(99,102,241,0.25))' : 'linear-gradient(135deg,rgba(99,102,241,0.2),rgba(139,92,246,0.15))')
-                                            : (dm ? (isOled ? 'rgba(167,139,250,0.06)' : 'rgba(99,102,241,0.08)') : 'rgba(99,102,241,0.07)'),
-                                        color: showSchedulePicker ? (isOled ? '#c4b5fd' : '#6366f1') : (dm ? (isOled ? '#a78bfa' : '#7c7caa') : '#6366f1'),
-                                        boxShadow: showSchedulePicker
-                                            ? (isOled ? '0 0 12px rgba(167,139,250,0.35), 0 2px 8px rgba(0,0,0,0.4)' : '0 2px 10px rgba(99,102,241,0.3)')
-                                            : 'none',
-                                        transition: 'all 0.18s cubic-bezier(0.4,0,0.2,1)',
-                                    }}
-                                >
-                                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                                        <circle cx="12" cy="12" r="10"/>
-                                        <polyline points="12 6 12 12 16 14"/>
-                                    </svg>
-                                    {scheduledMessages.length > 0 && (
-                                        <span style={{
-                                            position: 'absolute', top: 4, right: 4,
-                                            minWidth: 14, height: 14, borderRadius: 7,
-                                            background: isOled ? 'linear-gradient(135deg,#7c3aed,#a78bfa)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)',
-                                            color: 'white', fontSize: 9, fontWeight: 800,
-                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                            lineHeight: 1, padding: '0 3px',
-                                            boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.5)' : '0 1px 4px rgba(99,102,241,0.45)',
-                                            pointerEvents: 'none',
-                                        }}>
-                                            {scheduledMessages.length}
-                                        </span>
-                                    )}
+                                <button onClick={() => setShowSchedulePicker(p => !p)} title={lang === 'en' ? 'Schedule' : 'Запланировать'}
+                                    style={{ ...darkStyles.pillBtn, marginBottom: 0, padding: '5px 4px', position: 'relative', color: showSchedulePicker ? (isOled ? '#c4b5fd' : '#6366f1') : scheduledMessages.length > 0 ? (isOled ? '#a78bfa' : '#6366f1') : (dm ? (isOled ? '#8b7dc8' : '#6b6b9a') : '#7c7caa') }}>
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                    {scheduledMessages.length > 0 && <span style={{ position: 'absolute', top: 1, right: 1, minWidth: 14, height: 14, borderRadius: 7, background: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', boxShadow: '0 0 4px rgba(99,102,241,0.5)' }}>{scheduledMessages.length}</span>}
                                 </button>
                             )}
+                            </div>{/* end inputPill */}
+                            <button onClick={sendMessage} className={isMobile ? 'chat-send-btn-mobile' : ''} style={isMobile ? undefined : darkStyles.sendBtn2}>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                                </svg>
+                            </button>
                             <input type="file" multiple ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
                         </div>}
                     </>
                 ) : (
-                    <div className="fadein-up" style={darkStyles.noChat}>{t('Select a chat')}</div>
+                    <div className="fadein-up" style={{ ...darkStyles.noChat, gap: 0 }}>
+                        <div style={{ width: 80, height: 80, borderRadius: '50%', background: isOled ? 'linear-gradient(135deg,rgba(124,58,237,0.18),rgba(167,139,250,0.08))' : dm ? 'linear-gradient(135deg,rgba(99,102,241,0.18),rgba(139,92,246,0.08))' : 'linear-gradient(135deg,#ede9fe,#f5f3ff)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 18, boxShadow: isOled ? '0 0 40px rgba(167,139,250,0.12)' : dm ? '0 4px 24px rgba(99,102,241,0.1)' : '0 4px 24px rgba(99,102,241,0.08)', color: isOled ? '#a78bfa' : dm ? '#818cf8' : '#6366f1' }}><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                        <div style={{ fontWeight: 700, fontSize: 18, color: dm ? '#e2e8f0' : '#1e1b4b', marginBottom: 8 }}>Aurora</div>
+                        <div style={{ fontSize: 13, color: dm ? '#5a5a8a' : '#9ca3af', textAlign: 'center', maxWidth: 220, lineHeight: 1.6 }}>{lang === 'en' ? 'Select a chat to start messaging' : 'Выберите чат, чтобы начать общение'}</div>
+                    </div>
                 )}
             </div>
 
@@ -3878,7 +4312,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     <div style={{ backgroundColor: dm ? C.bg3 : 'white', border: `1px solid ${menuBorderCol}`, overflow: 'hidden', borderRadius: isMobile ? '20px 20px 0 0' : 14, width: isMobile ? undefined : 320 }}>
                                         {/* Back header */}
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderBottom: `1px solid ${dm ? C.bg6 : '#f0eeff'}` }}>
-                                            <button onClick={() => setShowFullReactionPicker(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', fontSize: 16, padding: '2px 6px', borderRadius: 8, display: 'flex', alignItems: 'center' }}>←</button>
+                                            <button onClick={() => setShowFullReactionPicker(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: '2px 6px', borderRadius: 8, display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
                                             <span style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e2e8f0' : '#1e1b4b' }}>{lang === 'en' ? 'React' : 'Реакция'}</span>
                                         </div>
                                         <FullReactionPicker dm={dm} onSelect={addReaction} onClose={() => setShowFullReactionPicker(false)} />
@@ -4026,6 +4460,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 </button>
                             </>
                         )}
+                        {isEncryptedMessage(menuMessage.message_text) && (
+                            <div style={{ ...styles.menuItem, color: dm ? '#7c7caa' : '#9ca3af', cursor: 'default', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}
+                                onClick={e => e.stopPropagation()}>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                {lang === 'en' ? 'Message is encrypted' : 'Сообщение зашифровано'}
+                            </div>
+                        )}
                         <button onClick={() => setMenuMessageId(null)} style={{ ...styles.menuItem, color: dm ? '#aaa' : '#666' }}>
                             ❌ {t('Cancel')}
                         </button>
@@ -4097,11 +4538,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 <FolderManager
                     token={token}
                     folders={folders}
-                    users={users}
+                    users={users.filter(u => u.id !== currentUserId)}
                     groups={groups}
                     isDark={theme.darkMode}
                     baseUrl={BASE_URL}
                     onClose={() => setShowFolderManager(false)}
+                    onBack={() => { setShowFolderManager(false); setTimeout(() => setShowSettings(true), 50); }}
                     onFoldersChange={updated => { setFolders(updated); }}
                 />
             )}
@@ -4137,6 +4579,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     currentUserId={currentUserId}
                     isDark={theme.darkMode}
                     onClose={() => setShowSupportChat(false)}
+                    onBack={() => { setShowSupportChat(false); setTimeout(() => setShowSettings(true), 50); }}
                     newReply={newSupportReply}
                 />
             )}
@@ -4145,6 +4588,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     token={token}
                     isDark={theme.darkMode}
                     onClose={() => setShowAdminPanel(false)}
+                    onBack={() => { setShowAdminPanel(false); setTimeout(() => setShowSettings(true), 50); }}
                     newSupportMsg={newSupportMsg}
                 />
             )}
@@ -4185,7 +4629,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         <div style={{ padding: '16px 20px', borderBottom: `1px solid ${dm ? C.bdr1 : '#ede9fe'}` }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span style={{ fontWeight: 700, fontSize: 15, color: dm ? '#e2e8f0' : '#1e1b4b' }}>{lang === 'en' ? `Forward ${forwardingMessages.length} msg.` : `Переслать ${forwardingMessages.length} сообщ.`}</span>
-                                <button onClick={() => setForwardingMessages(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 18 }}>✕</button>
+                                <button onClick={() => setForwardingMessages(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                             </div>
                         </div>
                         <div style={{ overflowY: 'auto', flex: 1 }}>
@@ -4197,7 +4641,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 });
                                 setForwardingMessages(null);
                             }} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px', cursor: 'pointer', borderBottom: `1px solid ${dm ? C.bg3 : '#f3f3f8'}` }}>
-                                <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'linear-gradient(135deg,#f59e0b,#f97316)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 20 }}>⭐</div>
+                                <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'linear-gradient(135deg,#f59e0b,#f97316)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'white' }}><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
                                 <span style={{ fontSize: 14, color: dm ? '#e0e0e0' : '#1e1b4b', fontWeight: 600 }}>{lang === 'en' ? 'Favorites' : 'Избранное'}</span>
                             </div>
                             {groups.filter(g => !g.is_channel || g.my_role === 'admin' || g.creator_id === currentUserId).map(g => (
@@ -4342,7 +4786,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         <div style={{ padding: '16px 20px', borderBottom: `1px solid ${dm ? C.bdr1 : '#ede9fe'}` }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                                 <span style={{ fontWeight: 700, fontSize: 15, color: dm ? '#e2e8f0' : '#1e1b4b' }}>{t('Forward to...')}</span>
-                                <button onClick={() => setForwardingMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 18 }}>✕</button>
+                                <button onClick={() => setForwardingMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                             </div>
                             {/* Preview original message */}
                             <div style={{ borderLeft: `3px solid #6366f1`, paddingLeft: 10, borderRadius: 2 }}>
@@ -4368,7 +4812,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 setForwardingMessage(null);
                             }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', cursor: 'pointer' }}
                                 className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
-                                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#f59e0b,#f97316)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 18 }}>⭐</div>
+                                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#f59e0b,#f97316)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'white' }}><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
                                 <span style={{ fontSize: 14, color: dm ? '#e2e8f0' : '#1e1b4b', fontWeight: 600 }}>{lang === 'en' ? 'Favorites' : 'Избранное'}</span>
                             </div>
                             {groups.filter(g => !g.is_channel || g.my_role === 'admin' || g.creator_id === currentUserId).map(g => (
@@ -4431,7 +4875,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         if (addToFolderKey === key) {
                             return (
                                 <>
-                                    <button onClick={() => setAddToFolderKey(null)} style={{ ...btnStyle, color: '#6366f1' }}>← {t('Back')}</button>
+                                    <button onClick={() => setAddToFolderKey(null)} style={{ ...btnStyle, color: '#6366f1' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg> {t('Back')}</button>
                                     {folders.length === 0 && <div style={{ padding: '6px 14px', fontSize: 12, color: dm ? '#7070a0' : '#aaa' }}>{t('No folders')}</div>}
                                     {folders.map(f => (
                                         <button key={f.id} onClick={() => addChatToFolder(f.id, key)} style={{ ...btnStyle }}>
@@ -4447,10 +4891,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         const isBlocked = privateUserId !== null && blockedUserIds.has(privateUserId);
                         return (
                             <>
-                                <button onClick={() => togglePin(key)} style={btnStyle}>{pinnedChats.has(key) ? `📌 ${t('Unpin')}` : `📌 ${t('Pin')}`}</button>
-                                <button onClick={() => toggleMute(key)} style={btnStyle}>{isMuted ? `🔔 ${lang === 'en' ? 'Unmute' : 'Включить уведомления'}` : `🔕 ${lang === 'en' ? 'Mute' : 'Выключить уведомления'}`}</button>
-                                <button onClick={() => { toggleArchive(key); }} style={btnStyle}>{archivedChats.has(key) ? `📤 ${lang === 'en' ? 'Unarchive' : 'Разархивировать'}` : `🗄️ ${lang === 'en' ? 'Archive' : 'Архивировать'}`}</button>
-                                <button onClick={() => { setAddToFolderKey(key); }} style={btnStyle}>📁 {lang === 'en' ? 'Add to folder' : 'Добавить в папку'}</button>
+                                <button onClick={() => togglePin(key)} style={btnStyle}><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg> {pinnedChats.has(key) ? t('Unpin') : t('Pin')}</button>
+                                <button onClick={() => toggleMute(key)} style={btnStyle}>{isMuted ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> {lang === 'en' ? 'Unmute' : 'Включить уведомления'}</> : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg> {lang === 'en' ? 'Mute' : 'Выключить уведомления'}</>}</button>
+                                <button onClick={() => { toggleArchive(key); }} style={btnStyle}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg> {archivedChats.has(key) ? (lang === 'en' ? 'Unarchive' : 'Разархивировать') : (lang === 'en' ? 'Archive' : 'Архивировать')}</button>
+                                <button onClick={() => { setAddToFolderKey(key); }} style={btnStyle}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> {lang === 'en' ? 'Add to folder' : 'Добавить в папку'}</button>
                                 <div style={{ height: 1, background: dm ? C.bg6 : '#f0f0f0', margin: '4px 0' }} />
                                 {isPrivate && privateUserId !== null && (
                                     <button
@@ -4458,11 +4902,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         style={{ ...btnStyle, color: isBlocked ? '#22c55e' : '#f97316' }}
                                     >
                                         {isBlocked
-                                            ? `✅ ${lang === 'en' ? 'Unblock user' : 'Разблокировать'}`
-                                            : `🚫 ${lang === 'en' ? 'Block user' : 'Заблокировать'}`}
+                                            ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="20 6 9 17 4 12"/></svg> {lang === 'en' ? 'Unblock user' : 'Разблокировать'}</>
+                                            : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg> {lang === 'en' ? 'Block user' : 'Заблокировать'}</>}
                                     </button>
                                 )}
-                                <button onClick={() => handleDeleteChat(key)} style={{ ...btnStyle, color: '#ef4444' }}>🗑️ {lang === 'en' ? 'Delete chat' : 'Удалить чат'}</button>
+                                <button onClick={() => handleDeleteChat(key)} style={{ ...btnStyle, color: '#ef4444' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> {lang === 'en' ? 'Delete chat' : 'Удалить чат'}</button>
                             </>
                         );
                     })()}
@@ -4478,14 +4922,14 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         const btnStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#e0e0e0' : '#1e1b4b', fontSize: 13, borderRadius: 8, textAlign: 'left' as const };
                         return (
                             <>
-                                <button onClick={() => { setShowFolderManager(true); setFolderCtxMenu(null); }} style={btnStyle}>⚙️ {t('Settings')}</button>
+                                <button onClick={() => { setShowFolderManager(true); setFolderCtxMenu(null); }} style={btnStyle}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> {t('Settings')}</button>
                                 <button onClick={async () => {
                                     try { await api.deleteFolder(token, folderCtxMenu.folderId); } catch {}
                                     const res = await api.getFolders(token);
                                     if (res.folders) setFolders(res.folders);
                                     if (activeFolder === folderCtxMenu.folderId) setActiveFolder(null);
                                     setFolderCtxMenu(null);
-                                }} style={{ ...btnStyle, color: '#ef4444' }}>🗑️ {lang === 'en' ? 'Delete folder' : 'Удалить папку'}</button>
+                                }} style={{ ...btnStyle, color: '#ef4444' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> {lang === 'en' ? 'Delete folder' : 'Удалить папку'}</button>
                             </>
                         );
                     })()}
@@ -4535,8 +4979,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 </div>
                                 <button
                                     onClick={e => { e.stopPropagation(); dismissToast(toast.id); }}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 15, padding: '0 2px', lineHeight: 1, flexShrink: 0 }}
-                                >✕</button>
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', padding: '0 2px', flexShrink: 0, display: 'flex', alignItems: 'center' }}
+                                ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                             </div>
                             {/* Reply input */}
                             <div style={{ padding: '0 12px 8px', display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
@@ -4550,8 +4994,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 />
                                 <button
                                     onClick={() => replyFromToast(toast, toastReplies[toast.id] || '')}
-                                    style={{ padding: '7px 13px', borderRadius: 10, border: 'none', backgroundColor: '#6366f1', color: 'white', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                                >↩</button>
+                                    style={{ padding: '7px 13px', borderRadius: 10, border: 'none', backgroundColor: '#6366f1', color: 'white', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                ><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg></button>
                             </div>
                             {/* Mark as read */}
                             <div style={{ padding: '0 12px 10px' }} onClick={e => e.stopPropagation()}>
@@ -4600,16 +5044,173 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     />
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: dm ? C.bg1 : '#f8f7ff' }}>
                         <span style={{ fontSize: 11, color: dm ? '#9090b0' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 240 }}>{nowPlayingVideo.filename}</span>
-                        <button onClick={() => { setNowPlayingVideo(null); if (floatingVideoRef.current) floatingVideoRef.current.pause(); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#9999bb' : '#9ca3af', fontSize: 14, padding: 0 }}>✕</button>
+                        <button onClick={() => { setNowPlayingVideo(null); if (floatingVideoRef.current) floatingVideoRef.current.pause(); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#9999bb' : '#9ca3af', padding: 0, display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                     </div>
                 </div>
+            )}
+
+            {/* ─── Playlist share: chat picker ─── */}
+            {playlistToShare && (() => {
+                const q = playlistShareSearch.toLowerCase();
+                const filteredUsers = users.filter(u => u.username.toLowerCase().includes(q) || u.tag?.toLowerCase().includes(q));
+                const filteredGroups = groups.filter(g => g.name.toLowerCase().includes(q));
+                const sendPlaylistMsg = (chatType: 'private' | 'group', chatId: number) => {
+                    const msgData: PlaylistShareData = {
+                        id: playlistToShare.id,
+                        name: playlistToShare.name,
+                        cover: playlistToShare.cover,
+                        tracks: playlistToShare.tracks.map(t => ({ title: t.title, artist: t.artist, duration: t.duration, file_path: t.file_path, cover_path: t.cover_path })),
+                        total: playlistToShare.tracks.length,
+                    };
+                    const msgText = PLAYLIST_MSG_PREFIX + JSON.stringify(msgData);
+                    if (chatType === 'private') wsService.sendMessage(chatId, msgText);
+                    else wsService.sendGroupMessage(chatId, msgText);
+                    setPlaylistToShare(null);
+                };
+                return (
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 5500, background: isOled ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setPlaylistToShare(null)}>
+                        <div style={{ background: isOled ? '#000' : dm ? '#13132a' : '#fff', borderRadius: 20, width: 380, maxHeight: '75vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 24px 80px rgba(0,0,0,0.95), 0 0 0 1px rgba(167,139,250,0.14)' : '0 24px 80px rgba(0,0,0,0.3)', border: isOled ? '1px solid rgba(167,139,250,0.15)' : dm ? '1px solid rgba(99,102,241,0.2)' : '1px solid #ede9fe' }} onClick={e => e.stopPropagation()}>
+                            <div style={{ padding: '16px 18px 12px', borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.15)' : '#ede9fe'}` }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                                    <div>
+                                        <div style={{ fontWeight: 700, fontSize: 15, color: dm ? '#e2e8f0' : '#1e1b4b' }}>Поделиться плейлистом</div>
+                                        <div style={{ fontSize: 12, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 2 }}>«{playlistToShare.name}»</div>
+                                    </div>
+                                    <button onClick={() => setPlaylistToShare(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                                </div>
+                                <input autoFocus value={playlistShareSearch} onChange={e => setPlaylistShareSearch(e.target.value)} placeholder="🔍 Поиск чата..." style={{ width: '100%', padding: '8px 12px', borderRadius: 10, border: 'none', background: isOled ? '#0a0a14' : dm ? '#1e1e38' : '#f5f3ff', color: dm ? '#e2e8f0' : '#1e1b4b', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const }} />
+                            </div>
+                            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+                                {filteredUsers.map(u => (
+                                    <div key={u.id} onClick={() => sendPlaylistMsg('private', u.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', cursor: 'pointer', transition: 'background 0.12s' }}
+                                        onMouseEnter={e => (e.currentTarget.style.background = isOled ? 'rgba(167,139,250,0.07)' : dm ? 'rgba(99,102,241,0.08)' : '#f5f3ff')}
+                                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                                        <div style={{ width: 38, height: 38, borderRadius: '50%', background: u.avatar_color || '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 15, flexShrink: 0, overflow: 'hidden' }}>
+                                            {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
+                                        </div>
+                                        <div style={{ minWidth: 0 }}>
+                                            <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e2e8f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
+                                            {u.tag && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>@{u.tag}</div>}
+                                        </div>
+                                    </div>
+                                ))}
+                                {filteredGroups.map(g => (
+                                    <div key={g.id} onClick={() => sendPlaylistMsg('group', g.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', cursor: 'pointer', transition: 'background 0.12s' }}
+                                        onMouseEnter={e => (e.currentTarget.style.background = isOled ? 'rgba(167,139,250,0.07)' : dm ? 'rgba(99,102,241,0.08)' : '#f5f3ff')}
+                                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                                        <div style={{ width: 38, height: 38, borderRadius: '50%', background: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 15, flexShrink: 0, overflow: 'hidden' }}>
+                                            {g.avatar ? <img src={config.fileUrl(g.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : g.name[0]?.toUpperCase()}
+                                        </div>
+                                        <div style={{ minWidth: 0 }}>
+                                            <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e2e8f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</div>
+                                            <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{g.is_channel ? '📢 Канал' : '👥 Группа'}</div>
+                                        </div>
+                                    </div>
+                                ))}
+                                {filteredUsers.length === 0 && filteredGroups.length === 0 && (
+                                    <div style={{ textAlign: 'center', color: dm ? '#5a5a8a' : '#9ca3af', padding: '32px 0', fontSize: 14 }}>Ничего не найдено</div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* ─── Playlist preview modal (recipient view) ─── */}
+            {playlistPreview && (() => {
+                const coverSrc = playlistPreview.cover ? (config.fileUrl(playlistPreview.cover) ?? playlistPreview.cover) : null;
+                const fmt = (s?: number) => s ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '';
+                const savePlaylist = async () => {
+                    setPlaylistSaving(true);
+                    try {
+                        const newPl = await api.createPlaylist(token, playlistPreview.name);
+                        if (newPl.id) {
+                            for (const t of playlistPreview.tracks) {
+                                if (!t.file_path) continue;
+                                await api.addTrack(token, { playlist_id: newPl.id, title: t.title, artist: t.artist, file_path: t.file_path, cover_path: t.cover_path, duration: t.duration });
+                            }
+                        }
+                        setPlaylistPreview(null);
+                    } finally { setPlaylistSaving(false); }
+                };
+                const accentC = isOled ? '#a78bfa' : '#6366f1';
+                return (
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 5500, background: isOled ? 'rgba(0,0,0,0.9)' : 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setPlaylistPreview(null)}>
+                        <div style={{ background: isOled ? '#000' : dm ? '#0f0f1a' : '#fff', borderRadius: 24, width: 420, maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 32px 100px rgba(0,0,0,0.95), 0 0 0 1px rgba(167,139,250,0.14)' : '0 32px 100px rgba(0,0,0,0.3)', border: isOled ? '1px solid rgba(167,139,250,0.15)' : dm ? '1px solid rgba(99,102,241,0.2)' : '1px solid #ede9fe' }} onClick={e => e.stopPropagation()}>
+                            {/* Cover header */}
+                            <div style={{ position: 'relative', height: 180, background: coverSrc ? `url(${coverSrc}) center/cover` : `linear-gradient(135deg, ${accentC}, ${isOled ? '#5b21b6' : '#8b5cf6'})`, display: 'flex', alignItems: 'flex-end', padding: '0 20px 16px', flexShrink: 0 }}>
+                                <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)' }} />
+                                <div style={{ position: 'relative', zIndex: 1 }}>
+                                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.7)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>Плейлист</div>
+                                    <div style={{ fontSize: 22, fontWeight: 800, color: 'white' }}>{playlistPreview.name}</div>
+                                    <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', marginTop: 3 }}>{playlistPreview.total} {playlistPreview.total === 1 ? 'трек' : playlistPreview.total < 5 ? 'трека' : 'треков'}</div>
+                                </div>
+                                <button onClick={() => setPlaylistPreview(null)} style={{ position: 'absolute', top: 14, right: 14, zIndex: 2, background: 'rgba(0,0,0,0.4)', border: 'none', color: 'white', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                            </div>
+                            {/* Track list */}
+                            <div style={{ flex: 1, overflowY: 'auto', padding: '12px 20px', minHeight: 0 }}>
+                                {playlistPreview.tracks.map((t, i) => {
+                                    const tCover = t.cover_path ? (config.fileUrl(t.cover_path) ?? t.cover_path) : null;
+                                    return (
+                                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+                                        {tCover
+                                            ? <img src={tCover} alt="" style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }} />
+                                            : <span style={{ fontSize: 12, color: isOled ? '#7c6aaa' : dm ? '#5a5a8a' : '#9ca3af', minWidth: 32, textAlign: 'center', flexShrink: 0 }}>{i + 1}</span>}
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e2e8f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</div>
+                                            {t.artist && <div style={{ fontSize: 11, color: isOled ? '#7c6aaa' : dm ? '#5a5a8a' : '#9ca3af' }}>{t.artist}</div>}
+                                        </div>
+                                        {t.duration && <span style={{ fontSize: 11, color: isOled ? '#7c6aaa' : dm ? '#5a5a8a' : '#9ca3af', flexShrink: 0 }}>{fmt(t.duration)}</span>}
+                                    </div>
+                                    );
+                                })}
+                            </div>
+                            {/* Save button */}
+                            <div style={{ padding: '14px 20px', borderTop: `1px solid ${isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.15)' : '#ede9fe'}`, flexShrink: 0 }}>
+                                <button onClick={savePlaylist} disabled={playlistSaving} style={{ width: '100%', padding: '12px 0', background: `linear-gradient(135deg, ${accentC}, ${isOled ? '#7c3aed' : '#8b5cf6'})`, border: 'none', color: 'white', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 700, boxShadow: `0 4px 20px ${isOled ? 'rgba(139,92,246,0.4)' : 'rgba(99,102,241,0.35)'}` }}>
+                                    {playlistSaving ? '...' : '💾 Сохранить плейлист'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* Media Player — always mounted so audio keeps playing */}
+            <MediaPlayer
+                token={token}
+                dm={dm}
+                isOled={isOled}
+                isMobile={isMobile}
+                visible={showMediaPlayer}
+                onClose={() => setShowMediaPlayer(false)}
+                onNowPlaying={() => {}}
+                onStateChange={handleMediaStateChange}
+                onPlayStart={stopGlobalOnly}
+                onSharePlaylist={pl => { setPlaylistToShare(pl); setShowMediaPlayer(false); setPlaylistShareSearch(''); }}
+            />
+
+            {/* Call overlay */}
+            {callInfo.state !== 'idle' && (
+                <CallOverlay
+                    callInfo={callInfo}
+                    onAccept={acceptCall}
+                    onReject={rejectCall}
+                    onEnd={endCall}
+                    onToggleMute={callToggleMute}
+                    onToggleCamera={callToggleCamera}
+                    dm={dm}
+                    isOled={isOled}
+                    peerAvatar={callInfo.peerId ? (config.fileUrl(users.find(u => u.id === callInfo.peerId)?.avatar ?? null) ?? null) : null}
+                    peerAvatarColor={callInfo.peerId ? (users.find(u => u.id === callInfo.peerId)?.avatar_color || 'linear-gradient(135deg,#6366f1,#8b5cf6)') : undefined}
+                />
             )}
         </div>
     );
 };
 
 const styles: { [key: string]: React.CSSProperties } = {
-    container: { display: 'flex', height: '100vh', backgroundColor: '#eef0f5' },
+    container: { display: 'flex', height: '100svh', backgroundColor: '#eef0f5' },
     sidebar: { width: 320, backgroundColor: '#f7f8fc', boxShadow: '2px 0 16px rgba(99,102,241,0.07)', display: 'flex', flexDirection: 'column', overflow: 'hidden', zIndex: 1 },
     sidebarScroll: { flex: 1, overflowY: 'auto' as const, backgroundColor: '#f7f8fc' },
     sidebarHeader: { padding: '16px', background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', color: 'white', display: 'flex', alignItems: 'center', gap: 8 },
@@ -4623,7 +5224,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     settingsBtn: { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', padding: '6px', borderRadius: 10, color: '#9ca3af', flexShrink: 0 },
     sectionTitle: { padding: '14px 20px 6px', fontSize: 10, fontWeight: 700 as const, color: '#a5b4fc', textTransform: 'uppercase' as const, letterSpacing: 1.5 },
     chatItem: { display: 'flex', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', gap: 10, transition: 'background 0.15s', borderRadius: 12, margin: '1px 8px' },
-    activeChatItem: { background: 'linear-gradient(90deg, rgba(99,102,241,0.13) 0%, rgba(139,92,246,0.05) 55%, transparent 100%)', boxShadow: 'inset 3px 0 0 #6366f1, 0 1px 8px rgba(99,102,241,0.1)' },
+    activeChatItem: { background: 'linear-gradient(90deg, rgba(99,102,241,0.22) 0%, rgba(139,92,246,0.10) 55%, transparent 100%)', boxShadow: 'inset 3px 0 0 #6366f1, 0 1px 10px rgba(99,102,241,0.18)' },
     avatar: { width: 40, height: 40, borderRadius: '50%', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 'bold' as const, flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' },
     chatName: { fontSize: 14, fontWeight: 600 as const, color: '#1e1b4b', textAlign: 'left' as const },
     chatSub: { fontSize: 11, color: '#9ca3af', marginTop: 2, textAlign: 'left' as const },
@@ -4695,7 +5296,7 @@ const FullReactionPicker: React.FC<{
                         placeholder={tl('Search emoji...')}
                         style={{ flex: 1, background: 'none', border: 'none', outline: 'none', fontSize: 12, color: dm ? '#e2e8f0' : '#1e1b4b', fontFamily: 'inherit' }}
                     />
-                    {query && <button onClick={() => setQuery('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: subtext, fontSize: 14, padding: 0, lineHeight: 1 }}>✕</button>}
+                    {query && <button onClick={() => setQuery('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: subtext, padding: 0, display: 'flex', alignItems: 'center' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
                 </div>
             </div>
 
@@ -4796,7 +5397,7 @@ const StickerPackPreviewModal: React.FC<{
                         <div style={{ fontSize: 15, fontWeight: 700, color: text }}>{data.pack?.name || tl('Stickers')}</div>
                         <div style={{ fontSize: 12, color: subtext }}>{count} {countLabel}</div>
                     </div>
-                    <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: subtext, fontSize: 18, padding: '4px 6px', borderRadius: 8, lineHeight: 1 }}>✕</button>
+                    <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: subtext, padding: '4px 6px', borderRadius: 8, display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                 </div>
 
                 {/* Sticker grid */}

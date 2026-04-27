@@ -286,6 +286,71 @@ const ru: Record<string, string> = {
     'Folder name': 'Название папки',
     'Add chats': 'Добавить чаты',
     'No folders': 'Нет папок',
+    'No folders yet': 'Папок пока нет',
+    'chats': 'чатов',
+    'members': 'участников',
+    'Group': 'Группа',
+    'Channel': 'Канал',
+
+    // Support chat
+    'Aurora Support': 'Поддержка Aurora',
+    'We will reply as soon as possible': 'Мы ответим как можно скорее',
+    '+ New': '+ Новый',
+    'Welcome to support': 'Добро пожаловать в поддержку',
+    'Describe your problem or question and we will respond shortly.': 'Опишите вашу проблему или вопрос, и мы ответим в ближайшее время.',
+    'Attach file': 'Прикрепить файл',
+    'Write a message...': 'Напишите сообщение...',
+    'Issue resolved?': 'Вопрос решён?',
+    'The administrator marked your issue as resolved. Is everything okay?': 'Администратор отметил ваш вопрос как решённый. Всё в порядке?',
+    'Yes, thank you': 'Да, спасибо',
+
+    // Admin panel
+    'Admin panel': 'Панель администратора',
+    'today': 'сегодня',
+    'active sessions': 'активных сессий',
+    'Per month': 'За месяц',
+    'new users': 'новых пользователей',
+    'Messages': 'Сообщения',
+    'Registrations': 'Регистрации',
+    'Deleted user': 'Удалённый пользователь',
+    'Day': 'День',
+    'Week': 'Неделя',
+    'Month': 'Месяц',
+    'Statistics': 'Статистика',
+    'Support': 'Поддержка',
+    'Search by name, tag, email...': 'Поиск по имени, тегу, email...',
+    'Online now': 'Онлайн сейчас',
+    'Reply to user...': 'Ответить пользователю...',
+    'Mark as resolved': 'Отметить как решённый',
+    'No support threads': 'Нет обращений в поддержку',
+    'No users found': 'Пользователи не найдены',
+    'No messages yet': 'Сообщений пока нет',
+    'Send reply': 'Отправить ответ',
+    'Confirm delete user?': 'Удалить пользователя?',
+    'This will anonymize their account.': 'Это обезличит их аккаунт.',
+
+    // Chat system messages
+    'joined the group': 'вступил(а) в группу',
+    'left the group': 'покинул(а) группу',
+    '[file]': '[файл]',
+    'My chats': 'Мои чаты',
+    'messages': 'сообщений',
+    'Previous (Shift+Enter)': 'Предыдущий (Shift+Enter)',
+    'Next (Enter)': 'Следующий (Enter)',
+
+    // Server settings (Electron)
+    'Server': 'Сервер',
+    'Connection address': 'Адрес подключения',
+    'Server address': 'Адрес сервера',
+    'Current: ': 'Текущий: ',
+
+    // Settings contact form
+    'Your name': 'Ваше имя',
+    'Reply email': 'Email для ответа',
+    'Message, bug report, suggestion...': 'Сообщение, баг-репорт, предложение...',
+
+    // File size
+    'File too large (max 20MB)': 'Файл больше 20MB',
 };
 
 export function getLang(): Lang {

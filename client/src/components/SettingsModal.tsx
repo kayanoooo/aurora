@@ -7,6 +7,7 @@ import EmojiPicker from './EmojiPicker';
 import type { StickerPack } from './MediaPicker';
 import { setLang as setGlobalLang, useLang } from '../i18n';
 import AvatarCropper from './AvatarCropper';
+import PolicyModal from './PolicyModal';
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -48,6 +49,14 @@ const GRAD_NORMAL = 'linear-gradient(135deg,#6366f1,#8b5cf6)';
 const GRAD_OLED   = 'linear-gradient(135deg,#7c3aed,#a78bfa)';
 const primaryGrad = (): string => getIsOled() ? GRAD_OLED : GRAD_NORMAL;
 
+// Card shadow — replaces hard 1px borders
+const cardBox = (dm: boolean): string =>
+    getIsOled()
+        ? '0 2px 16px rgba(0,0,0,0.9), 0 0 0 1px rgba(167,139,250,0.07)'
+        : dm
+        ? '0 2px 12px rgba(0,0,0,0.4), 0 0 0 1px rgba(99,102,241,0.08)'
+        : '0 2px 8px rgba(99,102,241,0.07), 0 0 0 1px rgba(99,102,241,0.05)';
+
 interface SubModalProps { title: string; onBack: () => void; dm: boolean; children: React.ReactNode; }
 const SubModal: React.FC<SubModalProps> = ({ title, onBack, dm, children }) => {
     const bg = dmC(dm, '#13131f', 'white', '#000000');
@@ -55,16 +64,45 @@ const SubModal: React.FC<SubModalProps> = ({ title, onBack, dm, children }) => {
     const col = dm ? '#e2e8f0' : '#1e1b4b';
     const [closing, setClosing] = useState(false);
     const close = () => { setClosing(true); setTimeout(onBack, 180); };
+    const isMobile = window.innerWidth < 600;
+
+    const panelContent = (
+        <>
+            {isMobile && <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px' }}><div style={{ width: 36, height: 4, borderRadius: 2, background: dm ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)' }} /></div>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: isMobile ? '8px 16px 12px' : '16px 20px', background: dmC(dm, '#1a1a2e', '#f5f3ff', '#050508'), boxShadow: `0 1px 0 ${borderCol}` }}>
+                <button onClick={close} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6366f1', padding: 4, lineHeight: 1 }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <span style={{ fontSize: isMobile ? 17 : 16, fontWeight: 700, color: col }}>{title}</span>
+            </div>
+            <div style={{ overflowY: 'auto', padding: isMobile ? '16px 16px 20px' : '20px 20px 16px' }}>
+                {children}
+            </div>
+        </>
+    );
+
+    if (isMobile) {
+        return ReactDOM.createPortal(
+            <>
+                {/* Blur overlay — separate from panel so backdrop-filter doesn't create a containing block */}
+                <div className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'}
+                    style={{ position: 'fixed', inset: 0, zIndex: 4499, backgroundColor: getIsOled() ? 'rgba(0,0,0,0.88)' : 'rgba(15,10,40,0.6)', backdropFilter: 'blur(10px)' }}
+                    onClick={close} />
+                {/* Panel — sibling of overlay, not child */}
+                <div className={`submodal-panel ${closing ? 'modal-exit' : 'modal-enter'}`}
+                    style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 4500, backgroundColor: bg, borderRadius: '20px 20px 0 0', maxHeight: '92svh', display: 'flex', flexDirection: 'column', overflow: 'hidden', paddingBottom: 'env(safe-area-inset-bottom, 0px)', boxShadow: getIsOled() ? '0 0 60px rgba(124,58,237,0.25), 0 -4px 40px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 -4px 40px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 -4px 30px rgba(0,0,0,0.15)' }}
+                    onClick={e => e.stopPropagation()}>
+                    {panelContent}
+                </div>
+            </>,
+            document.body
+        );
+    }
+
     return ReactDOM.createPortal(
-        <div className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'} style={{ position: 'fixed', inset: 0, zIndex: 4500, backgroundColor: getIsOled() ? 'rgba(0,0,0,0.85)' : 'rgba(15,10,40,0.55)', backdropFilter: getIsOled() ? 'blur(8px)' : 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={close}>
-            <div className={`submodal-panel ${closing ? 'modal-exit' : 'modal-enter'}`} style={{ backgroundColor: bg, borderRadius: 20, width: 480, maxWidth: '94vw', maxHeight: '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 24px 60px rgba(99,102,241,0.2)', border: `1px solid ${borderCol}` }} onClick={e => e.stopPropagation()}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: `1px solid ${borderCol}`, background: dmC(dm, '#1a1a2e', '#f5f3ff', '#050508') }}>
-                    <button onClick={close} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6366f1', padding: 4, lineHeight: 1 }}>←</button>
-                    <span style={{ fontSize: 16, fontWeight: 700, color: col }}>{title}</span>
-                </div>
-                <div style={{ flex: 1, overflowY: 'auto', padding: '20px 20px 16px' }}>
-                    {children}
-                </div>
+        <div className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'} style={{ position: 'fixed', inset: 0, zIndex: 4500, backgroundColor: getIsOled() ? 'rgba(0,0,0,0.88)' : 'rgba(15,10,40,0.6)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={close}>
+            <div className={`submodal-panel ${closing ? 'modal-exit' : 'modal-enter'}`} style={{ backgroundColor: bg, borderRadius: 22, width: 480, maxWidth: '94vw', maxHeight: '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: getIsOled() ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 24px 70px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 20px 60px rgba(0,0,0,0.15)' }} onClick={e => e.stopPropagation()}>
+                {panelContent}
             </div>
         </div>,
         document.body
@@ -115,7 +153,7 @@ const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, cu
         const file = e.target.files?.[0];
         e.target.value = '';
         if (!file) return;
-        if (file.size > 20*1024*1024) { alert(t('File too large (max 5MB)')); return; }
+        if (file.size > 20*1024*1024) { alert(t('File too large (max 20MB)')); return; }
         setCropSrc(URL.createObjectURL(file));
     };
 
@@ -183,7 +221,7 @@ const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, cu
                     <div style={{ marginBottom: 8 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span style={{ fontWeight: 700, fontSize: 16, color: dm ? '#e2e8f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{username || currentUsername}</span>
-                            {(tag === 'kayano' || tag === 'durov') && <span title={t('developer of Aurora')} style={{ fontSize: 16, cursor: 'default', lineHeight: 1, flexShrink: 0 }}>🔧</span>}
+                            {(tag === 'kayano' || tag === 'durov') && <span title={t('developer of Aurora')} style={{ cursor: 'default', display: 'inline-flex', color: '#f59e0b', flexShrink: 0 }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
                         </div>
                         {tag && <div style={{ fontSize: 12, color: '#6366f1', fontWeight: 600, marginTop: 2 }}>@{tag}</div>}
                     </div>
@@ -267,7 +305,6 @@ const BlockedUsersSubModal: React.FC<BlockedUsersSubProps> = ({ token, theme, on
     const col = dm ? '#e2e8f0' : '#1e1b4b';
     const subCol = dm ? '#7c7caa' : '#6b7280';
     const cardBg = dmC(dm, '#1a1a2e', '#fafbff', '#050508');
-    const borderCol = dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.12)');
 
     const [blocked, setBlocked] = useState<Array<{ id: number; username: string; tag: string; avatar?: string }>>([]);
     const [loading, setLoading] = useState(true);
@@ -301,7 +338,7 @@ const BlockedUsersSubModal: React.FC<BlockedUsersSubProps> = ({ token, theme, on
             ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {blocked.map(u => (
-                        <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 12, backgroundColor: cardBg, border: `1px solid ${borderCol}` }}>
+                        <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 12, backgroundColor: cardBg, boxShadow: cardBox(dm) }}>
                             <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 16, flexShrink: 0, overflow: 'hidden' }}>
                                 {u.avatar ? <img src={u.avatar} alt={u.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
                             </div>
@@ -333,7 +370,6 @@ const PrivacySubModal: React.FC<PrivacySubProps> = ({ token, theme, onBack, onLo
     const col = dm ? '#e2e8f0' : '#1e1b4b';
     const subCol = dm ? '#7c7caa' : '#6b7280';
     const cardBg = dmC(dm, '#1a1a2e', '#fafbff', '#050508');
-    const borderCol = dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.12)');
 
     const [showEmail, setShowEmail] = useState(true);
     const [showBirthday, setShowBirthday] = useState(true);
@@ -403,11 +439,11 @@ const PrivacySubModal: React.FC<PrivacySubProps> = ({ token, theme, onBack, onLo
     return (
         <SubModal title={t('Privacy')} onBack={onBack} dm={dm}>
             {/* Visibility section */}
-            <div style={{ padding: '10px 14px', backgroundColor: cardBg, borderRadius: 12, border: `1px solid ${borderCol}`, marginBottom: 8, fontSize: 12, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.7px' }}>
+            <div style={{ padding: '10px 14px', backgroundColor: cardBg, borderRadius: 12, boxShadow: cardBox(dm), marginBottom: 8, fontSize: 12, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.7px' }}>
                 {lang === 'en' ? 'What others see' : 'Видимость данных'}
             </div>
             {visibilityItems.map(item => (
-                <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '13px 14px', borderRadius: 12, backgroundColor: cardBg, border: `1px solid ${borderCol}`, marginBottom: 8 }}>
+                <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '13px 14px', borderRadius: 12, backgroundColor: cardBg, boxShadow: cardBox(dm), marginBottom: 8 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <span style={{ fontSize: 20 }}>{item.icon}</span>
                         <span style={{ fontSize: 14, color: col, fontWeight: 500 }}>{item.label}</span>
@@ -417,10 +453,10 @@ const PrivacySubModal: React.FC<PrivacySubProps> = ({ token, theme, onBack, onLo
             ))}
 
             {/* Messages section */}
-            <div style={{ padding: '10px 14px', backgroundColor: cardBg, borderRadius: 12, border: `1px solid ${borderCol}`, marginTop: 8, marginBottom: 8, fontSize: 12, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.7px' }}>
+            <div style={{ padding: '10px 14px', backgroundColor: cardBg, borderRadius: 12, boxShadow: cardBox(dm), marginTop: 8, marginBottom: 8, fontSize: 12, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.7px' }}>
                 {lang === 'en' ? 'Messages' : 'Сообщения'}
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '13px 14px', borderRadius: 12, backgroundColor: cardBg, border: `1px solid ${borderCol}`, marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '13px 14px', borderRadius: 12, backgroundColor: cardBg, boxShadow: cardBox(dm), marginBottom: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{ fontSize: 20 }}>✉️</span>
                     <div>
@@ -434,7 +470,7 @@ const PrivacySubModal: React.FC<PrivacySubProps> = ({ token, theme, onBack, onLo
             {/* Blocked users */}
             <button
                 onClick={() => setShowBlocked(true)}
-                style={{ width: '100%', padding: '12px 14px', borderRadius: 12, backgroundColor: cardBg, border: `1px solid ${borderCol}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', color: col, fontSize: 14, fontWeight: 500, marginBottom: 14, textAlign: 'left' as const }}
+                style={{ width: '100%', padding: '12px 14px', borderRadius: 12, backgroundColor: cardBg, boxShadow: cardBox(dm), display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', color: col, fontSize: 14, fontWeight: 500, marginBottom: 14, textAlign: 'left' as const }}
             >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{ fontSize: 20 }}>🚫</span>
@@ -449,7 +485,7 @@ const PrivacySubModal: React.FC<PrivacySubProps> = ({ token, theme, onBack, onLo
             {msg && <div style={{ marginTop: 10, fontSize: 13, color: msg.startsWith('✓') ? '#10b981' : '#ef4444', textAlign: 'center', fontWeight: 600 }}>{msg}</div>}
 
             {/* Delete account */}
-            <div style={{ marginTop: 20, borderTop: `1px solid ${borderCol}`, paddingTop: 16 }}>
+            <div style={{ marginTop: 20, borderTop: `1px solid ${dmC(dm, '#2a2a3d40', '#ede9fe', 'rgba(167,139,250,0.08)')}`, paddingTop: 16 }}>
                 {!confirmDelete ? (
                     <button onClick={() => setConfirmDelete(true)} style={{ width: '100%', padding: '12px', borderRadius: 12, border: '1.5px solid rgba(239,68,68,0.4)', background: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
                         🗑 {lang === 'en' ? 'Delete account' : 'Удалить аккаунт'}
@@ -466,7 +502,7 @@ const PrivacySubModal: React.FC<PrivacySubProps> = ({ token, theme, onBack, onLo
                             <button onClick={handleDeleteAccount} disabled={deleting} style={{ flex: 1, padding: '10px', borderRadius: 10, border: 'none', background: '#ef4444', color: 'white', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
                                 {deleting ? '...' : (lang === 'en' ? 'Yes, delete' : 'Да, удалить')}
                             </button>
-                            <button onClick={() => setConfirmDelete(false)} style={{ flex: 1, padding: '10px', borderRadius: 10, border: `1px solid ${borderCol}`, background: 'none', color: subCol, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                            <button onClick={() => setConfirmDelete(false)} style={{ flex: 1, padding: '10px', borderRadius: 10, boxShadow: cardBox(dm), background: 'none', color: subCol, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
                                 {lang === 'en' ? 'Cancel' : 'Отмена'}
                             </button>
                         </div>
@@ -486,7 +522,6 @@ const ChatSettingsSubModal: React.FC<ChatSettingsSubProps> = ({ theme, onThemeCh
     const col = dm ? '#e2e8f0' : '#1e1b4b';
     const subCol = dm ? '#7c7caa' : '#6b7280';
     const cardBg = dmC(dm, '#1a1a2e', '#fafbff', '#050508');
-    const borderCol = dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.12)');
     const inputBg = dmC(dm, '#1e1e30', '#f5f3ff', '#050508');
     const inputBorder = !dm ? '1.5px solid #ede9fe' : (getIsOled() ? '1.5px solid rgba(167,139,250,0.2)' : '1.5px solid #3a3a55');
 
@@ -508,7 +543,7 @@ const ChatSettingsSubModal: React.FC<ChatSettingsSubProps> = ({ theme, onThemeCh
     return (
         <SubModal title={t('Chat settings')} onBack={onBack} dm={dm}>
             {/* Animations */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '13px 14px', backgroundColor: cardBg, borderRadius: 12, border: `1px solid ${borderCol}`, marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '13px 14px', backgroundColor: cardBg, borderRadius: 12, boxShadow: cardBox(dm), marginBottom: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{ fontSize: 20 }}>✨</span>
                     <div>
@@ -520,7 +555,7 @@ const ChatSettingsSubModal: React.FC<ChatSettingsSubProps> = ({ theme, onThemeCh
             </div>
 
             {/* Font size */}
-            <div style={{ padding: '13px 14px', backgroundColor: cardBg, borderRadius: 12, border: `1px solid ${borderCol}`, marginBottom: 8 }}>
+            <div style={{ padding: '13px 14px', backgroundColor: cardBg, borderRadius: 12, boxShadow: cardBox(dm), marginBottom: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                     <span style={{ fontSize: 14, color: col, fontWeight: 600 }}>{t('Font size')}</span>
                     <span style={{ fontSize: 13, color: '#6366f1', fontWeight: 700 }}>{localTheme.fontSize}px</span>
@@ -533,7 +568,7 @@ const ChatSettingsSubModal: React.FC<ChatSettingsSubProps> = ({ theme, onThemeCh
             </div>
 
             {/* Preset themes — 3 cards */}
-            <div style={{ padding: '13px 14px', backgroundColor: cardBg, borderRadius: 12, border: `1px solid ${borderCol}`, marginBottom: 8 }}>
+            <div style={{ padding: '13px 14px', backgroundColor: cardBg, borderRadius: 12, boxShadow: cardBox(dm), marginBottom: 8 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 12 }}>{t('Theme')}</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
                     {PRESET_THEMES.map(th => {
@@ -582,10 +617,7 @@ const ChatSettingsSubModal: React.FC<ChatSettingsSubProps> = ({ theme, onThemeCh
                                     fontSize: 12, fontWeight: 700,
                                     color: isLight ? '#4b5563' : isOled ? '#c4b5fd' : 'rgba(255,255,255,0.9)',
                                     letterSpacing: '0.2px',
-                                }}>{t(th.labelKey)}</span>
-                                {isOled && (
-                                    <span style={{ fontSize: 9, color: 'rgba(167,139,250,0.6)', fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase' as const }}>AMOLED</span>
-                                )}
+                                }}>{th.labelKey}</span>
                             </button>
                         );
                     })}
@@ -594,11 +626,11 @@ const ChatSettingsSubModal: React.FC<ChatSettingsSubProps> = ({ theme, onThemeCh
 
             {/* Bubble colors */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                <div style={{ flex: 1, padding: '12px 14px', backgroundColor: cardBg, borderRadius: 12, border: `1px solid ${borderCol}` }}>
+                <div style={{ flex: 1, padding: '12px 14px', backgroundColor: cardBg, borderRadius: 12, boxShadow: cardBox(dm) }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.7px', marginBottom: 8 }}>{t('Own bubble color')}</div>
                     <input type="color" value={localTheme.bubbleOwnColor} onChange={e => setLocalTheme(th => ({ ...th, bubbleOwnColor: e.target.value }))} style={{ border: inputBorder, borderRadius: 8, cursor: 'pointer', height: 36, width: '100%', padding: 2 }} />
                 </div>
-                <div style={{ flex: 1, padding: '12px 14px', backgroundColor: cardBg, borderRadius: 12, border: `1px solid ${borderCol}` }}>
+                <div style={{ flex: 1, padding: '12px 14px', backgroundColor: cardBg, borderRadius: 12, boxShadow: cardBox(dm) }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.7px', marginBottom: 8 }}>{t('Other bubble color')}</div>
                     <input type="color" value={localTheme.bubbleOtherColor} onChange={e => setLocalTheme(th => ({ ...th, bubbleOtherColor: e.target.value }))} style={{ border: inputBorder, borderRadius: 8, cursor: 'pointer', height: 36, width: '100%', padding: 2 }} />
                 </div>
@@ -707,7 +739,7 @@ const EmojiSubModal: React.FC<EmojiSubProps> = ({ theme, onBack, onQuickReaction
     return (
         <SubModal title={t('Emoji & stickers')} onBack={onBack} dm={dm}>
             {/* ── Quick reactions ── */}
-            <div style={{ padding: '13px 14px', backgroundColor: cardBg, borderRadius: 12, border: `1px solid ${borderCol}`, marginBottom: 12 }}>
+            <div style={{ padding: '13px 14px', backgroundColor: cardBg, borderRadius: 12, boxShadow: cardBox(dm), marginBottom: 12 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 4 }}>{t('Quick reactions')}</div>
                 <div style={{ fontSize: 12, color: subCol, marginBottom: 12 }}>{t('First emoji is set by double-clicking a message')}</div>
 
@@ -748,7 +780,7 @@ const EmojiSubModal: React.FC<EmojiSubProps> = ({ theme, onBack, onQuickReaction
             </div>
 
             {/* Primary reaction preview */}
-            <div style={{ padding: '13px 14px', backgroundColor: cardBg, borderRadius: 12, border: `1px solid ${borderCol}`, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ padding: '13px 14px', backgroundColor: cardBg, borderRadius: 12, boxShadow: cardBox(dm), marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ fontSize: 32 }}>{primaryEmoji}</div>
                 <div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: col }}>{t('Primary reaction')}</div>
@@ -762,14 +794,14 @@ const EmojiSubModal: React.FC<EmojiSubProps> = ({ theme, onBack, onQuickReaction
             <div style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>{t('My sticker packs')}</div>
 
             {packs.length === 0 && !createOpen && (
-                <div style={{ padding: '20px 14px', backgroundColor: cardBg, borderRadius: 12, border: `1px solid ${borderCol}`, textAlign: 'center', color: subCol, fontSize: 13, marginBottom: 10 }}>
+                <div style={{ padding: '20px 14px', backgroundColor: cardBg, borderRadius: 12, boxShadow: cardBox(dm), textAlign: 'center', color: subCol, fontSize: 13, marginBottom: 10 }}>
                     <div style={{ fontSize: 36, marginBottom: 8 }}>🎭</div>
                     {t('No packs yet')}
                 </div>
             )}
 
             {packs.map(pack => (
-                <div key={pack.id} style={{ backgroundColor: cardBg, borderRadius: 12, border: `1px solid ${borderCol}`, marginBottom: 8, overflow: 'hidden' }}>
+                <div key={pack.id} style={{ backgroundColor: cardBg, borderRadius: 12, boxShadow: cardBox(dm), marginBottom: 8, overflow: 'hidden' }}>
                     {/* Pack header row */}
                     {editingPackId === pack.id ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px' }}>
@@ -824,7 +856,7 @@ const EmojiSubModal: React.FC<EmojiSubProps> = ({ theme, onBack, onQuickReaction
 
             {/* Create pack form */}
             {createOpen ? (
-                <div style={{ padding: '12px 14px', backgroundColor: cardBg, borderRadius: 12, border: `1px solid ${borderCol}`, marginBottom: 8 }}>
+                <div style={{ padding: '12px 14px', backgroundColor: cardBg, borderRadius: 12, boxShadow: cardBox(dm), marginBottom: 8 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: col, marginBottom: 10 }}>{t('New pack')}</div>
                     <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                         <input value={newPackEmoji} onChange={e => setNewPackEmoji(e.target.value)}
@@ -865,7 +897,6 @@ const LanguageSubModal: React.FC<LangSubProps> = ({ theme, onBack }) => {
     const col = dm ? '#e2e8f0' : '#1e1b4b';
     const subCol = dm ? '#7c7caa' : '#6b7280';
     const cardBg = dmC(dm, '#1a1a2e', '#fafbff', '#050508');
-    const borderCol = dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.12)');
 
     const { lang, t } = useLang();
 
@@ -884,7 +915,7 @@ const LanguageSubModal: React.FC<LangSubProps> = ({ theme, onBack }) => {
                 {t('Choose interface language. Full translation coming in next update.')}
             </div>
             {LANGS.map(l => (
-                <div key={l.id} onClick={() => selectLang(l.id)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderRadius: 12, backgroundColor: cardBg, border: lang === l.id ? '1.5px solid #6366f1' : `1px solid ${borderCol}`, marginBottom: 8, cursor: 'pointer', transition: 'all 0.15s', boxShadow: lang === l.id ? '0 0 0 2px rgba(99,102,241,0.15)' : 'none' }}>
+                <div key={l.id} onClick={() => selectLang(l.id)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderRadius: 12, backgroundColor: cardBg, marginBottom: 8, cursor: 'pointer', transition: 'all 0.15s', boxShadow: lang === l.id ? `0 0 0 2px #6366f1, 0 4px 20px rgba(99,102,241,0.2)` : cardBox(dm) }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                         <span style={{ fontSize: 26 }}>{l.flag}</span>
                         <div>
@@ -899,6 +930,81 @@ const LanguageSubModal: React.FC<LangSubProps> = ({ theme, onBack }) => {
     );
 };
 
+// ─── Patch Notes sub-modal ────────────────────────────────────────────────────
+
+interface PatchNotesSubProps { theme: ThemeSettings; onBack: () => void; }
+const PatchNotesSubModal: React.FC<PatchNotesSubProps> = ({ theme, onBack }) => {
+    const dm = theme.darkMode;
+    const col = dm ? '#e2e8f0' : '#1e1b4b';
+    const subCol = dm ? '#7c7caa' : '#6b7280';
+    const cardBg = dmC(dm, '#1a1a2e', '#fafbff', '#050508');
+    const accent = '#6366f1';
+
+    const RELEASES = [
+        {
+            version: 'beta v0.7',
+            date: 'Апрель 2026',
+            items: [
+                'SVG-иконки вместо эмодзи во всём интерфейсе',
+                'Подпись «Сообщение зашифровано» в контекстном меню',
+                'Иконка канала / группы перед названием в сайдбаре',
+                'Значок непрочитанных под временем в сайдбаре',
+                'Исправлен значок закрепа (thumbtack вместо звезды)',
+                'Счётчик запланированных сообщений в пилюле ввода',
+                'Глобальный фон глоу активного чата в сайдбаре',
+                'Исправлено отображение имён в уведомлениях',
+            ],
+        },
+        {
+            version: 'beta v0.6',
+            date: 'Март 2026',
+            items: [
+                'Поддержка IP-адресов для доступа с других устройств',
+                'Компактный режим сайдбара',
+                'OLED-тема с чёрным фоном и фиолетовыми акцентами',
+                'Запланированные сообщения',
+                'Медиаплеер с мини-режимом',
+                'Overlay активного звонка',
+            ],
+        },
+        {
+            version: 'beta v0.5',
+            date: 'Февраль 2026',
+            items: [
+                'Поиск и подписка на каналы',
+                'Значок DEV для разработчиков',
+                'Опросы в чатах',
+                'Стикеры и GIF',
+                'Папки чатов',
+                'Шифрование сообщений E2E',
+            ],
+        },
+    ];
+
+    return (
+        <SubModal title="Обновления" onBack={onBack} dm={dm}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {RELEASES.map((rel, i) => (
+                    <div key={rel.version} style={{ backgroundColor: cardBg, borderRadius: 14, overflow: 'hidden', boxShadow: i === 0 ? `0 0 0 1.5px ${accent}55, 0 4px 20px rgba(99,102,241,0.15)` : cardBox(dm) }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: `1px solid ${dmC(dm, '#2a2a3d40', '#ede9fe80', 'rgba(167,139,250,0.08)')}` }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                {i === 0 && <span style={{ width: 8, height: 8, borderRadius: 4, background: accent, display: 'inline-block', boxShadow: `0 0 6px ${accent}` }} />}
+                                <span style={{ fontSize: 15, fontWeight: 700, color: i === 0 ? accent : col }}>{rel.version}</span>
+                            </div>
+                            <span style={{ fontSize: 11, color: subCol }}>{rel.date}</span>
+                        </div>
+                        <ul style={{ margin: 0, padding: '10px 14px 12px 28px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {rel.items.map((item, j) => (
+                                <li key={j} style={{ fontSize: 13, color: i === 0 ? col : subCol, lineHeight: 1.5 }}>{item}</li>
+                            ))}
+                        </ul>
+                    </div>
+                ))}
+            </div>
+        </SubModal>
+    );
+};
+
 // ─── About sub-modal ──────────────────────────────────────────────────────────
 
 interface AboutSubProps { theme: ThemeSettings; onBack: () => void; }
@@ -908,7 +1014,6 @@ const AboutSubModal: React.FC<AboutSubProps> = ({ theme, onBack }) => {
     const col = dm ? '#e2e8f0' : '#1e1b4b';
     const subCol = dm ? '#7c7caa' : '#6b7280';
     const cardBg = dmC(dm, '#1a1a2e', '#fafbff', '#050508');
-    const borderCol = dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.12)');
     const inputBg = dmC(dm, '#1e1e30', '#f5f3ff', '#050508');
     const inputBorder = !dm ? '1.5px solid #ede9fe' : (getIsOled() ? '1.5px solid rgba(167,139,250,0.2)' : '1.5px solid #3a3a55');
     const inp: React.CSSProperties = { width: '100%', padding: '10px 12px', border: inputBorder, borderRadius: 10, fontSize: 13, outline: 'none', backgroundColor: inputBg, color: col, boxSizing: 'border-box', fontFamily: 'inherit' };
@@ -928,20 +1033,36 @@ const AboutSubModal: React.FC<AboutSubProps> = ({ theme, onBack }) => {
         setSent(true); setTimeout(() => setSent(false), 4000);
     };
 
+    const [policyTab, setPolicyTab] = useState<'license' | 'privacy' | null>(null);
+
     return (
+        <>
         <SubModal title={t('About')} onBack={onBack} dm={dm}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
                 <img src="/logo192.png" alt="Aurora" style={{ width: 80, height: 80, borderRadius: 22, boxShadow: '0 8px 28px rgba(99,102,241,0.3)' }} />
                 <div style={{ textAlign: 'center' }}>
                     <div style={{ fontSize: 32, fontWeight: 900, color: col, letterSpacing: -1 }}>Aurora</div>
-                    <div style={{ marginTop: 6, display: 'inline-block', padding: '3px 14px', borderRadius: 20, background: dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.1)'), color: '#a78bfa', fontSize: 13, fontWeight: 700, border: dm && getIsOled() ? '1px solid rgba(167,139,250,0.2)' : 'none' }}>beta v0.6</div>
+                    <div style={{ marginTop: 6, display: 'inline-block', padding: '3px 14px', borderRadius: 20, background: dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.1)'), color: '#a78bfa', fontSize: 13, fontWeight: 700, border: dm && getIsOled() ? '1px solid rgba(167,139,250,0.2)' : 'none' }}>beta v0.7.0</div>
                 </div>
                 <div style={{ fontSize: 13, color: subCol, textAlign: 'center', lineHeight: 1.6 }}>{lang === 'en' ? 'Modern open-source messenger' : 'Современный мессенджер с открытым исходным кодом'}</div>
-                <a href="https://github.com/kayanoooo/aurora" target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 14, backgroundColor: cardBg, border: `1px solid ${borderCol}`, textDecoration: 'none', color: col, fontSize: 14, fontWeight: 600, width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
+
+                {/* Лицензия + Конфиденциальность */}
+                <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+                    <button onClick={() => setPolicyTab('license')} style={{ flex: 1, padding: '10px 14px', backgroundColor: cardBg, border: `1px solid ${!dm ? '#ede9fe' : getIsOled() ? 'rgba(167,139,250,0.2)' : '#3a3a55'}`, borderRadius: 12, cursor: 'pointer', fontSize: 13, fontWeight: 600, color: dm ? '#a5b4fc' : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                        {lang === 'en' ? 'License' : 'Лицензия'}
+                    </button>
+                    <button onClick={() => setPolicyTab('privacy')} style={{ flex: 1, padding: '10px 14px', backgroundColor: cardBg, border: `1px solid ${!dm ? '#ede9fe' : getIsOled() ? 'rgba(167,139,250,0.2)' : '#3a3a55'}`, borderRadius: 12, cursor: 'pointer', fontSize: 13, fontWeight: 600, color: dm ? '#a5b4fc' : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                        {lang === 'en' ? 'Privacy' : 'Конфиденциальность'}
+                    </button>
+                </div>
+
+                <a href="https://github.com/kayanoooo/aurora" target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 14, backgroundColor: cardBg, boxShadow: cardBox(dm), textDecoration: 'none', color: col, fontSize: 14, fontWeight: 600, width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill={col}><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.38-1.33-1.75-1.33-1.75-1.09-.74.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.8 1.3 3.48 1 .11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.94 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 3-.4c1.02.01 2.04.14 3 .4 2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.62-2.81 5.63-5.49 5.93.43.37.82 1.1.82 2.22v3.29c0 .32.22.7.83.58C20.57 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z"/></svg>
                     GitHub — kayanoooo/aurora
                 </a>
-                <div style={{ width: '100%', padding: '14px', backgroundColor: cardBg, border: `1px solid ${borderCol}`, borderRadius: 14, boxSizing: 'border-box' }}>
+                <div style={{ width: '100%', padding: '14px', backgroundColor: cardBg, boxShadow: cardBox(dm), borderRadius: 14, boxSizing: 'border-box' }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: col, marginBottom: 10 }}>✉️ {lang === 'en' ? 'Contact developer' : 'Написать разработчику'}</div>
                     <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                         <input value={contactName} onChange={e => setContactName(e.target.value)} placeholder={lang === 'en' ? 'Your name' : 'Ваше имя'} style={{ ...inp, flex: 1 }} />
@@ -953,6 +1074,71 @@ const AboutSubModal: React.FC<AboutSubProps> = ({ theme, onBack }) => {
                     </button>
                 </div>
                 <div style={{ fontSize: 11, color: subCol }}>© 2026 Aurora. MIT License</div>
+            </div>
+        </SubModal>
+        {policyTab && <PolicyModal initialTab={policyTab} isDark={dm} onClose={() => setPolicyTab(null)} />}
+        </>
+    );
+};
+
+// ─── Server sub-modal (Electron only) ────────────────────────────────────────
+
+interface ServerSubProps { theme: ThemeSettings; onBack: () => void; }
+const ServerSubModal: React.FC<ServerSubProps> = ({ theme, onBack }) => {
+    const dm = theme.darkMode;
+    const { lang } = useLang();
+    const col = dm ? '#e2e8f0' : '#1e1b4b';
+    const subCol = dm ? '#7c7caa' : '#6b7280';
+    const inputBg = dmC(dm, '#1e1e30', '#f5f3ff', '#050508');
+    const inputBorder = !dm ? '1.5px solid #ede9fe' : (getIsOled() ? '1.5px solid rgba(167,139,250,0.2)' : '1.5px solid #3a3a55');
+    const accent = getIsOled() ? '#a78bfa' : '#6366f1';
+
+    const [host, setHost] = useState(config.SERVER_IP);
+    const [saved, setSaved] = useState(false);
+
+    const save = () => {
+        const h = host.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+        if (!h) return;
+        config.setServerHost(h);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+    };
+
+    return (
+        <SubModal title={lang === 'en' ? 'Server' : 'Сервер'} onBack={onBack} dm={dm}>
+            <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+                <div style={{ background: dm ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.06)', borderRadius: 12, padding: '12px 14px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16" strokeWidth="3"/></svg>
+                    <span style={{ fontSize: 12, color: subCol, lineHeight: 1.6 }}>
+                        {lang === 'en'
+                            ? 'Enter the IP address or hostname of the Aurora server. After saving, the app will reconnect.'
+                            : 'Введите IP-адрес или хостнейм сервера Aurora. После сохранения приложение переподключится.'}
+                    </span>
+                </div>
+
+                <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: subCol, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        {lang === 'en' ? 'Server address' : 'Адрес сервера'}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        <input
+                            value={host}
+                            onChange={e => setHost(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && save()}
+                            placeholder="192.168.1.100"
+                            style={{ flex: 1, padding: '10px 12px', border: inputBorder, borderRadius: 10, fontSize: 13, outline: 'none', backgroundColor: inputBg, color: col, fontFamily: 'inherit' }}
+                        />
+                        <button
+                            onClick={save}
+                            style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: saved ? 'linear-gradient(135deg,#10b981,#059669)' : `linear-gradient(135deg,${accent},#8b5cf6)`, color: 'white', fontWeight: 700, fontSize: 13, cursor: 'pointer', flexShrink: 0, transition: 'background 0.2s' }}
+                        >
+                            {saved ? (lang === 'en' ? '✓ Saved' : '✓ Сохранено') : (lang === 'en' ? 'Save' : 'Сохранить')}
+                        </button>
+                    </div>
+                    <div style={{ fontSize: 11, color: subCol, marginTop: 6 }}>
+                        {lang === 'en' ? 'Current: ' : 'Текущий: '}<code style={{ color: accent }}>{config.SERVER_IP}:8000</code>
+                    </div>
+                </div>
             </div>
         </SubModal>
     );
@@ -979,7 +1165,7 @@ interface SettingsModalProps {
     onClose: () => void;
 }
 
-type SubSection = 'profile' | 'privacy' | 'chat' | 'emoji' | 'language' | 'about' | null;
+type SubSection = 'profile' | 'privacy' | 'chat' | 'emoji' | 'language' | 'patchnotes' | 'about' | 'server' | null;
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
     token, currentUsername, currentUserTag, currentAvatar, currentStatus, isOnline,
@@ -1019,34 +1205,37 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     // Extract first hex color from gradient string for OLED border/glow
     const accentOf = (grad: string) => { const m = grad.match(/#[0-9a-fA-F]{6}/); return m ? m[0] : '#6366f1'; };
 
-    interface MenuItemDef { icon: string; label: string; hint?: string; onClick?: () => void; right?: React.ReactNode; color?: string; }
+    interface MenuItemDef { icon: React.ReactNode; label: string; hint?: string; onClick?: () => void; right?: React.ReactNode; color?: string; }
 
     const MenuItem: React.FC<MenuItemDef> = ({ icon, label, hint, onClick, right, color = primaryGrad() }) => {
         const [hover, setHover] = useState(false);
         const oled = getIsOled();
         const accent = accentOf(color);
         const iconBg = oled ? '#000000' : color;
-        const iconFilter = oled ? 'none' : (dm ? 'brightness(0.72) saturate(0.88)' : 'none');
         const iconBorder = oled ? `1.5px solid ${accent}55` : 'none';
         const iconShadow = oled
-            ? `0 0 10px ${accent}33, 0 2px 16px rgba(0,0,0,0.9), inset 0 1px 0 ${accent}22`
-            : dm ? '0 2px 10px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.18)';
+            ? `0 0 12px ${accent}44, 0 2px 16px rgba(0,0,0,0.9), inset 0 1px 0 ${accent}22`
+            : dm ? `0 2px 12px rgba(0,0,0,0.5), 0 0 8px ${accent}22` : `0 2px 10px ${accent}30`;
         return (
             <div onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
                 style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '10px 14px', cursor: onClick ? 'pointer' : 'default', borderRadius: 12, margin: '1px 8px', backgroundColor: hover && onClick ? hoverBg : 'transparent', transition: 'background 0.12s' }}>
-                <div style={{ width: 38, height: 38, borderRadius: 11, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 19, flexShrink: 0, boxShadow: iconShadow, filter: iconFilter, border: iconBorder, transition: 'all 0.15s' }}>{icon}</div>
+                <div style={{ width: 38, height: 38, borderRadius: 11, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: iconShadow, border: iconBorder, transition: 'all 0.15s' }}>
+                    {typeof icon === 'string'
+                        ? <span style={{ fontSize: 19 }}>{icon}</span>
+                        : icon}
+                </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14, color: col, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
                     {hint && <div style={{ fontSize: 11, color: subCol, marginTop: 1 }}>{hint}</div>}
                 </div>
-                {right || (onClick ? <span style={{ color: subCol, fontSize: 18, lineHeight: 1 }}>›</span> : null)}
+                {right || (onClick ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={subCol} strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg> : null)}
             </div>
         );
     };
 
     const SectionDivider: React.FC<{ label?: string }> = ({ label }) => (
-        <div style={{ margin: label ? '8px 0 4px' : '6px 0', padding: label ? '0 22px' : '0', borderTop: label ? 'none' : `1px solid ${borderCol}` }}>
-            {label && <span style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '1px' }}>{label}</span>}
+        <div style={{ margin: label ? '12px 0 4px' : '6px 0', padding: label ? '0 22px' : '0 22px', borderTop: label ? 'none' : `1px solid ${borderCol}40` }}>
+            {label && <span style={{ fontSize: 10, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '1.2px' }}>{label}</span>}
         </div>
     );
 
@@ -1063,11 +1252,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             <div style={{
                 position: 'fixed', top: 0, left: 0, bottom: 0, zIndex: 3100,
                 width: 'min(340px, 100vw)', backgroundColor: panelBg,
-                boxShadow: '4px 0 32px rgba(0,0,0,0.25)',
+                boxShadow: getIsOled() ? '8px 0 40px rgba(0,0,0,0.95), 2px 0 0 rgba(167,139,250,0.07)' : dm ? '8px 0 40px rgba(0,0,0,0.6), 2px 0 0 rgba(99,102,241,0.06)' : '8px 0 32px rgba(99,102,241,0.1), 2px 0 0 rgba(99,102,241,0.04)',
                 display: 'flex', flexDirection: 'column', overflow: 'hidden',
                 transform: closing ? 'translateX(-100%)' : undefined,
                 transition: closing ? 'transform 0.22s cubic-bezier(0.4,0,0.2,1)' : undefined,
-                borderRight: `1px solid ${borderCol}`,
             }}
                 className={`settings-main-panel${closing ? '' : ' settings-panel-enter'}`}
             >
@@ -1090,7 +1278,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     {/* Name + tag + status */}
                     <div style={{ fontSize: 19, fontWeight: 800, color: 'white', letterSpacing: -0.3, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
                         {currentUsername}
-                        {(currentUserTag === 'kayano' || currentUserTag === 'durov') && <span title={t('developer of Aurora')} style={{ fontSize: 17, cursor: 'default', lineHeight: 1 }}>🔧</span>}
+                        {(currentUserTag === 'kayano' || currentUserTag === 'durov') && <span title={t('developer of Aurora')} style={{ cursor: 'default', display: 'inline-flex', color: '#f59e0b', flexShrink: 0 }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
                     </div>
                     {currentUserTag && <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)', marginBottom: 6 }}>@{currentUserTag}</div>}
                     <div style={{ fontSize: 12, color: isOnline ? '#86efac' : 'rgba(255,255,255,0.45)', fontWeight: 500 }}>{isOnline ? `● ${t('Online')}` : `○ ${t('Offline')}`}</div>
@@ -1105,28 +1293,28 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 {/* Menu */}
                 <div style={{ flex: 1, paddingTop: 10, paddingBottom: 16, overflowY: 'auto' }}>
                     <SectionDivider label={t('Account')} />
-                    <MenuItem icon="👤" label={t('Profile')} hint={t('Name, tag, photo, about')} color="linear-gradient(135deg,#f59e0b,#f97316)" onClick={() => setActiveSub('profile')} />
-                    <MenuItem icon="🔒" label={t('Privacy')} hint={t('What others see')} color="linear-gradient(135deg,#10b981,#059669)" onClick={() => setActiveSub('privacy')} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>} label={t('Profile')} hint={t('Name, tag, photo, about')} color="linear-gradient(135deg,#f59e0b,#f97316)" onClick={() => setActiveSub('profile')} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} label={t('Privacy')} hint={t('What others see')} color="linear-gradient(135deg,#10b981,#059669)" onClick={() => setActiveSub('privacy')} />
 
                     <SectionDivider label={t('Appearance')} />
-                    <MenuItem icon="🎨" label={t('Chat settings')} hint={t('Themes, wallpapers, animations')} color="linear-gradient(135deg,#3b82f6,#6366f1)" onClick={() => setActiveSub('chat')} />
-                    <MenuItem icon="😊" label={t('Emoji & stickers')} hint={t('Quick reactions, packs')} color="linear-gradient(135deg,#ec4899,#f43f5e)" onClick={() => setActiveSub('emoji')} />
-                    <MenuItem icon="🌐" label={t('Language')} hint={lang === 'en' ? 'English' : 'Русский'} color="linear-gradient(135deg,#06b6d4,#0891b2)" onClick={() => setActiveSub('language')} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.437-.652-.437-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>} label={t('Chat settings')} hint={t('Themes, wallpapers, animations')} color="linear-gradient(135deg,#3b82f6,#6366f1)" onClick={() => setActiveSub('chat')} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9" strokeWidth="3"/><line x1="15" y1="9" x2="15.01" y2="9" strokeWidth="3"/></svg>} label={t('Emoji & stickers')} hint={t('Quick reactions, packs')} color="linear-gradient(135deg,#ec4899,#f43f5e)" onClick={() => setActiveSub('emoji')} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>} label={t('Language')} hint={lang === 'en' ? 'English' : 'Русский'} color="linear-gradient(135deg,#06b6d4,#0891b2)" onClick={() => setActiveSub('language')} />
 
                     <SectionDivider label={t('Chats')} />
-                    <MenuItem icon="📁" label={t('Chat folders')} hint={t('Manage folders')} color="linear-gradient(135deg,#f59e0b,#eab308)" onClick={() => { onClose(); setTimeout(onOpenFolders, 100); }} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>} label={t('Chat folders')} hint={t('Manage folders')} color="linear-gradient(135deg,#f59e0b,#eab308)" onClick={() => { onClose(); setTimeout(onOpenFolders, 100); }} />
 
                     <SectionDivider label={lang === 'en' ? 'Help' : 'Помощь'} />
-                    <MenuItem icon="🎧" label={lang === 'en' ? 'Support' : 'Поддержка'} hint={lang === 'en' ? 'Chat with support team' : 'Написать в поддержку'} color="linear-gradient(135deg,#06b6d4,#0284c7)" onClick={() => { setClosing(true); setTimeout(() => { onClose(); onOpenSupport(); }, 200); }} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>} label={lang === 'en' ? 'Support' : 'Поддержка'} hint={lang === 'en' ? 'Chat with support team' : 'Написать в поддержку'} color="linear-gradient(135deg,#06b6d4,#0284c7)" onClick={() => { setClosing(true); setTimeout(() => { onClose(); onOpenSupport(); }, 200); }} />
                     {(currentUserTag === 'kayano' || currentUserTag === 'durov') && (
-                        <MenuItem icon="🔑" label={lang === 'en' ? 'Admin panel' : 'Панель администратора'} hint={lang === 'en' ? 'Stats, users, support inbox' : 'Статистика, пользователи, поддержка'} color="linear-gradient(135deg,#ef4444,#dc2626)" onClick={() => { setClosing(true); setTimeout(() => { onClose(); onOpenAdmin(); }, 200); }} />
+                        <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>} label={lang === 'en' ? 'Admin panel' : 'Панель администратора'} hint={lang === 'en' ? 'Stats, users, support inbox' : 'Статистика, пользователи, поддержка'} color="linear-gradient(135deg,#ef4444,#dc2626)" onClick={() => { setClosing(true); setTimeout(() => { onClose(); onOpenAdmin(); }, 200); }} />
                     )}
 
                     <SectionDivider />
-                    <MenuItem icon={dm ? '🌙' : '☀️'} label={t('Night mode')} color={dm ? 'linear-gradient(135deg,#4f46e5,#312e81)' : 'linear-gradient(135deg,#f59e0b,#f97316)'} right={<Toggle value={dm} onChange={v => onThemeChange({ ...theme, darkMode: v, chatBg: v ? '#0f0f1a' : '#f8f9ff', bubbleOtherColor: v ? '#2a2a3d' : '#e8e8e8', bubbleOwnColor: '#6366f1' })} />} />
-                    <MenuItem icon="ℹ️" label={t('About')} color="linear-gradient(135deg,#8b5cf6,#7c3aed)" onClick={() => setActiveSub('about')} />
+                    <MenuItem icon={dm ? <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg> : <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>} label={t('Night mode')} color={dm ? 'linear-gradient(135deg,#4f46e5,#312e81)' : 'linear-gradient(135deg,#f59e0b,#f97316)'} right={<Toggle value={dm} onChange={v => onThemeChange({ ...theme, darkMode: v, chatBg: v ? '#0f0f1a' : '#f8f9ff', bubbleOtherColor: v ? '#2a2a3d' : '#e8e8e8', bubbleOwnColor: '#6366f1' })} />} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16" strokeWidth="3"/></svg>} label={t('About')} color="linear-gradient(135deg,#8b5cf6,#7c3aed)" onClick={() => setActiveSub('about')} />
                     {config.isElectron() && (
-                        <MenuItem icon="🖥️" label="Server" hint="Connection address" color="linear-gradient(135deg,#64748b,#475569)" onClick={() => setActiveSub('about')} />
+                        <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>} label={lang === 'en' ? 'Server' : 'Сервер'} hint={lang === 'en' ? 'Connection address' : 'Адрес подключения'} color="linear-gradient(135deg,#0f766e,#0d9488)" onClick={() => setActiveSub('server')} />
                     )}
 
                     {/* Logout */}
@@ -1154,8 +1342,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             {activeSub === 'language' && (
                 <LanguageSubModal theme={theme} onBack={() => setActiveSub(null)} />
             )}
+            {activeSub === 'patchnotes' && (
+                <PatchNotesSubModal theme={theme} onBack={() => setActiveSub(null)} />
+            )}
             {activeSub === 'about' && (
                 <AboutSubModal theme={theme} onBack={() => setActiveSub(null)} />
+            )}
+            {activeSub === 'server' && (
+                <ServerSubModal theme={theme} onBack={() => setActiveSub(null)} />
             )}
         </>,
         document.body

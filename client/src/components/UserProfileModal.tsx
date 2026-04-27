@@ -67,10 +67,10 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
     }, [messages]);
 
     const mediaTabs = [
-        { key: 'images' as const, icon: '🖼', label: t('Photo'), count: imgs.length },
-        { key: 'video' as const, icon: '🎬', label: t('Video'), count: vids.length },
-        { key: 'audio' as const, icon: '🎵', label: t('Audio'), count: auds.length },
-        { key: 'files' as const, icon: '📄', label: t('Files'), count: files.length },
+        { key: 'images' as const, label: t('Photo'), count: imgs.length },
+        { key: 'video' as const, label: t('Video'), count: vids.length },
+        { key: 'audio' as const, label: t('Audio'), count: auds.length },
+        { key: 'files' as const, label: t('Files'), count: files.length },
     ];
 
     const hasMedia = messages.length > 0;
@@ -131,8 +131,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     borderRadius: isMobile ? 20 : 20,
                     width: isMobile ? '95vw' : (expanded ? Math.min(720, window.innerWidth * 0.92) : 340),
                     maxWidth: '95vw',
-                    boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)',
-                    border: `1px solid ${border}`,
+                    boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.3), 0 30px 80px rgba(0,0,0,0.95)' : (dm ? '0 0 50px rgba(99,102,241,0.25), 0 30px 80px rgba(0,0,0,0.7)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)'),
                     position: 'relative' as const,
                     display: 'flex',
                     overflow: 'hidden',
@@ -157,7 +156,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         </div>
                         <h2 style={{ fontSize: 22, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', margin: '0 0 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
                             {fullUser.username}
-                            {(fullUser.tag === 'kayano' || fullUser.tag === 'durov') && <span title={t('developer of Aurora')} style={{ fontSize: 18, cursor: 'default' }}>🔧</span>}
+                            {(fullUser.tag === 'kayano' || fullUser.tag === 'durov') && <span title={t('developer of Aurora')} style={{ cursor: 'default', display: 'inline-flex', color: '#f59e0b', flexShrink: 0 }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
                         </h2>
                         {fullUser.tag && <p style={{ fontSize: 13, color: '#6366f1', margin: '0 0 4px', fontWeight: 600 }}>@{fullUser.tag}</p>}
                         {(isOnline ?? fullUser.is_online)
@@ -206,24 +205,37 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     {/* Media shortcut buttons */}
                     {hasMedia && (
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
-                            {mediaTabs.map(tab => (
-                                <button key={tab.key} onClick={() => openMediaTab(tab.key)}
-                                    style={{
-                                        padding: '10px 8px',
-                                        borderRadius: 12,
-                                        border: `1px solid ${expanded && mediaTab === tab.key ? '#6366f1' : border}`,
-                                        background: expanded && mediaTab === tab.key
-                                            ? dm ? 'rgba(99,102,241,0.22)' : 'rgba(99,102,241,0.08)'
-                                            : dm ? '#12122a' : '#f5f3ff',
-                                        cursor: 'pointer',
-                                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-                                        transition: 'all 0.18s',
-                                    }}>
-                                    <span style={{ fontSize: 18 }}>{tab.icon}</span>
-                                    <span style={{ fontSize: 11, fontWeight: 600, color: expanded && mediaTab === tab.key ? '#6366f1' : sub }}>{tab.label}</span>
-                                    {tab.count > 0 && <span style={{ fontSize: 10, color: '#6366f1', fontWeight: 700 }}>{tab.count}</span>}
-                                </button>
-                            ))}
+                            {mediaTabs.map(tab => {
+                                const isActive = expanded && mediaTab === tab.key;
+                                const tabIcons: Record<string, React.ReactNode> = {
+                                    images: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>,
+                                    video: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>,
+                                    audio: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
+                                    files: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
+                                };
+                                return (
+                                    <button key={tab.key} onClick={() => openMediaTab(tab.key)}
+                                        style={{
+                                            padding: '12px 8px',
+                                            borderRadius: 14,
+                                            border: 'none',
+                                            boxShadow: isActive
+                                                ? `0 0 0 2px #6366f1, 0 4px 16px rgba(99,102,241,0.25)`
+                                                : isOled ? '0 2px 12px rgba(0,0,0,0.8)' : dm ? '0 2px 10px rgba(0,0,0,0.35)' : '0 2px 8px rgba(99,102,241,0.07)',
+                                            background: isActive
+                                                ? dm ? 'rgba(99,102,241,0.22)' : 'rgba(99,102,241,0.08)'
+                                                : isOled ? '#050508' : (dm ? '#12122a' : '#f5f3ff'),
+                                            cursor: 'pointer',
+                                            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+                                            transition: 'all 0.18s',
+                                            color: isActive ? '#6366f1' : sub,
+                                        }}>
+                                        {tabIcons[tab.key]}
+                                        <span style={{ fontSize: 11, fontWeight: 600, color: isActive ? '#6366f1' : sub }}>{tab.label}</span>
+                                        {tab.count > 0 && <span style={{ fontSize: 10, color: '#6366f1', fontWeight: 700 }}>{tab.count}</span>}
+                                    </button>
+                                );
+                            })}
                         </div>
                     )}
 
@@ -238,36 +250,51 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 <div className="user-profile-media" style={{
                     width: isMobile ? (expanded ? '100%' : 0) : (expanded ? 380 : 0),
                     flexShrink: 0,
-                    borderLeft: (!isMobile && expanded) ? `1px solid ${border}` : 'none',
-                    borderTop: (isMobile && expanded) ? `1px solid ${border}` : 'none',
                     display: 'flex',
                     flexDirection: 'column',
                     overflow: 'hidden',
                     transition: isMobile ? 'none' : 'width 0.32s cubic-bezier(0.4,0,0.2,1)',
                     maxHeight: isMobile ? '55svh' : '88vh',
                     minHeight: (isMobile && expanded) ? '40svh' : undefined,
+                    background: isOled ? '#000' : dm ? 'rgba(255,255,255,0.02)' : 'rgba(99,102,241,0.02)',
                 }}>
                     {/* Tab bar */}
-                    <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, flexShrink: 0, alignItems: 'stretch' }}>
-                        {mediaTabs.map(tab => (
-                            <button key={tab.key} onClick={() => setMediaTab(tab.key)}
-                                style={{
-                                    flex: 1, padding: '12px 4px', border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 700,
-                                    background: 'none',
-                                    color: mediaTab === tab.key ? '#6366f1' : sub,
-                                    borderBottom: mediaTab === tab.key ? '2px solid #6366f1' : '2px solid transparent',
-                                    transition: 'all 0.15s',
-                                }}>
-                                {tab.icon}<br />{tab.label}
-                                {tab.count > 0 && <span style={{ marginLeft: 3, fontSize: 10, color: '#6366f1' }}>({tab.count})</span>}
-                            </button>
-                        ))}
+                    <div style={{ display: 'flex', padding: '10px 12px 6px', flexShrink: 0, alignItems: 'center', gap: 4 }}>
+                        {mediaTabs.map(tab => {
+                            const tabIcons: Record<string, React.ReactNode> = {
+                                images: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>,
+                                video: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>,
+                                audio: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
+                                files: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
+                            };
+                            const isActive = mediaTab === tab.key;
+                            return (
+                                <button key={tab.key} onClick={() => setMediaTab(tab.key)}
+                                    style={{
+                                        flex: 1, padding: '7px 4px', border: 'none', cursor: 'pointer', fontSize: 10, fontWeight: 700,
+                                        background: isActive ? (isOled ? 'rgba(167,139,250,0.15)' : dm ? 'rgba(99,102,241,0.18)' : 'rgba(99,102,241,0.1)') : 'transparent',
+                                        color: isActive ? (isOled ? '#a78bfa' : '#6366f1') : sub,
+                                        borderRadius: 10,
+                                        transition: 'all 0.15s',
+                                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+                                    }}>
+                                    {tabIcons[tab.key]}
+                                    {tab.label}
+                                    {tab.count > 0 && <span style={{ fontSize: 9, color: isActive ? (isOled ? '#a78bfa' : '#6366f1') : sub }}>({tab.count})</span>}
+                                </button>
+                            );
+                        })}
+                        <div style={{ flex: 1 }} />
                         {!isMobile && (
                             <button onClick={() => setExpanded(false)} title={lang === 'en' ? 'Collapse' : 'Свернуть'}
-                                style={{ padding: '0 10px', border: 'none', background: 'none', cursor: 'pointer', color: sub, fontSize: 16, borderBottom: '2px solid transparent', flexShrink: 0 }}>‹</button>
+                                style={{ padding: '6px 8px', border: 'none', background: 'none', cursor: 'pointer', color: sub, flexShrink: 0, display: 'flex', alignItems: 'center', borderRadius: 8 }}>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                            </button>
                         )}
                         <button onClick={close} title={t('Close')}
-                            style={{ padding: '0 10px', border: 'none', background: 'none', cursor: 'pointer', color: sub, fontSize: 18, borderBottom: '2px solid transparent', flexShrink: 0, borderLeft: `1px solid ${border}` }}>✕</button>
+                            style={{ padding: '6px 8px', border: 'none', background: 'none', cursor: 'pointer', color: sub, flexShrink: 0, display: 'flex', alignItems: 'center', borderRadius: 8 }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
                     </div>
 
                     {/* Content */}
@@ -303,7 +330,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         ) : (
                             <div>
                                 {currentTabData.map((f, i) => (
-                                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: `1px solid ${border}` }}>
+                                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.06)' : dm ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.05)'}` }}>
                                         <div style={{ width: 36, height: 36, borderRadius: 10, background: dm ? '#252540' : '#ede9fe', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: mediaTab === 'audio' ? 16 : 9, fontWeight: 700, color: '#6366f1' }}>
                                             {mediaTab === 'audio' ? '🎵' : (f.filename.split('.').pop()?.toUpperCase() || 'FILE')}
                                         </div>
@@ -355,9 +382,9 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
 };
 
 const tokens = (dm: boolean, o = false) => ({
-    overlay: { position: 'fixed' as const, inset: 0, backgroundColor: o ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.85)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 },
-    infoCard: { backgroundColor: o ? '#050508' : (dm ? '#12122a' : '#f5f3ff'), borderRadius: 12, padding: '12px 16px', marginBottom: 20, textAlign: 'left' as const, border: o ? '1px solid rgba(167,139,250,0.12)' : (dm ? '1px solid rgba(99,102,241,0.15)' : '1px solid #ede9fe') },
-    infoRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: dm ? '1px solid rgba(99,102,241,0.1)' : '1px solid #ede9fe' },
+    overlay: { position: 'fixed' as const, inset: 0, backgroundColor: o ? 'rgba(0,0,0,0.88)' : (dm ? 'rgba(15,10,40,0.85)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 },
+    infoCard: { backgroundColor: o ? '#050508' : (dm ? '#12122a' : '#f5f3ff'), borderRadius: 14, padding: '12px 16px', marginBottom: 20, textAlign: 'left' as const, boxShadow: o ? '0 2px 16px rgba(0,0,0,0.8)' : dm ? '0 2px 12px rgba(0,0,0,0.35)' : '0 2px 8px rgba(99,102,241,0.06)' },
+    infoRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: o ? '1px solid rgba(167,139,250,0.07)' : (dm ? '1px solid rgba(99,102,241,0.08)' : '1px solid rgba(99,102,241,0.06)') },
 });
 
 export default UserProfileModal;

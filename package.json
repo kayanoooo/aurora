@@ -1,7 +1,7 @@
 {
-  "name": "max-desktop",
+  "name": "aurora",
   "version": "1.0.0",
-  "description": "MAX Messenger — Desktop Application",
+  "description": "Aurora — Desktop Application",
   "main": "electron/main.js",
   "scripts": {
     "electron:dev": "ELECTRON_START_URL=http://localhost:3000 electron .",
@@ -17,22 +17,33 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.max.messenger",
-    "productName": "MAX Messenger",
+    "appId": "com.aurora.messenger",
+    "productName": "Aurora",
     "files": [
       "electron/**/*",
       "client/build/**/*"
     ],
     "linux": {
       "target": [
-        { "target": "AppImage", "arch": ["x64"] },
-        { "target": "deb", "arch": ["x64"] }
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "category": "Network",
       "icon": "client/public/logo512.png"
     },
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "client/public/logo512.png"
     },
     "mac": {
@@ -45,5 +56,9 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     }
+  },
+  "author": {
+    "name": "kayano",
+    "email": "azarskovap@gmail.com"
   }
 }

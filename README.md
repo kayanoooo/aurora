@@ -1,2 +1,2 @@
 # aurora
-aurora messenger/ better than max rly
+aurora / better than max rly

@@ -442,11 +442,11 @@ export const api = {
         } catch { return { view_count: 0 }; }
     },
 
-    async sendSupportMessage(token: string, message_text: string) {
+    async sendSupportMessage(token: string, message_text: string, file_path?: string, filename?: string) {
         const response = await fetch(`${API_URL}/support/send?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message_text }),
+            body: JSON.stringify({ message_text, file_path, filename }),
         });
         return response.json();
     },
@@ -576,5 +576,50 @@ export const api = {
             const response = await fetch(`${API_URL}/server-info`);
             return response.json();
         } catch { return null; }
+    },
+
+    async getPlaylists(token: string) {
+        const r = await fetch(`${API_URL}/playlists?token=${token}`);
+        return r.json();
+    },
+    async createPlaylist(token: string, name: string) {
+        const r = await fetch(`${API_URL}/playlists`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, name }) });
+        return r.json();
+    },
+    async deletePlaylist(token: string, id: number) {
+        const r = await fetch(`${API_URL}/playlists/${id}?token=${token}`, { method: 'DELETE' });
+        return r.json();
+    },
+    async renamePlaylist(token: string, id: number, name: string) {
+        const r = await fetch(`${API_URL}/playlists/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, name }) });
+        return r.json();
+    },
+    async addTrack(token: string, data: { playlist_id: number; title: string; artist?: string; file_path: string; cover_path?: string; duration?: number }) {
+        const r = await fetch(`${API_URL}/playlists/tracks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, ...data }) });
+        return r.json();
+    },
+    async deleteTrack(token: string, trackId: number) {
+        const r = await fetch(`${API_URL}/playlists/tracks/${trackId}?token=${token}`, { method: 'DELETE' });
+        return r.json();
+    },
+    async sharePlaylist(token: string, playlistId: number) {
+        const fd = new FormData(); fd.append('token', token);
+        const r = await fetch(`${API_URL}/playlists/${playlistId}/share`, { method: 'POST', body: fd });
+        return r.json();
+    },
+    async getSharedPlaylist(token: string, code: string) {
+        const r = await fetch(`${API_URL}/playlists/shared/${code}?token=${token}`);
+        return r.json();
+    },
+    async updatePlaylistCover(token: string, playlistId: number, file: File) {
+        const fd = new FormData();
+        fd.append('token', token);
+        fd.append('file', file);
+        const r = await fetch(`${API_URL}/playlists/${playlistId}/cover`, { method: 'PUT', body: fd });
+        return r.json();
+    },
+    async setNowPlaying(token: string, title: string | null, artist?: string | null) {
+        const r = await fetch(`${API_URL}/now_playing`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, title: title ?? null, artist: artist ?? null }) });
+        return r.json();
     },
 };

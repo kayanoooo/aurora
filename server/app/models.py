@@ -1119,14 +1119,14 @@ class PostViewModel:
 
 class SupportModel:
     @staticmethod
-    async def send_message(user_id: int, message_text: str) -> Optional[int]:
+    async def send_message(user_id: int, message_text: str, file_path: str = None, filename: str = None) -> Optional[int]:
         pool = await DatabasePool.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 try:
                     await cur.execute(
-                        "INSERT INTO support_messages (user_id, sender_id, message_text) VALUES (%s, %s, %s)",
-                        (user_id, user_id, message_text)
+                        "INSERT INTO support_messages (user_id, sender_id, message_text, file_path, filename) VALUES (%s, %s, %s, %s, %s)",
+                        (user_id, user_id, message_text, file_path, filename)
                     )
                     return cur.lastrowid
                 except Exception as e:
@@ -1140,6 +1140,7 @@ class SupportModel:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute("""
                     SELECT sm.id, sm.user_id, sm.sender_id, sm.message_text, sm.is_admin_reply, sm.is_read, sm.created_at,
+                           sm.file_path, sm.filename,
                            u.username as sender_name, u.tag as sender_tag, u.avatar as sender_avatar
                     FROM support_messages sm
                     JOIN users u ON u.id = sm.sender_id
@@ -1202,6 +1203,7 @@ class SupportModel:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute("""
                     SELECT sm.id, sm.user_id, sm.sender_id, sm.message_text, sm.is_admin_reply, sm.is_read, sm.created_at,
+                           sm.file_path, sm.filename,
                            u.username as sender_name, u.tag as sender_tag, u.avatar as sender_avatar
                     FROM support_messages sm
                     JOIN users u ON u.id = sm.sender_id

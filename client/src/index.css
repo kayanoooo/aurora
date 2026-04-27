@@ -10,7 +10,10 @@ body {
     'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: #eef0f5; /* default light, overridden by JS theme class */
 }
+body.dark-theme  { background-color: #0f0f1a; }
+body.oled-theme  { background-color: #000000; }
 
 /* Ensure emoji font is always available */
 .emoji-btn {
@@ -19,6 +22,7 @@ body {
 
 .App {
   height: 100vh;
+  height: 100dvh;
 }
 
 /* Кнопки */
@@ -256,6 +260,15 @@ body.oled-theme .sidebar-item-dark:hover {
     animation: fadeInUp 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
+/* Chat switch fade */
+@keyframes chatEnter {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.chat-enter {
+    animation: chatEnter 0.18s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
 /* Reaction picker pop */
 @keyframes reactionPop {
     from { opacity: 0; transform: scale(0.82) translateY(6px); }
@@ -394,6 +407,19 @@ body.oled-theme .sidebar-search-dropdown {
 
 /* ─── Mobile ──────────────────────────────────────────── */
 @media (max-width: 768px) {
+    /* Use dynamic viewport height to handle browser chrome (address bar) changes */
+    .mobile-root-container {
+        height: 100vh;        /* fallback */
+        height: 100dvh;       /* adjusts when address bar shows/hides */
+    }
+
+    /* Chat header stays pinned on mobile (doesn't scroll away) */
+    .mobile-chat-header {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 10 !important;
+    }
+
     /* Prevent iOS input zoom */
     input, textarea, select {
         font-size: max(16px, 1em) !important;
@@ -414,19 +440,35 @@ body.oled-theme .sidebar-search-dropdown {
         width: 100vw !important;
     }
 
-    /* SubModal — full-screen */
+    /* SubModal — bottom sheet on mobile */
     .submodal-panel {
         width: 100vw !important;
         max-width: 100vw !important;
-        border-radius: 0 !important;
-        max-height: 100svh !important;
-        height: 100svh !important;
+        border-radius: 20px 20px 0 0 !important;
+        max-height: 92svh !important;
+        height: auto !important;
+        padding-bottom: env(safe-area-inset-bottom, 0px);
     }
 
-    /* Generic modals — nearly full-width */
-    [class*="modal-enter"] > div,
-    [class*="modal-exit"] > div {
+    /* Generic modals — nearly full-width (only direct children of backdrops) */
+    [class*="modal-backdrop"] > div:not(.submodal-panel):not(.mobile-bottom-sheet) {
         max-width: 95vw !important;
+    }
+
+    /* Bottom-sheet modals — truly full-width, no side gaps */
+    .mobile-bottom-sheet {
+        width: 100vw !important;
+        max-width: 100vw !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+    }
+
+    /* SubModal — force full width, no centering gaps */
+    .submodal-panel {
+        width: 100vw !important;
+        max-width: 100vw !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
     }
 
     /* Context menu bottom sheet on mobile */
@@ -566,6 +608,6 @@ body.oled-theme .sidebar-search-dropdown {
 
 /* OLED sidebar: glow separation instead of hard border */
 body.oled-theme .oled-sidebar {
-    box-shadow: 6px 0 32px rgba(139, 92, 246, 0.1), 2px 0 8px rgba(167, 139, 250, 0.06);
+    box-shadow: none;
 }
 

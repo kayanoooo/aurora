@@ -1,28 +1,34 @@
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from fastapi import WebSocket
 
 class ConnectionManager:
-    """Управляет WebSocket соединениями"""
+    """Manages WebSocket connections — supports multiple connections per user (multi-device)"""
 
     def __init__(self):
-        # user_id -> websocket
-        self.active_connections: Dict[int, WebSocket] = {}
-        # users who manually set themselves offline (tab hidden / blur)
+        # user_id -> list of websockets (one per device/tab)
+        self.active_connections: Dict[int, List[WebSocket]] = {}
         self.manual_offline: set = set()
 
     async def connect(self, user_id: int, websocket: WebSocket):
-        """Подключает пользователя"""
         await websocket.accept()
-        self.active_connections[user_id] = websocket
+        if user_id not in self.active_connections:
+            self.active_connections[user_id] = []
+        self.active_connections[user_id].append(websocket)
         self.manual_offline.discard(user_id)
-        print(f"User {user_id} connected. Total active: {len(self.active_connections)}")
+        print(f"User {user_id} connected. Connections: {len(self.active_connections[user_id])}. Total users: {len(self.active_connections)}")
 
-    def disconnect(self, user_id: int):
-        """Отключает пользователя"""
-        if user_id in self.active_connections:
+    def disconnect(self, user_id: int, websocket: WebSocket = None):
+        if user_id not in self.active_connections:
+            return
+        if websocket is not None:
+            try:
+                self.active_connections[user_id].remove(websocket)
+            except ValueError:
+                pass
+        if not self.active_connections[user_id]:
             del self.active_connections[user_id]
             self.manual_offline.discard(user_id)
-            print(f"User {user_id} disconnected. Total active: {len(self.active_connections)}")
+        print(f"User {user_id} disconnected. Remaining: {len(self.active_connections.get(user_id, []))}")
 
     def set_manual_offline(self, user_id: int):
         self.manual_offline.add(user_id)
@@ -31,35 +37,31 @@ class ConnectionManager:
         self.manual_offline.discard(user_id)
 
     async def send_message_to_user(self, user_id: int, message: dict) -> bool:
-        """Отправляет сообщение конкретному пользователю"""
-        print(f"📤 Attempting to send to user {user_id}: {message}")
-        
-        if user_id in self.active_connections:
+        sockets = self.active_connections.get(user_id, [])
+        if not sockets:
+            return False
+        delivered = False
+        dead = []
+        for ws in list(sockets):
             try:
-                await self.active_connections[user_id].send_json(message)
-                print(f"✅ Sent to user {user_id}")
-                return True
+                await ws.send_json(message)
+                delivered = True
             except Exception as e:
                 print(f"❌ Error sending to user {user_id}: {e}")
-                self.disconnect(user_id)
-                return False
-        else:
-            print(f"User {user_id} is offline")
-            return False
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(user_id, ws)
+        return delivered
 
     async def send_to_group_members(self, group_id: int, message: dict, exclude_user_id: int = None):
-        """Отправить сообщение всем участникам группы"""
-        # Нужно получить участников группы
         from .models import GroupModel
         members = await GroupModel.get_members(group_id)
-        
         for member in members:
             if exclude_user_id and member['id'] == exclude_user_id:
                 continue
             await self.send_message_to_user(member['id'], message)
-    
+
     def is_user_online(self, user_id: int) -> bool:
-        """Проверяет, онлайн ли пользователь"""
-        return user_id in self.active_connections and user_id not in self.manual_offline
+        return bool(self.active_connections.get(user_id)) and user_id not in self.manual_offline
 
 manager = ConnectionManager()

@@ -208,7 +208,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
 
     const dispPlaying = isActive ? (globalPlaying ?? false) : playing;
     const dispCurrentTime = isActive ? (globalCurrentTime ?? 0) : localCurrentTime;
-    const dispDuration = isActive ? (globalDuration ?? 0) : localDuration;
+    const dispDuration = isActive ? (globalDuration && globalDuration > 0 ? globalDuration : localDuration) : localDuration;
     const dispProgress = dispDuration > 0 ? dispCurrentTime / dispDuration : 0;
 
     const formatTime = (s: number) => {
@@ -256,27 +256,32 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
         a.currentTime = ((e.clientX - rect.left) / rect.width) * dur;
     };
 
-    const localAudioEl = !onPlay ? (
+    // Always render a hidden audio element to load metadata (duration), even in global-player mode.
+    // When onPlay is provided the element is muted/inert — it never actually plays.
+    const localAudioEl = (
         <audio
             ref={audioRef}
             src={url}
-            onPlay={() => setPlaying(true)}
-            onPause={() => setPlaying(false)}
-            onEnded={handleEnded}
-
+            preload="metadata"
+            muted={!!onPlay}
+            onPlay={() => { if (!onPlay) setPlaying(true); }}
+            onPause={() => { if (!onPlay) setPlaying(false); }}
+            onEnded={!onPlay ? handleEnded : undefined}
+            onLoadedMetadata={handleDurationChange}
             onDurationChange={handleDurationChange}
-            onTimeUpdate={handleTimeUpdate}
+            onTimeUpdate={!onPlay ? handleTimeUpdate : undefined}
         />
-    ) : null;
+    );
 
     // ── Voice message layout ──
     if (isVoice) {
         const waveHeights = [4, 8, 14, 20, 16, 10, 18, 24, 16, 12, 8, 14, 20, 15, 10, 7, 12, 18, 13, 9];
         const safeDispDuration = dispDuration > 0 && isFinite(dispDuration) ? dispDuration : 0;
-        const filledColor = isOwn ? 'rgba(255,255,255,0.9)' : '#6366f1';
+        const isOledVoice = dm && document.body.classList.contains('oled-theme');
+        const filledColor = isOwn ? 'rgba(255,255,255,0.9)' : isOledVoice ? '#a78bfa' : '#6366f1';
         const emptyColor = isOwn ? 'rgba(255,255,255,0.3)' : dm ? '#5a5a8a' : '#c4b5fd';
-        const btnBg = isOwn ? 'rgba(255,255,255,0.18)' : dm ? 'rgba(99,102,241,0.18)' : '#ede9fe';
-        const btnColor = isOwn ? 'white' : '#6366f1';
+        const btnBg = isOwn ? 'rgba(255,255,255,0.28)' : isOledVoice ? 'rgba(167,139,250,0.25)' : dm ? 'rgba(99,102,241,0.28)' : '#ede9fe';
+        const btnColor = isOwn || dm ? 'white' : '#6366f1';
         const timeColor = isOwn ? 'rgba(255,255,255,0.6)' : dm ? '#7c7caa' : '#9ca3af';
 
         return (
@@ -302,7 +307,9 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
                             ))}
                         </div>
                         <div style={{ fontSize: 11, color: timeColor }}>
-                            {formatTime(dispCurrentTime)}{safeDispDuration > 0 ? ` / ${formatTime(safeDispDuration)}` : ''}
+                            {(dispPlaying || dispCurrentTime > 0)
+                                ? `${formatTime(dispCurrentTime)} / ${formatTime(safeDispDuration > 0 ? safeDispDuration : 0)}`
+                                : formatTime(safeDispDuration > 0 ? safeDispDuration : 0)}
                         </div>
                     </div>
                 </div>
@@ -311,25 +318,32 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
     }
 
     // ── Regular audio layout ──
+    const isOled = dm && document.body.classList.contains('oled-theme');
     const bg = isOwn ? 'rgba(255,255,255,0.15)' : dm ? 'rgba(255,255,255,0.06)' : '#f5f3ff';
     const border = isOwn ? 'rgba(255,255,255,0.2)' : dm ? '#3a3a55' : '#ede9fe';
     const textColor = isOwn ? 'white' : dm ? '#e2e8f0' : '#1e1b4b';
     const subColor = isOwn ? 'rgba(255,255,255,0.55)' : dm ? '#7c7caa' : '#9ca3af';
     const trackBg = isOwn ? 'rgba(255,255,255,0.25)' : dm ? '#3a3a55' : '#ddd9f7';
-    const fillColor = isOwn ? 'rgba(255,255,255,0.85)' : '#6366f1';
-    const btnBg = isOwn ? 'rgba(255,255,255,0.2)' : dm ? 'rgba(99,102,241,0.18)' : '#ede9fe';
-    const btnColor = isOwn ? 'white' : '#6366f1';
+    const fillColor = isOwn ? 'rgba(255,255,255,0.85)' : isOled ? '#a78bfa' : '#6366f1';
+    const btnBg = isOwn ? 'rgba(255,255,255,0.32)' : isOled ? 'rgba(167,139,250,0.25)' : dm ? 'rgba(99,102,241,0.28)' : '#ddd6fe';
+    const btnColor = isOwn || dm ? 'white' : '#4f46e5';
 
     return (
         <div style={{ width: '100%', maxWidth: 260, minWidth: 180, background: bg, border: `1px solid ${border}`, borderRadius: 14, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8, boxSizing: 'border-box' }}>
             {localAudioEl}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <button onClick={toggle} style={{ width: 36, height: 36, borderRadius: '50%', background: btnBg, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: btnColor, flexShrink: 0 }}>
-                    {dispPlaying ? '⏸' : '▶'}
+                <button onClick={toggle} style={{ width: 36, height: 36, borderRadius: '50%', background: btnBg, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: btnColor, flexShrink: 0 }}>
+                    {dispPlaying
+                        ? <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="4" height="16" rx="1"/><rect x="15" y="4" width="4" height="16" rx="1"/></svg>
+                        : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,3 20,12 6,21"/></svg>}
                 </button>
                 <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: textColor, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{isVoice ? voiceDisplayName : name}</div>
-                    <div style={{ fontSize: 11, color: subColor, marginTop: 1 }}>{formatTime(dispCurrentTime)} / {formatTime(dispDuration > 0 && isFinite(dispDuration) ? dispDuration : 0)}</div>
+                    <div style={{ fontSize: 11, color: subColor, marginTop: 1 }}>
+                        {(dispPlaying || dispCurrentTime > 0)
+                            ? `${formatTime(dispCurrentTime)} / ${formatTime(dispDuration > 0 && isFinite(dispDuration) ? dispDuration : 0)}`
+                            : formatTime(dispDuration > 0 && isFinite(dispDuration) ? dispDuration : 0)}
+                    </div>
                 </div>
                 <button onClick={onDownload} style={{ background: btnBg, border: 'none', borderRadius: 8, padding: '5px 8px', cursor: 'pointer', fontSize: 13, color: btnColor, flexShrink: 0 }} title="Скачать">
                     💾

@@ -36,6 +36,19 @@ function App() {
     const [auth, setAuth] = useState<AuthState | null>(null);
     const [setupToken, setSetupToken] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
+    const [installPrompt, setInstallPrompt] = useState<any>(null);
+    const [showInstallBanner, setShowInstallBanner] = useState(false);
+
+    useEffect(() => {
+        const handler = (e: any) => {
+            e.preventDefault();
+            setInstallPrompt(e);
+            // Show banner only once per session, after 3s
+            setTimeout(() => setShowInstallBanner(true), 3000);
+        };
+        window.addEventListener('beforeinstallprompt', handler);
+        return () => window.removeEventListener('beforeinstallprompt', handler);
+    }, []);
     const [theme, setTheme] = useState<ThemeSettings>(() => {
         try {
             let userId: number | null = null;
@@ -44,6 +57,7 @@ function App() {
             const saved = localStorage.getItem(key) ?? (userId ? localStorage.getItem('chat_theme') : null);
             const t = saved ? { ...DEFAULT_THEME, ...JSON.parse(saved) } : DEFAULT_THEME;
             if (t.darkMode && t.chatBg === '#000000') document.body.classList.add('oled-theme');
+            if (t.darkMode) document.body.classList.add('dark-theme'); else document.body.classList.remove('dark-theme');
             return t;
         } catch { return DEFAULT_THEME; }
     });
@@ -56,6 +70,7 @@ function App() {
                 const t = { ...DEFAULT_THEME, ...JSON.parse(saved) };
                 setTheme(t);
                 document.body.classList.toggle('oled-theme', t.darkMode && t.chatBg === '#000000');
+                document.body.classList.toggle('dark-theme', t.darkMode);
             }
             const res = await api.getProfile(token);
             if (res.success && res.user) {
@@ -192,8 +207,40 @@ function App() {
         return <SetupModal token={setupToken} onComplete={handleSetupComplete} />;
     }
 
+    const handleInstall = async () => {
+        if (!installPrompt) return;
+        installPrompt.prompt();
+        const { outcome } = await installPrompt.userChoice;
+        if (outcome === 'accepted') setInstallPrompt(null);
+        setShowInstallBanner(false);
+    };
+
     return (
         <div className="App">
+            {/* PWA install banner (Android Chrome / Edge) */}
+            {showInstallBanner && installPrompt && (
+                <div style={{
+                    position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',
+                    zIndex: 9999, background: 'linear-gradient(135deg,#6366f1,#8b5cf6)',
+                    color: 'white', borderRadius: 16, padding: '12px 20px',
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    boxShadow: '0 8px 32px rgba(99,102,241,0.45)',
+                    maxWidth: 'calc(100vw - 32px)', width: 340,
+                    animation: 'fadeInUp 0.3s ease',
+                }}>
+                    <img src="/logo192.png" alt="Aurora" style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>Установить Aurora</div>
+                        <div style={{ fontSize: 12, opacity: 0.85 }}>Добавить на главный экран</div>
+                    </div>
+                    <button onClick={handleInstall} style={{ background: 'rgba(255,255,255,0.22)', border: 'none', borderRadius: 10, color: 'white', fontWeight: 700, fontSize: 13, padding: '7px 14px', cursor: 'pointer', flexShrink: 0 }}>
+                        Установить
+                    </button>
+                    <button onClick={() => setShowInstallBanner(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', fontSize: 18, padding: 4, flexShrink: 0, lineHeight: 1 }}>
+                        ✕
+                    </button>
+                </div>
+            )}
             {!auth ? (
                 <Auth onAuth={handleAuth} />
             ) : (

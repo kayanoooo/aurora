@@ -8,8 +8,10 @@ const {
     shell,
     Notification,
     dialog,
+    protocol,
 } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 const isDev = !!process.env.ELECTRON_START_URL;
 const START_URL = process.env.ELECTRON_START_URL
@@ -44,7 +46,7 @@ function createWindow() {
         height: 800,
         minWidth: 900,
         minHeight: 600,
-        title: 'MAX Messenger',
+        title: 'Aurora',
         icon: icon.isEmpty() ? undefined : icon,
         backgroundColor: '#1a1a2e',
         webPreferences: {
@@ -78,7 +80,7 @@ function createWindow() {
                 if (tray && !app.trayHintShown) {
                     app.trayHintShown = true;
                     tray.displayBalloon?.({
-                        title: 'MAX Messenger',
+                        title: 'Aurora',
                         content: 'Приложение свёрнуто в трей. Дважды кликните, чтобы открыть.',
                     });
                 }
@@ -108,7 +110,7 @@ function createTray() {
 
     const contextMenu = Menu.buildFromTemplate([
         {
-            label: 'Открыть MAX Messenger',
+            label: 'Открыть Aurora',
             click: () => showMainWindow(),
         },
         { type: 'separator' },
@@ -131,7 +133,7 @@ function createTray() {
         },
     ]);
 
-    tray.setToolTip('MAX Messenger');
+    tray.setToolTip('Aurora');
     tray.setContextMenu(contextMenu);
 
     tray.on('double-click', () => showMainWindow());
@@ -153,11 +155,11 @@ function showMainWindow() {
 function buildAppMenu() {
     const template = [
         {
-            label: 'MAX',
+            label: 'Aurora',
             submenu: [
                 { label: 'О программе', role: 'about' },
                 { type: 'separator' },
-                { label: 'Скрыть MAX', role: 'hide' },
+                { label: 'Скрыть Aurora', role: 'hide' },
                 { type: 'separator' },
                 {
                     label: 'Выход',
@@ -262,6 +264,36 @@ ipcMain.handle('set-server-host', (event, host) => {
 });
 
 // ─── App Lifecycle ─────────────────────────────────────────────────────────────
+
+// In production, intercept file:// requests so absolute paths like /logo192.png
+// resolve to client/build/ instead of the filesystem root.
+if (!isDev) {
+    const BUILD_DIR = path.join(__dirname, '../client/build');
+    protocol.registerSchemesAsPrivileged([]);
+    app.whenReady().then(() => {
+        protocol.interceptFileProtocol('file', (request, callback) => {
+            let filePath = decodeURIComponent(request.url.replace(/^file:\/\//, ''));
+
+            // Remove query strings / hash fragments
+            filePath = filePath.split('?')[0].split('#')[0];
+
+            // If path doesn't start with BUILD_DIR, try to remap it
+            if (!filePath.startsWith(BUILD_DIR)) {
+                // Strip Windows drive letters (e.g. /C:/...)
+                const stripped = filePath.replace(/^\/[A-Za-z]:/, '');
+                const candidate = path.join(BUILD_DIR, stripped);
+                if (fs.existsSync(candidate)) {
+                    callback({ path: candidate });
+                } else {
+                    // SPA fallback — serve index.html
+                    callback({ path: path.join(BUILD_DIR, 'index.html') });
+                }
+            } else {
+                callback({ path: filePath });
+            }
+        });
+    });
+}
 
 app.whenReady().then(() => {
     buildAppMenu();

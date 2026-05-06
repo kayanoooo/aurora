@@ -66,6 +66,33 @@ export const api = {
             return await response.json();
         } catch (error) { throw error; }
     },
+
+    async sendResetCode(email: string) {
+        try {
+            const response = await fetch(`${API_URL}/auth/send-reset-code`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email }),
+            });
+            return await response.json();
+        } catch (error) { throw error; }
+    },
+
+    async confirmReset(email: string, code: string, new_password: string) {
+        try {
+            const response = await fetch(`${API_URL}/auth/confirm-reset`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, code, new_password }),
+            });
+            if (!response.ok) {
+                let detail = 'Ошибка';
+                try { const j = await response.json(); detail = j.detail || detail; } catch {}
+                return { success: false, detail };
+            }
+            return await response.json();
+        } catch (error) { throw error; }
+    },
     
     async getUsers(token: string) {
         try {
@@ -84,16 +111,16 @@ export const api = {
         }
     },
     
-    async getConversation(token: string, userId: number) {
+    async getConversation(token: string, userId: number, beforeId?: number) {
         try {
-            const response = await fetch(`${API_URL}/conversation/${userId}?token=${token}`);
-            
+            let url = `${API_URL}/conversation/${userId}?token=${token}&limit=200`;
+            if (beforeId) url += `&before_id=${beforeId}`;
+            const response = await fetch(url);
             if (!response.ok) {
                 const text = await response.text();
                 console.error('Server error response:', text);
                 throw new Error(`HTTP ${response.status}: ${text}`);
             }
-            
             return await response.json();
         } catch (error) {
             console.error('Get conversation error:', error);
@@ -246,9 +273,27 @@ export const api = {
         return data;
     },
 
-    async getGroupMessages(token: string, groupId: number, limit: number = 10000) {
-        const response = await fetch(`${API_URL}/groups/${groupId}/messages?token=${token}&limit=${limit}`);
+    async getGroupMessages(token: string, groupId: number, beforeId?: number) {
+        let url = `${API_URL}/groups/${groupId}/messages?token=${token}&limit=200`;
+        if (beforeId) url += `&before_id=${beforeId}`;
+        const response = await fetch(url);
         return response.json();
+    },
+
+    async getLinkPreview(token: string, url: string) {
+        try {
+            const response = await fetch(`${API_URL}/link-preview?token=${token}&url=${encodeURIComponent(url)}`);
+            if (!response.ok) return null;
+            return await response.json();
+        } catch { return null; }
+    },
+
+    exportChat(token: string, chatType: string, chatId: number, fmt: 'json' | 'txt' = 'json') {
+        const url = `${API_URL}/export/chat?token=${token}&chat_type=${chatType}&chat_id=${chatId}&fmt=${fmt}`;
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `chat_${chatId}.${fmt}`;
+        a.click();
     },
 
     async searchMessages(token: string, query: string, chatType?: string, chatId?: number) {
@@ -475,6 +520,15 @@ export const api = {
 
     async deleteAdminUser(token: string, userId: number) {
         const response = await fetch(`${API_URL}/admin/users/${userId}?token=${token}`, { method: 'DELETE' });
+        return response.json();
+    },
+
+    async updateAdminUser(token: string, userId: number, data: { username?: string; email?: string; tag?: string; status?: string }) {
+        const response = await fetch(`${API_URL}/admin/users/${userId}?token=${token}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
         return response.json();
     },
 

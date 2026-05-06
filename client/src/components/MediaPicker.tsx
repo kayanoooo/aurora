@@ -214,9 +214,10 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
     const accent = '#6366f1';
 
     const isMobileView = typeof window !== 'undefined' && window.innerWidth < 640;
+    const mobileInputH = isMobileView ? (() => { const el = document.querySelector('.chat-input-area'); return el ? el.getBoundingClientRect().height : 60; })() : 0;
     const panelStyle: React.CSSProperties = isMobileView ? {
         position: 'fixed',
-        bottom: 64,
+        bottom: mobileInputH,
         left: 0,
         right: 0,
         width: '100vw',
@@ -232,7 +233,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
     } : {
         position: 'absolute',
         bottom: 62,
-        right: 0,
+        left: 0,
         width: 380,
         height: 460,
         backgroundColor: bg,
@@ -247,7 +248,6 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
 
     const tabBarStyle: React.CSSProperties = {
         display: 'flex',
-        borderBottom: `1px solid ${border}`,
         flexShrink: 0,
     };
 
@@ -271,7 +271,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
     const renderEmojiTab = () => (
         <>
             {/* Category tabs */}
-            <div style={{ display: 'flex', overflowX: 'auto', padding: '6px 8px', borderBottom: `1px solid ${border}`, gap: 2, flexShrink: 0 }}>
+            <div style={{ display: 'flex', overflowX: 'auto', padding: '6px 8px', gap: 2, flexShrink: 0 }}>
                 {EMOJI_CATEGORIES.map((cat, i) => (
                     <button key={i} onClick={() => setEmojiCat(i)} className="emoji-btn" style={{ background: emojiCat === i ? (dm ? '#2d3a5a' : '#e8f0fe') : 'none', border: 'none', fontSize: 20, cursor: 'pointer', padding: 0, borderRadius: 6, flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={cat.name}>
                         {cat.label}
@@ -285,7 +285,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
             {/* Grid */}
             <div style={{ display: 'flex', flexWrap: 'wrap', padding: 8, overflowY: 'auto', flex: 1 }}>
                 {EMOJI_CATEGORIES[emojiCat].emojis.map((emoji, i) => (
-                    <button key={i} onClick={() => onSelectEmoji(emoji)} className="emoji-btn" style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', padding: 0, borderRadius: 6, lineHeight: 1, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={emoji}>
+                    <button key={i} onClick={() => onSelectEmoji(emoji)} className="emoji-btn" style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', padding: 0, borderRadius: 6, lineHeight: 1, width: isMobileView ? 44 : 36, height: isMobileView ? 44 : 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={emoji}>
                         {emoji}
                     </button>
                 ))}
@@ -297,12 +297,12 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
     const renderStickersTab = () => (
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
             {/* Pack sidebar */}
-            <div style={{ width: 52, borderRight: `1px solid ${border}`, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '8px 0', gap: 4, overflowY: 'auto', flexShrink: 0, backgroundColor: sidebarBg }}>
+            <div style={{ width: 52, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '8px 0', gap: 4, overflowY: 'auto', flexShrink: 0, backgroundColor: sidebarBg }}>
                 {/* Recent stickers button */}
                 <button
                     title={t('Recent')}
                     onClick={() => setSelectedPackId(RECENT_PACK_ID)}
-                    style={{ width: 38, height: 38, borderRadius: 10, border: `2px solid ${selectedPackId === RECENT_PACK_ID ? accent : 'transparent'}`, background: selectedPackId === RECENT_PACK_ID ? (dm ? 'rgba(99,102,241,0.2)' : '#ede9fe') : 'none', fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.12s' }}
+                    style={{ width: isMobileView ? 44 : 38, height: isMobileView ? 44 : 38, borderRadius: 10, border: `2px solid ${selectedPackId === RECENT_PACK_ID ? accent : 'transparent'}`, background: selectedPackId === RECENT_PACK_ID ? (dm ? 'rgba(99,102,241,0.2)' : '#ede9fe') : 'none', fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.12s' }}
                 >
                     🕐
                 </button>
@@ -312,7 +312,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
                         title={pack.name}
                         onContextMenu={e => { e.preventDefault(); setPackCtxMenu({ id: pack.id, x: e.clientX, y: e.clientY }); }}
                         onClick={() => setSelectedPackId(pack.id)}
-                        style={{ width: 38, height: 38, borderRadius: 10, border: `2px solid ${selectedPackId === pack.id ? accent : 'transparent'}`, background: selectedPackId === pack.id ? (dm ? 'rgba(99,102,241,0.2)' : '#ede9fe') : 'none', fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.12s' }}
+                        style={{ width: isMobileView ? 44 : 38, height: isMobileView ? 44 : 38, borderRadius: 10, border: `2px solid ${selectedPackId === pack.id ? accent : 'transparent'}`, background: selectedPackId === pack.id ? (dm ? 'rgba(99,102,241,0.2)' : '#ede9fe') : 'none', fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.12s' }}
                     >
                         {pack.emoji}
                     </button>
@@ -321,7 +321,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
                 <button
                     title={t('Create pack')}
                     onClick={() => setCreatePackOpen(true)}
-                    style={{ width: 38, height: 38, borderRadius: 10, border: `2px dashed ${dm ? '#3a3a5a' : '#c4b5fd'}`, background: 'none', fontSize: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: subtext, transition: 'all 0.12s', marginTop: 4 }}
+                    style={{ width: isMobileView ? 44 : 38, height: isMobileView ? 44 : 38, borderRadius: 10, border: `2px dashed ${dm ? '#3a3a5a' : '#c4b5fd'}`, background: 'none', fontSize: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: subtext, transition: 'all 0.12s', marginTop: 4 }}
                 >
                     +
                 </button>
@@ -339,7 +339,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
                         </div>
                     ) : (
                         <>
-                            <div style={{ padding: '8px 12px', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                            <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                                 <span style={{ fontSize: 16 }}>🕐</span>
                                 <span style={{ fontSize: 13, fontWeight: 700, color: text }}>{t('Recent')}</span>
                             </div>
@@ -416,7 +416,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
                 ) : (
                     <>
                         {/* Pack header */}
-                        <div style={{ padding: '8px 12px', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                        <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                             <span style={{ fontSize: 20 }}>{selectedPack!.emoji}</span>
                             <span style={{ fontSize: 13, fontWeight: 700, color: text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedPack!.name}</span>
                             <button onClick={() => stickerFileRef.current?.click()} disabled={uploadingSticker} title={t('Add sticker')}
@@ -444,7 +444,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
     const renderGifTab = () => (
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
             {/* Search + subtabs */}
-            <div style={{ padding: '8px 10px', borderBottom: `1px solid ${border}`, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ padding: '8px 10px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <input
                     value={gifQuery}
                     onChange={e => { setGifQuery(e.target.value); setGifSubTab('trending'); }}
@@ -503,7 +503,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
 
             {/* Giphy attribution */}
             {gifSubTab === 'trending' && (
-                <div style={{ padding: '4px 8px', textAlign: 'right', fontSize: 10, color: subtext, borderTop: `1px solid ${border}`, flexShrink: 0 }}>
+                <div style={{ padding: '4px 8px', textAlign: 'right', fontSize: 10, color: subtext, flexShrink: 0 }}>
                     Powered by GIPHY
                 </div>
             )}
@@ -563,6 +563,8 @@ const StickerThumb: React.FC<{
         <div
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => setHovered(false)}
+            onTouchStart={() => setHovered(true)}
+            onTouchEnd={() => setTimeout(() => setHovered(false), 400)}
             style={{ position: 'relative', width: 80, height: 80, borderRadius: 10, overflow: 'hidden', cursor: 'pointer', border: `2px solid ${hovered ? '#6366f1' : 'transparent'}`, transition: 'border-color 0.1s', backgroundColor: thumbBg }}
         >
             <img
@@ -625,6 +627,8 @@ const GifThumb: React.FC<{
         <div
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => setHovered(false)}
+            onTouchStart={() => setHovered(true)}
+            onTouchEnd={() => setTimeout(() => setHovered(false), 400)}
             style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', cursor: 'pointer', backgroundColor: gifBg }}
             onClick={() => onSend(gif.url)}
         >

@@ -78,9 +78,6 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
     const [showMembersModal, setShowMembersModal] = useState(false);
     const [showAdminsModal, setShowAdminsModal] = useState(false);
     const [showAddMembersModal, setShowAddMembersModal] = useState(false);
-    const [inviteLink, setInviteLink] = useState<string | null>(null);
-    const [inviteCopied, setInviteCopied] = useState(false);
-    const [generatingLink, setGeneratingLink] = useState(false);
     const [channelSettings, setChannelSettings] = useState(false);
     const [editChannelType, setEditChannelType] = useState<'public' | 'private'>('public');
     const [editChannelTag, setEditChannelTag] = useState('');
@@ -94,8 +91,11 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
     const [mediaExpanded, setMediaExpanded] = useState(false);
     const [mediaTab, setMediaTab] = useState<'images' | 'video' | 'audio' | 'files'>('images');
     const [lightbox, setLightbox] = useState<{ src: string; filename: string; isVideo: boolean } | null>(null);
+    const [mediaClosing, setMediaClosing] = useState(false);
+    // Mobile: separate participants slide
+    const [membersSlide, setMembersSlide] = useState<'members' | 'admins' | 'add' | null>(null);
 
-    useEffect(() => { loadGroupInfo(); }, [groupId]);
+    useEffect(() => { loadGroupInfo(); }, [groupId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (liveGroupAvatar !== undefined) {
@@ -195,19 +195,6 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
         } catch {}
     };
 
-    const handleGenerateInviteLink = async () => {
-        if (inviteLink) { navigator.clipboard.writeText(inviteLink).then(() => { setInviteCopied(true); setTimeout(() => setInviteCopied(false), 2000); }); return; }
-        setGeneratingLink(true);
-        try {
-            const res = await api.generateInviteLink(token, groupId);
-            if (res.invite_link) {
-                setInviteLink(res.invite_link);
-                setGroup(g => g ? { ...g, invite_link: res.invite_link } : g);
-                navigator.clipboard.writeText(res.invite_link).then(() => { setInviteCopied(true); setTimeout(() => setInviteCopied(false), 2000); });
-            }
-        } catch {} finally { setGeneratingLink(false); }
-    };
-
     const handleSaveChannelSettings = async () => {
         setChannelSettingsSaving(true);
         try {
@@ -215,7 +202,6 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
             if (res.success) {
                 setGroup(g => g ? { ...g, channel_type: editChannelType, channel_tag: editChannelType === 'public' ? editChannelTag : null, invite_link: editChannelType === 'public' ? g.invite_link : null } : g);
                 setChannelSettings(false);
-                if (editChannelType === 'public') setInviteLink(null);
             } else alert(res.detail || tr('Error'));
         } catch { alert(tr('Connection error')); } finally { setChannelSettingsSaving(false); }
     };
@@ -274,11 +260,17 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
         return { imgs: i.reverse(), vids: v.reverse(), auds: a.reverse(), files: f.reverse() };
     }, [messages]);
 
+    const mediaTabIcons = {
+        images: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>,
+        video: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>,
+        audio: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
+        files: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
+    };
     const mediaTabs = [
-        { key: 'images' as const, icon: '🖼', label: tr('Photo'), count: imgs.length },
-        { key: 'video' as const, icon: '🎬', label: tr('Video'), count: vids.length },
-        { key: 'audio' as const, icon: '🎵', label: tr('Audio'), count: auds.length },
-        { key: 'files' as const, icon: '📄', label: tr('Files'), count: files.length },
+        { key: 'images' as const, label: tr('Photo'), count: imgs.length },
+        { key: 'video' as const, label: tr('Video'), count: vids.length },
+        { key: 'audio' as const, label: tr('Audio'), count: auds.length },
+        { key: 'files' as const, label: tr('Files'), count: files.length },
     ];
 
     const currentTabData = mediaTab === 'images' ? imgs : mediaTab === 'video' ? vids : mediaTab === 'audio' ? auds : files;
@@ -310,8 +302,6 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
     const isAdmin = members.find(m => m.id === currentUserId)?.role === 'admin';
     const groupAvatarUrl = config.fileUrl(group?.avatar);
     const isChannel = !!group?.is_channel;
-    const resolvedInviteLink = inviteLink ?? group?.invite_link ?? null;
-
     // Channel sub-modal helper
     const renderMemberRow = (member: GroupMember, showRoleActions: boolean) => (
         <div key={member.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 12, backgroundColor: memberBg, border: !dm ? '1px solid #ede9fe' : ('1px solid rgba(99,102,241,0.1)') }}>
@@ -363,6 +353,348 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
         document.body
     );
 
+    const isMobile = window.innerWidth <= 768;
+
+    // ── Mobile fullscreen layout ────────────────────────────────────────────────
+    if (isMobile) {
+        const collapseMedia = () => { setMediaClosing(true); setTimeout(() => { setMediaExpanded(false); setMediaClosing(false); }, 220); };
+        const profileLabel = isChannel ? (lang === 'en' ? 'Channel' : 'Канал') : (lang === 'en' ? 'Group' : 'Группа');
+
+        return ReactDOM.createPortal(
+            <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 3000, backgroundColor: isOled ? 'rgba(0,0,0,0.88)' : (dm ? 'rgba(15,10,40,0.6)' : 'rgba(15,10,40,0.3)'), backdropFilter: 'blur(10px)' }}
+                className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'} onClick={close} />
+
+            {/* Profile screen */}
+            <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, top: 0, zIndex: 3001, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+                className={closing ? 'mobile-profile-exit' : 'mobile-profile-enter'}
+                onClick={e => e.stopPropagation()}>
+                {/* Top bar */}
+                <div style={{ display: 'flex', alignItems: 'center', padding: "14px 16px 10px", gap: 10, flexShrink: 0 }}>
+                    <button onClick={close} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: 4, display: 'flex', alignItems: 'center' }}>
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                    </button>
+                    <span style={{ fontWeight: 700, fontSize: 17, color: dm ? '#e2e8f0' : '#1e1b4b', flex: 1 }}>{profileLabel}</span>
+                    {isAdmin && <button onClick={() => setEditing(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: 4, display: 'flex', alignItems: 'center' }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>}
+                </div>
+
+                <div style={{ flex: 1, overflowY: 'auto', padding: '20px 16px 32px' }}>
+                    {/* Avatar + name */}
+                    <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                        <div style={{ width: 90, height: 90, borderRadius: '50%', background: groupAvatarUrl ? memberBg : 'linear-gradient(135deg,#6366f1,#8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', overflow: 'hidden', boxShadow: '0 0 24px rgba(99,102,241,0.4)', cursor: groupAvatarUrl ? 'zoom-in' : 'default' }}
+                            onClick={() => groupAvatarUrl && setLightbox({ src: groupAvatarUrl, filename: group?.name || 'avatar', isVideo: false })}>
+                            {groupAvatarUrl ? <img src={groupAvatarUrl} alt="group" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : <span style={{ fontSize: 34, color: 'white', fontWeight: 700 }}>{group?.name[0]?.toUpperCase()}</span>}
+                        </div>
+                        <h2 style={{ fontSize: 20, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', margin: '0 0 4px' }}>{group?.name}</h2>
+                        <p style={{ fontSize: 13, color: sub, margin: 0 }}>{isChannel ? (lang === 'en' ? 'Channel' : 'Канал') : formatMembers(members.length, 'member', lang)}</p>
+                    </div>
+
+                    {/* Description */}
+                    {group?.description && (
+                        <div style={{ backgroundColor: cardBg, borderRadius: 12, padding: '12px 14px', marginBottom: 14 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: sub, textTransform: 'uppercase' as const, letterSpacing: '0.6px', marginBottom: 4 }}>{tr('Description')}</div>
+                            <div style={{ color: dm ? '#c0c0d8' : '#374151', fontSize: 14 }}>{group.description}</div>
+                        </div>
+                    )}
+
+                    {/* Media tabs */}
+                    {hasMedia && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+                            {mediaTabs.map(tab => (
+                                <button key={tab.key} onClick={() => openMediaTab(tab.key)}
+                                    style={{ padding: '14px 8px', borderRadius: 14, border: 'none', boxShadow: isOled ? '0 2px 12px rgba(0,0,0,0.8)' : dm ? '0 2px 10px rgba(0,0,0,0.35)' : '0 2px 8px rgba(99,102,241,0.07)', background: isOled ? '#050508' : (dm ? '#12122a' : '#f5f3ff'), cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, color: sub }}>
+                                    {React.cloneElement(mediaTabIcons[tab.key], { width: 20, height: 20 })}
+                                    <span style={{ fontSize: 12, fontWeight: 600 }}>{tab.label}</span>
+                                    {tab.count > 0 && <span style={{ fontSize: 11, color: '#6366f1', fontWeight: 700 }}>{tab.count}</span>}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Members list (non-channel groups) */}
+                    {!isChannel && members.length > 0 && (
+                        <div>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: sub, textTransform: 'uppercase' as const, letterSpacing: '0.6px', marginBottom: 8 }}>{lang === 'en' ? 'Members' : 'Участники'} ({members.length})</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                {members.slice(0, 15).map(member => renderMemberRow(member, isAdmin))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Settings / edit panel — slides from right */}
+            {editing && (
+                <div style={{ position: 'fixed', inset: 0, zIndex: 3002, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+                    className="mobile-media-enter" onClick={e => e.stopPropagation()}>
+                    <div style={{ display: 'flex', alignItems: 'center', padding: "14px 16px 10px", gap: 10, flexShrink: 0 }}>
+                        <button onClick={() => setEditing(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: 4, display: 'flex', alignItems: 'center' }}>
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                        </button>
+                        <span style={{ fontWeight: 700, fontSize: 17, color: dm ? '#e2e8f0' : '#1e1b4b', flex: 1 }}>
+                            {isChannel ? (lang === 'en' ? 'Channel settings' : 'Настройки канала') : (lang === 'en' ? 'Group settings' : 'Настройки группы')}
+                        </span>
+                    </div>
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '20px 16px 32px', display: 'flex', flexDirection: 'column', gap: 0 }}>
+                        {/* Avatar */}
+                        <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                            <div style={{ width: 80, height: 80, borderRadius: '50%', background: groupAvatarUrl ? memberBg : 'linear-gradient(135deg,#6366f1,#8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px', overflow: 'hidden', boxShadow: '0 0 20px rgba(99,102,241,0.4)', cursor: 'pointer', position: 'relative' as const }}
+                                onClick={() => fileRef.current?.click()}>
+                                {groupAvatarUrl ? <img src={groupAvatarUrl} alt="group" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : <span style={{ fontSize: 30, color: 'white', fontWeight: 700 }}>{group?.name[0]?.toUpperCase()}</span>}
+                                <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%' }}>
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                                </div>
+                            </div>
+                            <span style={{ fontSize: 12, color: sub }}>{lang === 'en' ? 'Tap to change photo' : 'Нажмите чтобы изменить фото'}</span>
+                        </div>
+
+                        {/* Name + description */}
+                        <div style={{ backgroundColor: cardBg, borderRadius: 14, padding: '14px', marginBottom: 12, border: `1px solid ${border}` }}>
+                            <label style={{ fontSize: 11, fontWeight: 700, color: sub, display: 'block', marginBottom: 6, textTransform: 'uppercase' as const, letterSpacing: '0.6px' }}>
+                                {isChannel ? (lang === 'en' ? 'Channel name' : 'Название канала') : tr('Group name')}
+                            </label>
+                            <input style={{ ...tk.input, marginBottom: 12 }} value={editName} onChange={e => setEditName(e.target.value)} maxLength={60} />
+                            <label style={{ fontSize: 11, fontWeight: 700, color: sub, display: 'block', marginBottom: 6, textTransform: 'uppercase' as const, letterSpacing: '0.6px' }}>{tr('Description')}</label>
+                            <textarea style={{ ...tk.input, height: 80, resize: 'none' as const, marginBottom: 0 }} value={editDesc} onChange={e => setEditDesc(e.target.value)} maxLength={255} />
+                        </div>
+                        <button onClick={handleSaveEdit} disabled={editSaving || !editName.trim()}
+                            style={{ width: '100%', padding: '13px', marginBottom: 20, background: 'linear-gradient(135deg,#6c47d4,#8b5cf6)', color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 700, opacity: editSaving || !editName.trim() ? 0.6 : 1 }}>
+                            {editSaving ? tr('Saving...') : tr('Save')}
+                        </button>
+
+                        {/* Channel settings — type + tag */}
+                        {isChannel && (
+                            <div style={{ backgroundColor: cardBg, borderRadius: 14, padding: '14px', marginBottom: 12, border: `1px solid ${border}` }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: sub, textTransform: 'uppercase' as const, letterSpacing: '0.6px', marginBottom: 10 }}>
+                                    {lang === 'en' ? 'Channel type' : 'Тип канала'}
+                                </div>
+                                <div style={{ display: 'flex', gap: 8, marginBottom: editChannelType === 'public' ? 12 : 0 }}>
+                                    {(['public', 'private'] as const).map(typ => (
+                                        <button key={typ} onClick={() => setEditChannelType(typ)}
+                                            style={{ flex: 1, padding: '10px', borderRadius: 10, border: editChannelType === typ ? '2px solid #6366f1' : `1.5px solid ${border}`, background: editChannelType === typ ? (dm ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.08)') : 'transparent', color: editChannelType === typ ? '#6366f1' : sub, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                                            {typ === 'public' ? `🌐 ${lang === 'en' ? 'Public' : 'Публичный'}` : `🔒 ${lang === 'en' ? 'Private' : 'Приватный'}`}
+                                        </button>
+                                    ))}
+                                </div>
+                                {editChannelType === 'public' && (
+                                    <>
+                                        <label style={{ fontSize: 11, color: sub, display: 'block', marginBottom: 6 }}>{lang === 'en' ? 'Channel tag (without @)' : 'Тег канала (без @)'}</label>
+                                        <input style={tk.input} value={editChannelTag} onChange={e => setEditChannelTag(e.target.value.replace(/[^a-z0-9_]/gi, '').toLowerCase())} placeholder="my_channel" maxLength={32} />
+                                    </>
+                                )}
+                                <button onClick={handleSaveChannelSettings} disabled={channelSettingsSaving || (editChannelType === 'public' && !editChannelTag.trim())}
+                                    style={{ width: '100%', padding: '11px', marginTop: 10, background: 'linear-gradient(135deg,#6c47d4,#8b5cf6)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 700, opacity: channelSettingsSaving || (editChannelType === 'public' && !editChannelTag.trim()) ? 0.6 : 1 }}>
+                                    {channelSettingsSaving ? tr('Saving...') : `${lang === 'en' ? 'Save channel settings' : 'Сохранить настройки'}`}
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Members — single nav row */}
+                        {[
+                            { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>, label: isChannel ? (group?.member_count ? formatMembers(group.member_count, 'subscriber', lang) : (lang === 'en' ? 'Subscribers' : 'Подписчики')) : (formatMembers(members.length, 'member', lang)), action: () => setMembersSlide('members') },
+                            { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>, label: `${lang === 'en' ? 'Admins' : 'Администраторы'} (${members.filter(m => m.role === 'admin').length})`, action: () => setMembersSlide('admins') },
+                            ...(isAdmin ? [{ icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>, label: lang === 'en' ? 'Add members' : 'Добавить участников', action: () => { setMembersSlide('add'); setAddMembersSearch(''); setAddMembersResults([]); } }] : []),
+                        ].map((item, i, arr) => (
+                            <button key={i} onClick={item.action}
+                                style={{ display: 'flex', alignItems: 'center', gap: 14, width: '100%', padding: '14px 16px', background: cardBg, border: `1px solid ${border}`, borderRadius: 14, cursor: 'pointer', color: dm ? '#e0e0f0' : '#1e1b4b', fontSize: 14, fontWeight: 500, marginBottom: i < arr.length - 1 ? 8 : 12 }}>
+                                <span style={{ color: '#6366f1', display: 'flex', alignItems: 'center' }}>{item.icon}</span>
+                                <span style={{ flex: 1, textAlign: 'left' as const }}>{item.label}</span>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                            </button>
+                        ))}
+
+                        {/* Leave / delete */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
+                            <button onClick={() => setConfirm({ message: lang === 'en' ? `Delete ${isChannel ? 'channel' : 'group'} "${group?.name}"?` : `Удалить ${isChannel ? 'канал' : 'группу'} «${group?.name}»?`, onConfirm: handleDeleteGroup })}
+                                style={{ width: '100%', padding: '13px', background: dm ? 'rgba(239,68,68,0.1)' : '#fff0f0', color: '#ef4444', border: `1px solid ${dm ? 'rgba(239,68,68,0.3)' : '#ffcdd2'}`, borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+                                🗑 {lang === 'en' ? `Delete ${isChannel ? 'channel' : 'group'}` : `Удалить ${isChannel ? 'канал' : 'группу'}`}
+                            </button>
+                            <button onClick={() => setConfirm({ message: lang === 'en' ? `Leave ${isChannel ? 'channel' : 'group'}?` : `Покинуть ${isChannel ? 'канал' : 'группу'}?`, onConfirm: handleLeaveGroup })}
+                                style={{ width: '100%', padding: '13px', background: dm ? 'rgba(239,68,68,0.06)' : '#fff8f8', color: '#f87171', border: `1px solid ${dm ? 'rgba(239,68,68,0.2)' : '#fecaca'}`, borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+                                🚪 {lang === 'en' ? `Leave ${isChannel ? 'channel' : 'group'}` : `Покинуть ${isChannel ? 'канал' : 'группу'}`}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Participants slide */}
+            {membersSlide && (
+                <div style={{ position: 'fixed', inset: 0, zIndex: 3003, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+                    className="mobile-media-enter" onClick={e => e.stopPropagation()}>
+                    <div style={{ display: 'flex', alignItems: 'center', padding: "14px 16px 10px", gap: 10, flexShrink: 0 }}>
+                        <button onClick={() => setMembersSlide(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: 4, display: 'flex', alignItems: 'center' }}>
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                        </button>
+                        <span style={{ fontWeight: 700, fontSize: 17, color: dm ? '#e2e8f0' : '#1e1b4b', flex: 1 }}>
+                            {membersSlide === 'admins' ? (lang === 'en' ? 'Admins' : 'Администраторы')
+                             : membersSlide === 'add' ? (lang === 'en' ? 'Add members' : 'Добавить участников')
+                             : (lang === 'en' ? (isChannel ? 'Subscribers' : 'Members') : (isChannel ? 'Подписчики' : 'Участники'))}
+                        </span>
+                        {membersSlide === 'members' && !isChannel && isAdmin && (
+                            <button onClick={onInvite} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6366f1', padding: 4, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600 }}>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+                                {tr('Invite')}
+                            </button>
+                        )}
+                    </div>
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '8px 16px 32px' }}>
+                        {membersSlide === 'add' ? (
+                            <>
+                                <input type="text" placeholder={tr('@user_tag')} value={addMembersSearch} onChange={e => searchAddMembers(e.target.value)}
+                                    style={{ ...tk.input, margin: '12px 0 8px' }} autoFocus />
+                                {addMembersLoading && <div style={{ textAlign: 'center', color: sub, padding: 16 }}>{tr('Searching...')}</div>}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    {addMembersResults.map((u: any) => (
+                                        <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 12, backgroundColor: memberBg, border: `1px solid ${border}` }}>
+                                            <div style={{ width: 40, height: 40, borderRadius: '50%', background: u.avatar ? memberBg : '#6366f1', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 15, overflow: 'hidden', flexShrink: 0 }}>
+                                                {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt={u.username} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : u.username[0].toUpperCase()}
+                                            </div>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{ fontSize: 14, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
+                                                {u.tag && <div style={{ fontSize: 11, color: sub }}>@{u.tag}</div>}
+                                            </div>
+                                            <button onClick={() => handleAddMember(u.id, u.tag)} style={{ padding: '8px 16px', borderRadius: 10, background: 'linear-gradient(135deg,#6c47d4,#8b5cf6)', color: 'white', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>{tr('Add')}</button>
+                                        </div>
+                                    ))}
+                                    {!addMembersLoading && addMembersSearch && addMembersResults.length === 0 && (
+                                        <div style={{ textAlign: 'center', color: sub, padding: 32 }}>{lang === 'en' ? 'Not found' : 'Не найдено'}</div>
+                                    )}
+                                </div>
+                            </>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 8 }}>
+                                {(membersSlide === 'admins'
+                                    ? members.filter(m => m.role === 'admin')
+                                    : members
+                                ).map(member => renderMemberRow(member, isAdmin && membersSlide !== 'members'))}
+                                {membersSlide === 'members' && members.length === 0 && (
+                                    <div style={{ textAlign: 'center', color: sub, padding: 32 }}>{lang === 'en' ? 'No members yet' : 'Участников пока нет'}</div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Media panel — fullscreen slide from right */}
+            {mediaExpanded && (
+                <div style={{ position: 'fixed', inset: 0, zIndex: 3002, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+                    className={mediaClosing ? 'mobile-media-exit' : 'mobile-media-enter'}
+                    onClick={e => e.stopPropagation()}>
+                    <div style={{ display: 'flex', alignItems: 'center', padding: "14px 16px 10px", gap: 10, flexShrink: 0 }}>
+                        <button onClick={collapseMedia} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: 4, display: 'flex', alignItems: 'center' }}>
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                        </button>
+                        <span style={{ fontWeight: 700, fontSize: 17, color: dm ? '#e2e8f0' : '#1e1b4b', flex: 1 }}>{mediaTabs.find(t => t.key === mediaTab)?.label || ''}</span>
+                    </div>
+                    <div style={{ display: 'flex', padding: '8px 12px', gap: 4, borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
+                        {mediaTabs.map(tab => {
+                            const isActive = mediaTab === tab.key;
+                            return <button key={tab.key} onClick={() => setMediaTab(tab.key)}
+                                style={{ flex: 1, padding: '8px 4px', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 11, fontWeight: 700, background: isActive ? (isOled ? 'rgba(167,139,250,0.15)' : dm ? 'rgba(99,102,241,0.18)' : 'rgba(99,102,241,0.1)') : 'transparent', color: isActive ? '#6366f1' : sub, transition: 'all 0.15s' }}>
+                                {tab.label}{tab.count > 0 && <span style={{ marginLeft: 4, fontSize: 10 }}>({tab.count})</span>}
+                            </button>;
+                        })}
+                    </div>
+                    <div style={{ flex: 1, overflowY: 'auto', padding: (mediaTab === 'images' || mediaTab === 'video') ? 8 : 0 }}>
+                        {currentTabData.length === 0 ? (
+                            <div style={{ padding: 40, textAlign: 'center', color: sub, fontSize: 14 }}>{tr('No files')}</div>
+                        ) : (mediaTab === 'images' || mediaTab === 'video') ? (
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 3 }}>
+                                {currentTabData.map((f: any, i: number) => (
+                                    <div key={i} style={{ position: 'relative', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', cursor: 'pointer', background: dm ? '#252540' : '#f0f0f8' }}
+                                        onClick={() => setLightbox({ src: f.src, filename: f.filename, isVideo: isVid(f.filename) })}>
+                                        {isVid(f.filename) ? <video src={f.src} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <img src={f.src} alt={f.filename} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                                        {isVid(f.filename) && <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ width: 28, height: 28, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ color: 'white', fontSize: 12, marginLeft: 2 }}>▶</span></div></div>}
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div>
+                                {currentTabData.map((f: any, i: number) => (
+                                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.06)' : dm ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.05)'}` }}>
+                                        <div style={{ width: 40, height: 40, borderRadius: 10, background: dm ? '#252540' : '#ede9fe', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#6366f1' }}>
+                                            {mediaTab === 'audio' ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> : <span style={{ fontSize: 10, fontWeight: 700 }}>{f.filename.split('.').pop()?.toUpperCase() || 'FILE'}</span>}
+                                        </div>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ fontSize: 13, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>{f.filename}</div>
+                                            {f.fileSize && <div style={{ fontSize: 11, color: sub }}>{formatSize(f.fileSize)}</div>}
+                                        </div>
+                                        {onGoToMessage && <button onClick={() => { onGoToMessage(f.messageId); close(); }} style={{ width: 32, height: 32, borderRadius: 10, background: dm ? '#252540' : '#f0f0ff', border: 'none', cursor: 'pointer', color: '#6366f1', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>→</button>}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Sub-modals for members/admins/add — shared with desktop via portals */}
+            {showMembersModal && channelSubModal(group?.member_count ? formatMembers(group.member_count, isChannel ? 'subscriber' : 'member', lang) : (lang === 'en' ? 'Members' : 'Участники'), () => setShowMembersModal(false), members.map(m => renderMemberRow(m, false)))}
+            {showAdminsModal && channelSubModal(lang === 'en' ? 'Admins' : 'Администраторы', () => setShowAdminsModal(false),
+                <>
+                    {members.filter(m => m.role === 'admin').map(m => renderMemberRow(m, true))}
+                    {members.filter(m => m.role !== 'admin').length > 0 && (<>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: sub, textTransform: 'uppercase' as const, letterSpacing: '0.6px', marginTop: 8, marginBottom: 4 }}>{lang === 'en' ? 'Members' : 'Участники'}</div>
+                        {members.filter(m => m.role !== 'admin').map(m => renderMemberRow(m, true))}
+                    </>)}
+                </>
+            )}
+            {showAddMembersModal && channelSubModal(lang === 'en' ? 'Add members' : 'Добавить участников', () => setShowAddMembersModal(false),
+                <>
+                    <input type="text" placeholder={tr('@user_tag')} value={addMembersSearch} onChange={e => searchAddMembers(e.target.value)} style={{ ...tk.input, marginBottom: 8 }} autoFocus />
+                    {addMembersLoading && <div style={{ textAlign: 'center', color: sub, fontSize: 13 }}>{tr('Searching...')}</div>}
+                    {addMembersResults.map((u: any) => (
+                        <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 12, backgroundColor: memberBg, border: !dm ? '1px solid #ede9fe' : '1px solid rgba(99,102,241,0.1)' }}>
+                            <div style={{ width: 36, height: 36, borderRadius: '50%', background: u.avatar ? memberBg : '#6366f1', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 15, overflow: 'hidden', flexShrink: 0 }}>
+                                {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt={u.username} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : u.username[0].toUpperCase()}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
+                                {u.tag && <div style={{ fontSize: 11, color: sub }}>@{u.tag}</div>}
+                            </div>
+                            <button onClick={() => handleAddMember(u.id, u.tag)} style={{ padding: '6px 14px', borderRadius: 8, background: 'linear-gradient(135deg,#6c47d4,#8b5cf6)', color: 'white', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>{tr('Add')}</button>
+                        </div>
+                    ))}
+                    {!addMembersLoading && addMembersSearch && addMembersResults.length === 0 && <div style={{ textAlign: 'center', color: sub, fontSize: 13 }}>{lang === 'en' ? 'Not found' : 'Не найдено'}</div>}
+                </>
+            )}
+            {confirm && ReactDOM.createPortal(
+                <div onClick={() => setConfirm(null)} className="modal-backdrop-enter"
+                    style={{ position: 'fixed', inset: 0, zIndex: 5000, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div onClick={e => e.stopPropagation()} className="modal-enter"
+                        style={{ background: bg, borderRadius: 20, width: 320, maxWidth: '90vw', padding: '28px 24px 22px', boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3)' : '0 0 40px rgba(99,102,241,0.12)', border: `1px solid ${border}`, textAlign: 'center' }}>
+                        <div style={{ fontSize: 17, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', marginBottom: 8 }}>{tr('This cannot be undone.')}</div>
+                        <div style={{ fontSize: 14, color: sub, marginBottom: 24 }}>{confirm.message}</div>
+                        <div style={{ display: 'flex', gap: 10 }}>
+                            <button onClick={() => setConfirm(null)} style={{ flex: 1, padding: '12px', borderRadius: 12, border: `1.5px solid ${border}`, background: cardBg, color: dm ? '#c0c0d8' : '#374151', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>{tr('Cancel')}</button>
+                            <button onClick={confirm.onConfirm} style={{ flex: 1, padding: '12px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg,#e53935,#ef5350)', color: 'white', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>{tr('Delete')}</button>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
+            {lightbox && ReactDOM.createPortal(
+                <div className="modal-backdrop-enter" onClick={() => setLightbox(null)} style={{ position: 'fixed', inset: 0, zIndex: 9500, background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(rgba(0,0,0,0.6), transparent)' }} onClick={e => e.stopPropagation()}>
+                        <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14, maxWidth: '70%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lightbox.filename}</span>
+                        <button onClick={() => setLightbox(null)} style={{ width: 36, height: 36, background: 'rgba(255,255,255,0.12)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 18 }}>✕</button>
+                    </div>
+                    <div onClick={e => e.stopPropagation()} style={{ maxWidth: '92vw', maxHeight: '84vh' }}>
+                        {lightbox.isVideo ? <video src={lightbox.src} controls autoPlay style={{ maxWidth: '92vw', maxHeight: '84vh', borderRadius: 12 }} /> : <img src={lightbox.src} alt={lightbox.filename} style={{ maxWidth: '92vw', maxHeight: '84vh', borderRadius: 12, objectFit: 'contain' }} />}
+                    </div>
+                </div>,
+                document.body
+            )}
+            </>,
+            document.body
+        );
+    }
+
+    // ── Desktop layout ──────────────────────────────────────────────────────────
     return (
         <>
         <div style={tk.overlay} className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'} onClick={close}>
@@ -489,22 +821,29 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                     {/* Media shortcut buttons */}
                     {hasMedia && (
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
-                            {mediaTabs.map(tab => (
+                            {mediaTabs.map(tab => {
+                                const isActive = mediaExpanded && mediaTab === tab.key;
+                                return (
                                 <button key={tab.key} onClick={() => openMediaTab(tab.key)}
                                     style={{
-                                        padding: '10px 8px', borderRadius: 12,
-                                        border: `1px solid ${mediaExpanded && mediaTab === tab.key ? '#6366f1' : border}`,
-                                        background: mediaExpanded && mediaTab === tab.key
+                                        padding: '12px 8px', borderRadius: 14,
+                                        border: 'none',
+                                        boxShadow: isActive
+                                            ? `0 0 0 2px #6366f1, 0 4px 16px rgba(99,102,241,0.25)`
+                                            : isOled ? '0 2px 12px rgba(0,0,0,0.8)' : dm ? '0 2px 10px rgba(0,0,0,0.35)' : '0 2px 8px rgba(99,102,241,0.07)',
+                                        background: isActive
                                             ? dm ? 'rgba(99,102,241,0.22)' : 'rgba(99,102,241,0.08)'
-                                            : cardBg,
-                                        cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                                            : isOled ? '#050508' : (dm ? '#12122a' : '#f5f3ff'),
+                                        cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
                                         transition: 'all 0.18s',
+                                        color: isActive ? '#6366f1' : sub,
                                     }}>
-                                    <span style={{ fontSize: 18 }}>{tab.icon}</span>
-                                    <span style={{ fontSize: 11, fontWeight: 600, color: mediaExpanded && mediaTab === tab.key ? '#6366f1' : sub }}>{tab.label}</span>
+                                    {mediaTabIcons[tab.key]}
+                                    <span style={{ fontSize: 11, fontWeight: 600, color: isActive ? '#6366f1' : sub }}>{tab.label}</span>
                                     {tab.count > 0 && <span style={{ fontSize: 10, color: '#6366f1', fontWeight: 700 }}>{tab.count}</span>}
                                 </button>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
 
@@ -512,15 +851,15 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                     {isChannel ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                             {[
-                                { icon: '👥', label: group?.member_count ? formatMembers(group.member_count, isChannel ? 'subscriber' : 'member', lang) : (lang === 'en' ? 'Members' : 'Участники'), action: () => setShowMembersModal(true) },
-                                { icon: '👑', label: `${lang === 'en' ? 'Admins' : 'Администраторы'} (${members.filter(m => m.role === 'admin').length})`, action: () => setShowAdminsModal(true) },
-                                ...(isAdmin ? [{ icon: '➕', label: lang === 'en' ? 'Add members' : 'Добавить участников', action: () => { setShowAddMembersModal(true); setAddMembersSearch(''); setAddMembersResults([]); } }] : []),
-                            ].map(item => (
-                                <button key={item.label} onClick={item.action}
+                                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>, label: group?.member_count ? formatMembers(group.member_count, isChannel ? 'subscriber' : 'member', lang) : (lang === 'en' ? 'Members' : 'Участники'), action: () => setShowMembersModal(true) },
+                                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>, label: `${lang === 'en' ? 'Admins' : 'Администраторы'} (${members.filter(m => m.role === 'admin').length})`, action: () => setShowAdminsModal(true) },
+                                ...(isAdmin ? [{ icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>, label: lang === 'en' ? 'Add members' : 'Добавить участников', action: () => { setShowAddMembersModal(true); setAddMembersSearch(''); setAddMembersResults([]); } }] : []),
+                            ].map((item, idx) => (
+                                <button key={idx} onClick={item.action}
                                     style={{ width: '100%', padding: '12px 16px', borderRadius: 12, border: !dm ? '1px solid #ede9fe' : ('1px solid rgba(99,102,241,0.2)'), background: cardBg, color: dm ? '#e0e0f0' : '#1e1b4b', cursor: 'pointer', fontSize: 14, fontWeight: 600, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10 }}>
-                                    <span style={{ fontSize: 18 }}>{item.icon}</span>
+                                    <span style={{ color: '#6366f1', display: 'flex', alignItems: 'center' }}>{item.icon}</span>
                                     {item.label}
-                                    <span style={{ marginLeft: 'auto', color: sub, fontSize: 16 }}>›</span>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto', color: sub }}><polyline points="9 18 15 12 9 6"/></svg>
                                 </button>
                             ))}
                         </div>
@@ -584,33 +923,44 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                 <div className="group-info-media" style={{
                     width: mediaExpanded ? 380 : 0,
                     flexShrink: 0,
-                    borderLeft: mediaExpanded ? `1px solid ${border}` : 'none',
                     display: 'flex', flexDirection: 'column',
                     overflow: 'hidden',
                     transition: 'width 0.32s cubic-bezier(0.4,0,0.2,1)',
                     maxHeight: '88vh',
+                    background: isOled ? '#000' : dm ? 'rgba(255,255,255,0.02)' : 'rgba(99,102,241,0.02)',
+                    boxShadow: mediaExpanded ? (isOled ? 'inset 1px 0 0 rgba(167,139,250,0.1)' : dm ? 'inset 1px 0 0 rgba(99,102,241,0.12)' : 'inset 1px 0 0 rgba(99,102,241,0.08)') : 'none',
                 }}>
-                    {/* Tab bar + collapse/close buttons */}
-                    <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, flexShrink: 0, alignItems: 'stretch' }}>
-                        {mediaTabs.map(tab => (
+                    {/* Tab bar */}
+                    <div style={{ display: 'flex', padding: '10px 12px 6px', flexShrink: 0, alignItems: 'center', gap: 4 }}>
+                        {mediaTabs.map(tab => {
+                            const isActive = mediaTab === tab.key;
+                            return (
                             <button key={tab.key} onClick={() => setMediaTab(tab.key)}
                                 style={{
-                                    flex: 1, padding: '12px 4px', border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 700,
-                                    background: 'none',
-                                    color: mediaTab === tab.key ? '#6366f1' : sub,
-                                    borderBottom: mediaTab === tab.key ? '2px solid #6366f1' : '2px solid transparent',
+                                    flex: 1, padding: '7px 4px', border: 'none', cursor: 'pointer', fontSize: 10, fontWeight: 700,
+                                    background: isActive ? (isOled ? 'rgba(167,139,250,0.15)' : dm ? 'rgba(99,102,241,0.18)' : 'rgba(99,102,241,0.1)') : 'transparent',
+                                    color: isActive ? (isOled ? '#a78bfa' : '#6366f1') : sub,
+                                    borderRadius: 10,
                                     transition: 'all 0.15s',
+                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
                                 }}>
-                                {tab.icon}<br />{tab.label}
-                                {tab.count > 0 && <span style={{ marginLeft: 3, fontSize: 10, color: '#6366f1' }}>({tab.count})</span>}
+                                {React.cloneElement(mediaTabIcons[tab.key], { width: 13, height: 13 })}
+                                {tab.label}
+                                {tab.count > 0 && <span style={{ fontSize: 9, color: isActive ? (isOled ? '#a78bfa' : '#6366f1') : sub }}>({tab.count})</span>}
                             </button>
-                        ))}
-                        {/* Collapse panel */}
+                            );
+                        })}
+                        <div style={{ flex: 1 }} />
+                        {/* Collapse */}
                         <button onClick={() => setMediaExpanded(false)} title={lang === 'en' ? 'Collapse' : 'Свернуть'}
-                            style={{ padding: '0 10px', border: 'none', background: 'none', cursor: 'pointer', color: sub, fontSize: 16, borderBottom: '2px solid transparent', flexShrink: 0 }}>‹</button>
+                            style={{ padding: '6px 8px', border: 'none', background: 'none', cursor: 'pointer', color: sub, flexShrink: 0, display: 'flex', alignItems: 'center', borderRadius: 8 }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                        </button>
                         {/* Close modal */}
                         <button onClick={close} title={tr('Close')}
-                            style={{ padding: '0 10px', border: 'none', background: 'none', cursor: 'pointer', color: sub, fontSize: 18, borderBottom: '2px solid transparent', flexShrink: 0, borderLeft: `1px solid ${border}` }}>✕</button>
+                            style={{ padding: '6px 8px', border: 'none', background: 'none', cursor: 'pointer', color: sub, flexShrink: 0, display: 'flex', alignItems: 'center', borderRadius: 8 }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
                     </div>
 
                     {/* Content */}
@@ -620,7 +970,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                         ) : (mediaTab === 'images' || mediaTab === 'video') ? (
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
                                 {currentTabData.map((f: any, i: number) => (
-                                    <div key={i} style={{ position: 'relative', aspectRatio: '1', borderRadius: 8, overflow: 'hidden', cursor: 'pointer', background: !dm ? '#f0f0f8' : ('#252540') }}
+                                    <div key={i} style={{ position: 'relative', aspectRatio: '1', borderRadius: 8, overflow: 'hidden', cursor: 'pointer', background: dm ? '#252540' : '#f0f0f8' }}
                                         title={f.filename}
                                         onClick={() => setLightbox({ src: f.src, filename: f.filename, isVideo: isVid(f.filename) })}>
                                         {isVid(f.filename)
@@ -646,9 +996,11 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                         ) : (
                             <div>
                                 {currentTabData.map((f: any, i: number) => (
-                                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: `1px solid ${border}` }}>
-                                        <div style={{ width: 36, height: 36, borderRadius: 10, background: !dm ? '#ede9fe' : ('#252540'), display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: mediaTab === 'audio' ? 16 : 9, fontWeight: 700, color: '#6366f1' }}>
-                                            {mediaTab === 'audio' ? '🎵' : (f.filename.split('.').pop()?.toUpperCase() || 'FILE')}
+                                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.06)' : dm ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.05)'}` }}>
+                                        <div style={{ width: 36, height: 36, borderRadius: 10, background: dm ? '#252540' : '#ede9fe', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#6366f1' }}>
+                                            {mediaTab === 'audio'
+                                                ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+                                                : <span style={{ fontSize: 9, fontWeight: 700 }}>{f.filename.split('.').pop()?.toUpperCase() || 'FILE'}</span>}
                                         </div>
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                             <div style={{ fontSize: 12, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>{f.filename}</div>
@@ -656,7 +1008,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                                         </div>
                                         {onGoToMessage && (
                                             <button onClick={() => { onGoToMessage(f.messageId); close(); }}
-                                                style={{ width: 28, height: 28, borderRadius: 8, background: !dm ? '#f0f0ff' : ('#252540'), border: 'none', cursor: 'pointer', color: '#6366f1', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={lang === 'en' ? 'Go to message' : 'Перейти к сообщению'}>→</button>
+                                                style={{ width: 28, height: 28, borderRadius: 8, background: dm ? '#252540' : '#f0f0ff', border: 'none', cursor: 'pointer', color: '#6366f1', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={lang === 'en' ? 'Go to message' : 'Перейти к сообщению'}>→</button>
                                         )}
                                     </div>
                                 ))}

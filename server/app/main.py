@@ -11,6 +11,12 @@ import uuid
 import json
 import mimetypes
 import asyncio
+import time
+import httpx
+import random
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from urllib.parse import quote
 from datetime import datetime, timezone
 import cloudinary
@@ -53,6 +59,42 @@ class PasswordResetRequest(BaseModel):
     old_password: str
     new_password: str
 
+class SendResetCodeRequest(BaseModel):
+    email: str
+
+class ConfirmResetRequest(BaseModel):
+    email: str
+    code: str
+    new_password: str
+
+# In-memory reset code store: email → {code, expires_at}
+_reset_codes: dict = {}
+_RESET_CODE_TTL = 900  # 15 минут
+
+def _send_email(to: str, subject: str, body: str) -> bool:
+    """Отправить письмо через SMTP. Возвращает True если успешно."""
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_pass = os.getenv("SMTP_PASS", "")
+    if not smtp_user or not smtp_pass:
+        return False
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"Aurora Messenger <{smtp_user}>"
+        msg["To"] = to
+        msg.attach(MIMEText(body, "html", "utf-8"))
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, to, msg.as_string())
+        return True
+    except Exception as e:
+        print(f"❌ Email send error: {e}")
+        return False
+
 class CreateGroupRequest(BaseModel):
     name: str
     description: str = ""
@@ -94,6 +136,12 @@ class SupportSendRequest(BaseModel):
 class AdminReplyRequest(BaseModel):
     user_id: int
     message_text: str
+
+class AdminUpdateUserRequest(BaseModel):
+    username: Optional[str] = None
+    email: Optional[str] = None
+    tag: Optional[str] = None
+    status: Optional[str] = None
 
 class UpdatePublicKeyRequest(BaseModel):
     public_key: str
@@ -404,7 +452,7 @@ async def login(request: LoginRequest):
 
 @app.post("/api/password-reset")
 async def password_reset(request: PasswordResetRequest):
-    """Сброс пароля по email + нику + старому паролю"""
+    """Устаревший endpoint — оставлен для обратной совместимости"""
     pool = await DatabasePool.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
@@ -419,6 +467,84 @@ async def password_reset(request: PasswordResetRequest):
                 raise HTTPException(status_code=400, detail="Неверный текущий пароль")
             new_hash = hash_password(request.new_password)
             await cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (new_hash, user['id']))
+    return {"success": True}
+
+
+@app.post("/api/auth/send-reset-code")
+async def send_reset_code(request: SendResetCodeRequest):
+    """Отправить 6-значный код сброса пароля на email"""
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT id FROM users WHERE email = %s", (request.email,))
+            user = await cur.fetchone()
+            if not user:
+                # Не раскрываем что email не существует (безопасность)
+                return {"success": True, "email_sent": False}
+
+    code = str(random.randint(100000, 999999))
+    _reset_codes[request.email] = {"code": code, "expires_at": time.time() + _RESET_CODE_TTL}
+
+    # Очищаем старые коды
+    expired = [e for e, v in _reset_codes.items() if v["expires_at"] < time.time()]
+    for e in expired:
+        del _reset_codes[e]
+
+    smtp_configured = bool(os.getenv("SMTP_USER") and os.getenv("SMTP_PASS"))
+
+    if smtp_configured:
+        body = f"""
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f9fafb;border-radius:12px">
+            <div style="text-align:center;margin-bottom:24px">
+                <div style="font-size:32px">🌅</div>
+                <h2 style="color:#1e1b4b;margin:8px 0 4px">Aurora Messenger</h2>
+                <p style="color:#6b7280;margin:0">Сброс пароля</p>
+            </div>
+            <div style="background:white;border-radius:10px;padding:24px;border:1px solid #e5e7eb;text-align:center">
+                <p style="color:#374151;margin:0 0 16px">Ваш код подтверждения:</p>
+                <div style="font-size:40px;font-weight:800;letter-spacing:8px;color:#6366f1;font-family:monospace">{code}</div>
+                <p style="color:#9ca3af;font-size:13px;margin:16px 0 0">Код действителен 15 минут. Не передавайте его никому.</p>
+            </div>
+            <p style="color:#9ca3af;font-size:12px;text-align:center;margin-top:16px">Если вы не запрашивали сброс пароля — проигнорируйте это письмо.</p>
+        </div>
+        """
+        sent = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _send_email(request.email, "Код сброса пароля Aurora", body)
+        )
+        return {"success": True, "email_sent": sent, "smtp_configured": True}
+    else:
+        # SMTP не настроен — возвращаем код в ответе для разработки
+        print(f"⚠️  SMTP not configured. Reset code for {request.email}: {code}")
+        return {"success": True, "email_sent": False, "smtp_configured": False, "dev_code": code}
+
+
+@app.post("/api/auth/confirm-reset")
+async def confirm_reset(request: ConfirmResetRequest):
+    """Подтвердить код и установить новый пароль"""
+    if len(request.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Пароль должен быть не менее 6 символов")
+
+    entry = _reset_codes.get(request.email)
+    if not entry:
+        raise HTTPException(status_code=400, detail="Код не найден или уже использован. Запросите новый.")
+    if time.time() > entry["expires_at"]:
+        del _reset_codes[request.email]
+        raise HTTPException(status_code=400, detail="Код устарел. Запросите новый.")
+    if entry["code"] != request.code.strip():
+        raise HTTPException(status_code=400, detail="Неверный код. Попробуйте снова.")
+
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT id FROM users WHERE email = %s", (request.email,))
+            user = await cur.fetchone()
+            if not user:
+                raise HTTPException(status_code=404, detail="Пользователь не найден")
+            new_hash = hash_password(request.new_password)
+            await cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (new_hash, user[0]))
+            await conn.commit()
+
+    del _reset_codes[request.email]
     return {"success": True}
 
 # ========== Пользователи ==========
@@ -843,23 +969,22 @@ async def update_group_avatar(group_id: int, token: str = Form(...), file: Uploa
 # ========== Личные сообщения ==========
 
 @app.get("/api/conversation/{user_id}")
-async def get_conversation(user_id: int, token: str, limit: int = 10000):
+async def get_conversation(user_id: int, token: str, limit: int = 200, before_id: int = None):
     """Получить историю диалога с указанным пользователем"""
     payload = decode_jwt_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
-    
-    current_user_id = payload['user_id']
-    messages = await MessageModel.get_conversation(current_user_id, user_id, limit)
 
-    # Добавляем реакции
+    current_user_id = payload['user_id']
+    messages, has_more = await MessageModel.get_conversation(current_user_id, user_id, limit, before_id)
+
     if messages:
         msg_ids = [m['id'] for m in messages]
         reactions_map = await ReactionModel.get_reactions_for_messages(msg_ids, False)
         for msg in messages:
             msg['reactions'] = reactions_map.get(msg['id'], [])
 
-    return {"messages": messages}
+    return {"messages": messages, "has_more": has_more}
 
 # ========== Групповые чаты ==========
 
@@ -871,16 +996,16 @@ async def create_group(token: str, name: str, description: str = ""):
         raise HTTPException(status_code=401, detail="Invalid token")
     
     group_id = await GroupModel.create_group(name, description, payload['user_id'])
-    # В main.py, в эндпоинте create_group:
-    if group_id:
-        # Отправляем уведомление создателю
-        await manager.send_message_to_user(payload['user_id'], {
-            "type": "new_group",
-            "data": {"group_id": group_id, "name": name}
-        })
     if not group_id:
         raise HTTPException(status_code=500, detail="Failed to create group")
-    
+
+    # System message "Группа создана"
+    await GroupMessageModel.save_message(group_id, payload['user_id'], "Группа создана", is_system=True)
+
+    await manager.send_message_to_user(payload['user_id'], {
+        "type": "new_group",
+        "data": {"group_id": group_id, "name": name}
+    })
     return {"success": True, "group_id": group_id, "name": name}
 
 @app.get("/api/groups")
@@ -967,13 +1092,13 @@ async def invite_to_group(group_id: int, request: InviteToGroupRequest, token: s
     return {"success": True, "message": f"@{request.tag} added to group"}
 
 @app.get("/api/groups/{group_id}/messages")
-async def get_group_messages(group_id: int, token: str, limit: int = 10000):
+async def get_group_messages(group_id: int, token: str, limit: int = 200, before_id: int = None):
     """Получить историю сообщений группы"""
     payload = decode_jwt_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    messages = await GroupMessageModel.get_messages(group_id, limit)
+    messages, has_more = await GroupMessageModel.get_messages(group_id, limit, before_id)
 
     if messages:
         msg_ids = [m['id'] for m in messages]
@@ -982,10 +1107,12 @@ async def get_group_messages(group_id: int, token: str, limit: int = 10000):
         view_counts = await PostViewModel.get_view_counts(msg_ids)
         for msg in messages:
             msg['reactions'] = reactions_map.get(msg['id'], [])
-            msg['is_read'] = read_counts.get(msg['id'], 0) > 0
+            rc = read_counts.get(msg['id'], 0)
+            msg['is_read'] = rc > 0
+            msg['read_count'] = rc
             msg['view_count'] = view_counts.get(msg['id'], 0)
 
-    return {"messages": messages}
+    return {"messages": messages, "has_more": has_more}
 
 
 @app.post("/api/groups/{group_id}/messages/{message_id}/view")
@@ -1116,11 +1243,13 @@ async def create_channel(request: CreateChannelRequest, token: str):
     if not channel_id:
         raise HTTPException(status_code=500, detail="Failed to create channel")
 
+    # System message "Канал создан"
+    await GroupMessageModel.save_message(channel_id, payload['user_id'], "Канал создан", is_system=True)
+
     await manager.send_message_to_user(payload['user_id'], {
         "type": "new_group",
         "data": {"group_id": channel_id, "name": request.name}
     })
-
     return {"success": True, "channel_id": channel_id, "name": request.name, "invite_link": invite_link, "channel_tag": channel_tag}
 
 @app.get("/api/channels/search")
@@ -1474,47 +1603,162 @@ async def download_group_file_by_id(message_id: int):
 from fastapi.responses import JSONResponse
 
 @app.get("/api/search")
-async def search_messages(token: str, query: str, chat_type: str = None, chat_id: int = None):
-    """Поиск сообщений в чате"""
+async def search_messages(
+    token: str, query: str = '', chat_type: str = None, chat_id: int = None,
+    date_from: str = None, date_to: str = None,
+    content_type: str = 'all', sender_id: int = None
+):
+    """Поиск сообщений с фильтрами"""
     payload = decode_jwt_token(token)
     if not payload:
-        return JSONResponse(
-            status_code=401,
-            content={"error": "Invalid token"}
-        )
-    
+        return JSONResponse(status_code=401, content={"error": "Invalid token"})
+
     user_id = payload['user_id']
     results = []
-    
+
     try:
         if chat_type == 'private' and chat_id:
-            messages = await MessageModel.search_conversation(user_id, chat_id, query)
-            results = messages
+            results = await MessageModel.search_conversation(
+                user_id, chat_id, query,
+                date_from=date_from, date_to=date_to, content_type=content_type
+            )
         elif chat_type == 'group' and chat_id:
             members = await GroupModel.get_members(chat_id)
             if not any(m['id'] == user_id for m in members):
-                return JSONResponse(
-                    status_code=403,
-                    content={"error": "Not a member of this group"}
-                )
-            messages = await GroupMessageModel.search_messages(chat_id, query)
-            results = messages
+                return JSONResponse(status_code=403, content={"error": "Not a member of this group"})
+            results = await GroupMessageModel.search_messages(
+                chat_id, query,
+                date_from=date_from, date_to=date_to,
+                content_type=content_type, sender_id=sender_id
+            )
         else:
-            messages = await MessageModel.search_all_conversations(user_id, query)
-            results = messages
-        
-        return JSONResponse(
-            status_code=200,
-            content={"results": results, "query": query}
-        )
+            results = await MessageModel.search_all_conversations(
+                user_id, query,
+                date_from=date_from, date_to=date_to, content_type=content_type
+            )
+
+        return JSONResponse(status_code=200, content={"results": results, "query": query})
     except Exception as e:
         print(f"❌ Search error: {e}")
         import traceback
         traceback.print_exc()
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e), "results": [], "query": query}
-        )
+        return JSONResponse(status_code=500, content={"error": str(e), "results": [], "query": query})
+
+# ========== Экспорт чата ==========
+
+@app.get("/api/export/chat")
+async def export_chat(token: str, chat_type: str, chat_id: int, fmt: str = 'json'):
+    """Экспорт истории чата в JSON или TXT"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user_id = payload['user_id']
+
+    if chat_type == 'private':
+        messages, _ = await MessageModel.get_conversation(user_id, chat_id, limit=10000)
+    elif chat_type == 'group':
+        members = await GroupModel.get_members(chat_id)
+        if not any(m['id'] == user_id for m in members):
+            raise HTTPException(status_code=403, detail="Not a member")
+        messages, _ = await GroupMessageModel.get_messages(chat_id, limit=10000)
+    else:
+        raise HTTPException(status_code=400, detail="Invalid chat_type")
+
+    if fmt == 'txt':
+        lines = []
+        for m in messages:
+            ts = m.get('timestamp', '')[:16].replace('T', ' ')
+            sender = m.get('sender_name') or m.get('sender_id', '?')
+            text = m.get('message_text') or ('[файл] ' + (m.get('filename') or '')) or ''
+            lines.append(f"[{ts}] {sender}: {text}")
+        content = '\n'.join(lines)
+        from fastapi.responses import Response
+        return Response(content=content, media_type='text/plain; charset=utf-8',
+                        headers={'Content-Disposition': f'attachment; filename="chat_{chat_id}.txt"'})
+
+    # JSON format
+    export_data = {
+        "chat_type": chat_type,
+        "chat_id": chat_id,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "messages": [
+            {
+                "id": m.get('id'),
+                "sender": m.get('sender_name') or str(m.get('sender_id')),
+                "text": m.get('message_text'),
+                "file": m.get('filename'),
+                "timestamp": m.get('timestamp'),
+                "reply_to": m.get('reply_to_text') or None,
+            }
+            for m in messages
+        ]
+    }
+    from fastapi.responses import Response
+    import json as _json
+    return Response(
+        content=_json.dumps(export_data, ensure_ascii=False, indent=2),
+        media_type='application/json',
+        headers={'Content-Disposition': f'attachment; filename="chat_{chat_id}.json"'}
+    )
+
+
+# ========== Link Preview ==========
+
+_link_preview_cache: dict = {}
+_LINK_PREVIEW_TTL = 3600  # 1 час
+
+def _extract_meta(html: str) -> dict:
+    def og(prop):
+        m = re.search(rf'<meta[^>]+property=["\']og:{prop}["\'][^>]+content=["\']([^"\']+)["\']', html, re.I)
+        if not m:
+            m = re.search(rf'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:{prop}["\']', html, re.I)
+        return m.group(1).strip() if m else None
+
+    def meta_name(name):
+        m = re.search(rf'<meta[^>]+name=["\'](?:twitter:)?{name}["\'][^>]+content=["\']([^"\']+)["\']', html, re.I)
+        if not m:
+            m = re.search(rf'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\'](?:twitter:)?{name}["\']', html, re.I)
+        return m.group(1).strip() if m else None
+
+    title_tag = re.search(r'<title[^>]*>([^<]+)</title>', html, re.I)
+
+    title = og('title') or meta_name('title') or (title_tag.group(1).strip() if title_tag else None)
+    description = og('description') or meta_name('description')
+    image = og('image') or meta_name('image')
+    site_name = og('site_name')
+    return {"title": title, "description": description, "image": image, "site_name": site_name}
+
+@app.get("/api/link-preview")
+async def get_link_preview(url: str, token: str):
+    if not decode_jwt_token(token):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    if not re.match(r'https?://', url):
+        raise HTTPException(status_code=400, detail="Invalid URL")
+
+    cached = _link_preview_cache.get(url)
+    if cached and time.time() - cached['_ts'] < _LINK_PREVIEW_TTL:
+        return {k: v for k, v in cached.items() if k != '_ts'}
+
+    try:
+        async with httpx.AsyncClient(timeout=5, follow_redirects=True, headers={
+            'User-Agent': 'Mozilla/5.0 (compatible; AuroraBot/1.0)'
+        }) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return {"title": None, "description": None, "image": None, "site_name": None, "url": url}
+            html = resp.text[:50000]
+
+        data = _extract_meta(html)
+        data['url'] = url
+        _link_preview_cache[url] = {**data, '_ts': time.time()}
+        if len(_link_preview_cache) > 500:
+            oldest = min(_link_preview_cache, key=lambda k: _link_preview_cache[k]['_ts'])
+            del _link_preview_cache[oldest]
+        return data
+    except Exception:
+        return {"title": None, "description": None, "image": None, "site_name": None, "url": url}
+
 
 # ========== WebSocket ==========
 
@@ -1781,6 +2025,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Получаем отправителя
                 sender = await UserModel.get_user_by_id(user_id)
                 
+                # Определяем тип упоминания (@all / @here)
+                mention_type = None
+                if message_text:
+                    text_lower = message_text.lower()
+                    if re.search(r'@all\b', text_lower):
+                        mention_type = 'all'
+                    elif re.search(r'@here\b', text_lower):
+                        mention_type = 'here'
+
                 message_data = {
                     "id": message_id,
                     "group_id": group_id,
@@ -1799,17 +2052,27 @@ async def websocket_endpoint(websocket: WebSocket):
                     "reply_to_sender": reply_to_sender or '',
                     "reply_to_file_path": reply_to_file_path,
                     "timestamp": current_timestamp,
-                    "is_read": False
+                    "is_read": False,
+                    "mention_type": mention_type,
                 }
-                
+
                 # Получаем всех участников группы
                 members = await GroupModel.get_members(group_id)
-                
+
                 # Отправляем всем участникам
+                # Для @here — пинг только онлайн-участникам
+                online_ids = set(manager.active_connections.keys())
                 for member in members:
-                    await manager.send_message_to_user(member['id'], {
+                    mid = member['id']
+                    data_to_send = dict(message_data)
+                    # mention_ping = True если это упоминание касается данного участника (не отправителя)
+                    if mid != user_id and mention_type == 'all':
+                        data_to_send['mention_ping'] = True
+                    elif mid != user_id and mention_type == 'here' and mid in online_ids:
+                        data_to_send['mention_ping'] = True
+                    await manager.send_message_to_user(mid, {
                         "type": "group_message",
-                        "data": message_data
+                        "data": data_to_send
                     })
             
             # Индикатор набора текста (личный)
@@ -1915,7 +2178,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 if group_id:
                     newly_read = await GroupReadModel.mark_group_messages_read(group_id, user_id)
                     if newly_read:
-                        # Find senders of these messages and notify them
+                        # Get updated read counts and senders
+                        read_counts_upd = await GroupReadModel.get_read_counts(newly_read)
                         pool = await DatabasePool.get_pool()
                         async with pool.acquire() as conn:
                             async with conn.cursor(aiomysql.DictCursor) as cur:
@@ -1929,7 +2193,12 @@ async def websocket_endpoint(websocket: WebSocket):
                             if s['sender_id'] != user_id:
                                 await manager.send_message_to_user(s['sender_id'], {
                                     "type": "group_messages_read",
-                                    "data": {"group_id": group_id, "message_ids": newly_read, "reader_id": user_id}
+                                    "data": {
+                                        "group_id": group_id,
+                                        "message_ids": newly_read,
+                                        "reader_id": user_id,
+                                        "read_counts": read_counts_upd,
+                                    }
                                 })
 
             elif data.get("type") == "add_reaction":
@@ -2292,19 +2561,23 @@ async def get_admin_users(token: str, search: str = ""):
         async with conn.cursor(aiomysql.DictCursor) as cur:
             if search:
                 await cur.execute("""
-                    SELECT id, username, tag, email, created_at, avatar, status, is_deleted
+                    SELECT id, username, tag, email, created_at, avatar, status, is_deleted, last_seen
                     FROM users WHERE username LIKE %s OR tag LIKE %s OR email LIKE %s
                     ORDER BY created_at DESC LIMIT 200
                 """, (f'%{search}%', f'%{search}%', f'%{search}%'))
             else:
                 await cur.execute("""
-                    SELECT id, username, tag, email, created_at, avatar, status, is_deleted
+                    SELECT id, username, tag, email, created_at, avatar, status, is_deleted, last_seen
                     FROM users ORDER BY created_at DESC LIMIT 200
                 """)
             rows = await cur.fetchall()
+            admin_tags = ('kayano', 'durov')
             for r in rows:
                 if r.get('created_at') and hasattr(r['created_at'], 'isoformat'):
                     r['created_at'] = r['created_at'].replace(tzinfo=timezone.utc).isoformat()
+                if r.get('last_seen') and hasattr(r['last_seen'], 'isoformat'):
+                    r['last_seen'] = r['last_seen'].replace(tzinfo=timezone.utc).isoformat()
+                r['role'] = 'admin' if r.get('tag') in admin_tags else 'user'
             return {"users": rows}
 
 @app.delete("/api/admin/users/{user_id}")
@@ -2327,6 +2600,33 @@ async def delete_admin_user(user_id: int, token: str):
     }
     for uid in related_ids | {user_id}:
         await manager.send_message_to_user(uid, deleted_event)
+    return {"success": True}
+
+@app.patch("/api/admin/users/{user_id}")
+async def update_admin_user(user_id: int, request: AdminUpdateUserRequest, token: str):
+    payload = await require_admin(token)
+    if payload['user_id'] == user_id and request.tag is not None:
+        raise HTTPException(status_code=400, detail="Cannot change your own tag via admin panel")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            fields, values = [], []
+            if request.username is not None:
+                fields.append("username = %s"); values.append(request.username.strip())
+            if request.email is not None:
+                fields.append("email = %s"); values.append(request.email.strip())
+            if request.tag is not None:
+                fields.append("tag = %s"); values.append(request.tag.strip() or None)
+            if request.status is not None:
+                fields.append("status = %s"); values.append(request.status.strip() or None)
+            if not fields:
+                raise HTTPException(status_code=400, detail="No fields to update")
+            values.append(user_id)
+            try:
+                await cur.execute(f"UPDATE users SET {', '.join(fields)} WHERE id = %s", values)
+                await conn.commit()
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=str(e))
     return {"success": True}
 
 @app.delete("/api/account")
@@ -2408,15 +2708,19 @@ async def get_public_key(user_id: int, token: str):
 
 async def scheduled_message_worker():
     """Background task: fires due scheduled messages every 20 seconds."""
+    first_run = True
     while True:
-        await asyncio.sleep(20)
+        if first_run:
+            first_run = False
+        else:
+            await asyncio.sleep(20)
         try:
             pool = await DatabasePool.get_pool()
             async with pool.acquire() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cur:
                     await cur.execute("""
                         SELECT * FROM scheduled_messages
-                        WHERE sent = 0 AND scheduled_at <= NOW()
+                        WHERE sent = 0 AND scheduled_at <= UTC_TIMESTAMP()
                         LIMIT 50
                     """)
                     due = await cur.fetchall()
@@ -2425,57 +2729,77 @@ async def scheduled_message_worker():
                             "UPDATE scheduled_messages SET sent = 1 WHERE id = %s", (m['id'],)
                         )
                         await conn.commit()
-                        # Insert into real messages table
+
+                        now_ts = datetime.now(timezone.utc).isoformat()
+                        sender = await UserModel.get_user_by_id(m['sender_id'])
+                        sender_name = sender['username'] if sender else ''
+                        sender_tag = sender.get('tag') if sender else None
+                        sender_avatar = sender.get('avatar') if sender else None
+                        sender_avatar_color = sender.get('avatar_color', '#6366f1') if sender else '#6366f1'
+
                         if m['receiver_id']:
                             await cur.execute(
-                                "INSERT INTO messages (sender_id, receiver_id, message_text) VALUES (%s, %s, %s)",
+                                "INSERT INTO messages (sender_id, receiver_id, message_text, timestamp) VALUES (%s, %s, %s, UTC_TIMESTAMP())",
                                 (m['sender_id'], m['receiver_id'], m['message_text'])
                             )
                             msg_id = cur.lastrowid
                             await conn.commit()
-                            msg_data = {
-                                "type": "message",
-                                "data": {
-                                    "id": msg_id,
-                                    "sender_id": m['sender_id'],
-                                    "receiver_id": m['receiver_id'],
-                                    "message_text": m['message_text'],
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                    "is_read": 0,
-                                    "scheduled_id": m['id'],
-                                }
+
+                            await cur.execute("SELECT username FROM users WHERE id = %s", (m['receiver_id'],))
+                            rcv = await cur.fetchone()
+                            receiver_name = rcv['username'] if rcv else ''
+
+                            base = {
+                                "id": msg_id,
+                                "sender_id": m['sender_id'],
+                                "receiver_id": m['receiver_id'],
+                                "message_text": m['message_text'],
+                                "sender_name": sender_name,
+                                "receiver_name": receiver_name,
+                                "timestamp": now_ts,
+                                "is_read": 0,
+                                "reactions": [],
+                                "scheduled_id": m['id'],
                             }
-                            await manager.send_message_to_user(m['sender_id'], {**msg_data, "data": {**msg_data["data"], "is_own": True}})
-                            await manager.send_message_to_user(m['receiver_id'], msg_data)
+                            await manager.send_message_to_user(m['sender_id'], {"type": "message", "data": base})
+                            await manager.send_message_to_user(m['receiver_id'], {"type": "message", "data": base})
+
                         elif m['group_id']:
                             await cur.execute(
-                                "INSERT INTO group_messages (group_id, sender_id, message_text) VALUES (%s, %s, %s)",
+                                "INSERT INTO group_messages (group_id, sender_id, message_text, timestamp) VALUES (%s, %s, %s, UTC_TIMESTAMP())",
                                 (m['group_id'], m['sender_id'], m['message_text'])
                             )
                             msg_id = cur.lastrowid
                             await conn.commit()
-                            from .models import GroupModel
+
                             members = await GroupModel.get_members(m['group_id'])
-                            msg_data = {
-                                "type": "group_message",
-                                "data": {
-                                    "id": msg_id,
-                                    "group_id": m['group_id'],
-                                    "sender_id": m['sender_id'],
-                                    "message_text": m['message_text'],
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                    "scheduled_id": m['id'],
-                                }
+                            base = {
+                                "id": msg_id,
+                                "group_id": m['group_id'],
+                                "sender_id": m['sender_id'],
+                                "sender_name": sender_name,
+                                "sender_tag": sender_tag,
+                                "sender_avatar": sender_avatar,
+                                "sender_avatar_color": sender_avatar_color,
+                                "message_text": m['message_text'],
+                                "timestamp": now_ts,
+                                "is_read": False,
+                                "reactions": [],
+                                "reply_to_text": '',
+                                "reply_to_sender": '',
+                                "scheduled_id": m['id'],
                             }
                             for member in members:
-                                await manager.send_message_to_user(member['id'], msg_data)
-                        # Notify sender that scheduled message was sent
+                                await manager.send_message_to_user(member['id'], {"type": "group_message", "data": base})
+
                         await manager.send_message_to_user(m['sender_id'], {
                             "type": "scheduled_sent",
                             "data": {"scheduled_id": m['id']}
                         })
         except Exception as e:
             print(f"Scheduler error: {e}")
+            import traceback
+            traceback.print_exc()
 
 @app.post("/api/messages/schedule")
 async def schedule_message(request: ScheduleMessageRequest, token: str):

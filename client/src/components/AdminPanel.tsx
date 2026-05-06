@@ -28,6 +28,7 @@ interface Stats {
 interface AdminUser {
     id: number; username: string; tag?: string; email: string;
     created_at: string; avatar?: string; status?: string; is_deleted?: number;
+    last_seen?: string; role?: string;
 }
 
 interface SupportThread {
@@ -64,6 +65,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
     const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [deletingId, setDeletingId] = useState<number | null>(null);
     const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+    const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
+    const [editForm, setEditForm] = useState({ username: '', email: '', tag: '', status: '' });
+    const [editSaving, setEditSaving] = useState(false);
+    const [editError, setEditError] = useState('');
 
     // Support
     const [threads, setThreads] = useState<SupportThread[]>([]);
@@ -95,6 +100,46 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
             await api.deleteAdminUser(token, userId);
             setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_deleted: 1, username: t('Deleted user'), tag: undefined, avatar: undefined } : u));
         } finally { setDeletingId(null); setConfirmDeleteId(null); }
+    };
+
+    const openEditUser = (u: AdminUser) => {
+        setEditingUser(u);
+        setEditForm({ username: u.username, email: u.email, tag: u.tag || '', status: u.status || '' });
+        setEditError('');
+    };
+
+    const saveEditUser = async () => {
+        if (!editingUser || editSaving) return;
+        setEditSaving(true);
+        setEditError('');
+        try {
+            const res = await api.updateAdminUser(token, editingUser.id, {
+                username: editForm.username.trim(),
+                email: editForm.email.trim(),
+                tag: editForm.tag.trim(),
+                status: editForm.status.trim(),
+            });
+            if (res.success) {
+                setUsers(prev => prev.map(u => u.id === editingUser.id
+                    ? { ...u, username: editForm.username.trim(), email: editForm.email.trim(), tag: editForm.tag.trim() || undefined, status: editForm.status.trim() || undefined }
+                    : u));
+                setEditingUser(null);
+            } else {
+                setEditError(res.detail || 'Ошибка сохранения');
+            }
+        } catch { setEditError('Ошибка сохранения'); }
+        finally { setEditSaving(false); }
+    };
+
+    const fmtLastSeen = (iso?: string) => {
+        if (!iso) return 'никогда';
+        const d = new Date(iso);
+        const now = new Date();
+        const diff = (now.getTime() - d.getTime()) / 1000;
+        if (diff < 60) return 'только что';
+        if (diff < 3600) return `${Math.floor(diff / 60)} мин. назад`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)} ч. назад`;
+        return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
     };
 
     const loadThreads = async () => {
@@ -202,7 +247,16 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
         </div>
     );
 
+    const inputStyle = (extra?: React.CSSProperties): React.CSSProperties => ({
+        width: '100%', boxSizing: 'border-box', padding: '8px 11px',
+        border: `1.5px solid ${border}`, borderRadius: 10,
+        background: isOled ? '#050508' : (dm ? '#12122a' : '#f5f3ff'),
+        color: textCol, fontSize: 13, outline: 'none', fontFamily: 'inherit',
+        ...extra,
+    });
+
     return (
+        <>
         <div
             style={{ position: 'fixed', inset: 0, zIndex: 2000, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center' }}
             className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'}
@@ -263,23 +317,23 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
 
                     {/* ─── Stats tab ─── */}
                     {tab === 'stats' && (
-                        <div style={{ flex: 1, overflowY: 'auto', padding: 20, background: panelBg, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px 14px' : 20, background: panelBg, display: 'flex', flexDirection: 'column', gap: 16 }}>
                             {statsLoading ? (
                                 <div style={{ textAlign: 'center', color: subCol, marginTop: 60 }}>Загрузка...</div>
                             ) : stats ? (
                                 <>
                                     {/* Hero row */}
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                                    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(3, 1fr)' : 'repeat(3, 1fr)', gap: isMobile ? 8 : 12 }}>
                                         {[
                                             { icon: '👤', label: t('Users'), val: stats.total_users, sub: `+${stats.users_day} ${t('today')}` },
                                             { icon: '🌐', label: t('Online now'), val: stats.online_now, sub: t('active sessions') },
                                             { icon: '📅', label: t('Per month'), val: stats.users_month, sub: t('new users') },
                                         ].map(c => (
-                                            <div key={c.label} style={{ background: cardBg, borderRadius: 14, padding: '16px', border: `1px solid ${border}`, textAlign: 'center', boxShadow: isOled ? '0 2px 12px rgba(0,0,0,0.8)' : (dm ? '0 2px 12px rgba(0,0,0,0.3)' : '0 2px 8px rgba(99,102,241,0.07)') }}>
-                                                <div style={{ fontSize: 26 }}>{c.icon}</div>
-                                                <div style={{ fontSize: 28, fontWeight: 800, color: accentCol, marginTop: 4 }}>{c.val}</div>
-                                                <div style={{ fontSize: 11, fontWeight: 600, color: textCol, marginTop: 2 }}>{c.label}</div>
-                                                <div style={{ fontSize: 10, color: subCol, marginTop: 2 }}>{c.sub}</div>
+                                            <div key={c.label} style={{ background: cardBg, borderRadius: 14, padding: isMobile ? '10px 6px' : '16px', border: `1px solid ${border}`, textAlign: 'center', boxShadow: isOled ? '0 2px 12px rgba(0,0,0,0.8)' : (dm ? '0 2px 12px rgba(0,0,0,0.3)' : '0 2px 8px rgba(99,102,241,0.07)') }}>
+                                                <div style={{ fontSize: isMobile ? 20 : 26 }}>{c.icon}</div>
+                                                <div style={{ fontSize: isMobile ? 22 : 28, fontWeight: 800, color: accentCol, marginTop: 4 }}>{c.val}</div>
+                                                <div style={{ fontSize: isMobile ? 10 : 11, fontWeight: 600, color: textCol, marginTop: 2 }}>{c.label}</div>
+                                                <div style={{ fontSize: 9, color: subCol, marginTop: 2 }}>{c.sub}</div>
                                             </div>
                                         ))}
                                     </div>
@@ -354,28 +408,35 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                                     <span style={{ fontSize: 13, fontWeight: 600, color: isDeleted ? subCol : textCol, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: isDeleted ? 'italic' : 'normal' }}>{u.username}</span>
                                                     {u.tag && <span style={{ fontSize: 11, color: accentCol }}>@{u.tag}</span>}
-                                                    {(u.tag === 'kayano' || u.tag === 'durov') && <span title="Разработчик">🔧</span>}
+                                                    {u.role === 'admin' && <span title="Администратор" style={{ fontSize: 10, background: isOled ? 'rgba(167,139,250,0.15)' : 'rgba(99,102,241,0.12)', color: accentCol, borderRadius: 4, padding: '1px 5px', fontWeight: 700 }}>admin</span>}
                                                 </div>
-                                                <div style={{ fontSize: 11, color: subCol }}>{u.email}</div>
+                                                <div style={{ fontSize: 11, color: subCol, display: 'flex', gap: 8 }}>
+                                                    <span>{u.email}</span>
+                                                    <span style={{ color: isOled ? '#4a4a7a' : (dm ? '#4a4a7a' : '#c0bfe0') }}>·</span>
+                                                    <span>был: {fmtLastSeen(u.last_seen)}</span>
+                                                </div>
                                             </div>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                                                 <div style={{ fontSize: 10, color: subCol, textAlign: 'right' }}>
                                                     <div>#{u.id}</div>
                                                     <div>{fmtDate(u.created_at)}</div>
                                                 </div>
                                                 {!isDeleted && (
-                                                    isConfirming ? (
-                                                        <div style={{ display: 'flex', gap: 4 }}>
-                                                            <button onClick={() => deleteUser(u.id)} disabled={isDeleting} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: '#ef4444', color: 'white', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>
-                                                                {isDeleting ? '...' : '✓'}
+                                                    <>
+                                                        <button onClick={() => openEditUser(u)} style={{ padding: '3px 7px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: accentCol, cursor: 'pointer', fontSize: 11 }}>✎</button>
+                                                        {isConfirming ? (
+                                                            <div style={{ display: 'flex', gap: 4 }}>
+                                                                <button onClick={() => deleteUser(u.id)} disabled={isDeleting} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: '#ef4444', color: 'white', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>
+                                                                    {isDeleting ? '...' : '✓'}
+                                                                </button>
+                                                                <button onClick={() => setConfirmDeleteId(null)} style={{ padding: '3px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: subCol, cursor: 'pointer', fontSize: 11 }}>✕</button>
+                                                            </div>
+                                                        ) : (
+                                                            <button onClick={() => setConfirmDeleteId(u.id)} style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.35)', background: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+                                                                🗑
                                                             </button>
-                                                            <button onClick={() => setConfirmDeleteId(null)} style={{ padding: '3px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: subCol, cursor: 'pointer', fontSize: 11 }}>✕</button>
-                                                        </div>
-                                                    ) : (
-                                                        <button onClick={() => setConfirmDeleteId(u.id)} style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.35)', background: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
-                                                            🗑
-                                                        </button>
-                                                    )
+                                                        )}
+                                                    </>
                                                 )}
                                             </div>
                                         </div>
@@ -541,7 +602,69 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
                 </div>
             </div>
         </div>
-    );
+
+        {/* Edit user modal */}
+        {editingUser && (
+            <div
+                style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+                onClick={() => setEditingUser(null)}
+            >
+                <div
+                    style={{ background: bg, borderRadius: 18, padding: 24, width: '100%', maxWidth: 400, boxShadow: '0 8px 40px rgba(0,0,0,0.4)', border: `1px solid ${border}` }}
+                    onClick={e => e.stopPropagation()}
+                >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+                        <div style={{ width: 38, height: 38, borderRadius: '50%', background: editingUser.avatar ? 'transparent' : '#6366f1', overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            {editingUser.avatar
+                                ? <img src={config.fileUrl(editingUser.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                : <span style={{ color: 'white', fontWeight: 700 }}>{editingUser.username[0]?.toUpperCase()}</span>}
+                        </div>
+                        <div>
+                            <div style={{ fontWeight: 700, fontSize: 15, color: textCol }}>Редактировать пользователя</div>
+                            <div style={{ fontSize: 11, color: subCol }}>#{editingUser.id} · роль: {editingUser.role === 'admin' ? '🔑 Администратор' : '👤 Пользователь'}</div>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        <div>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: subCol, marginBottom: 4 }}>Имя</div>
+                            <input style={inputStyle()} value={editForm.username} onChange={e => setEditForm(p => ({ ...p, username: e.target.value }))} />
+                        </div>
+                        <div>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: subCol, marginBottom: 4 }}>Email</div>
+                            <input style={inputStyle()} value={editForm.email} onChange={e => setEditForm(p => ({ ...p, email: e.target.value }))} />
+                        </div>
+                        <div>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: subCol, marginBottom: 4 }}>Тег (@username)</div>
+                            <input style={inputStyle()} value={editForm.tag} onChange={e => setEditForm(p => ({ ...p, tag: e.target.value.replace(/^@/, '') }))} placeholder="без @" />
+                        </div>
+                        <div>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: subCol, marginBottom: 4 }}>Статус</div>
+                            <input style={inputStyle()} value={editForm.status} onChange={e => setEditForm(p => ({ ...p, status: e.target.value }))} placeholder="Статус пользователя" />
+                        </div>
+
+                        <div style={{ background: isOled ? '#050508' : (dm ? '#12122a' : '#f5f3ff'), borderRadius: 10, padding: '8px 12px', fontSize: 11, color: subCol }}>
+                            <div>📧 Почта: <span style={{ color: textCol }}>{editingUser.email}</span></div>
+                            <div>🕐 Последний заход: <span style={{ color: textCol }}>{fmtLastSeen(editingUser.last_seen)}</span></div>
+                            <div>🔑 Роль: <span style={{ color: textCol }}>{editingUser.role === 'admin' ? 'Администратор' : 'Пользователь'}</span></div>
+                            <div>📅 Регистрация: <span style={{ color: textCol }}>{fmtDate(editingUser.created_at)}</span></div>
+                        </div>
+
+                        {editError && <div style={{ fontSize: 12, color: '#ef4444', padding: '6px 10px', background: 'rgba(239,68,68,0.08)', borderRadius: 8 }}>{editError}</div>}
+
+                        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                            <button onClick={() => setEditingUser(null)} style={{ flex: 1, padding: '9px', borderRadius: 10, border: `1px solid ${border}`, background: 'none', color: subCol, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                                Отмена
+                            </button>
+                            <button onClick={saveEditUser} disabled={editSaving} style={{ flex: 2, padding: '9px', borderRadius: 10, border: 'none', background: editSaving ? (dm ? '#2a2a3d' : '#e5e7eb') : 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: editSaving ? subCol : 'white', cursor: editSaving ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 700 }}>
+                                {editSaving ? 'Сохранение...' : 'Сохранить'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+    </> );
 };
 
 export default AdminPanel;

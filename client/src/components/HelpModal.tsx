@@ -224,6 +224,7 @@ const AUTHORS = {
 
 const HelpModal: React.FC<HelpModalProps> = ({ isDark = false, initialTab = 'features', onClose }) => {
     const dm = isDark;
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 600;
     const [tab, setTab] = useState<'features' | 'patchnotes' | 'authors'>(initialTab);
     const [closing, setClosing] = useState(false);
     const [policyTab, setPolicyTab] = useState<'license' | 'privacy' | null>(null);
@@ -236,22 +237,29 @@ const HelpModal: React.FC<HelpModalProps> = ({ isDark = false, initialTab = 'fea
     const cardBorder = isOled ? 'rgba(167,139,250,0.12)' : (dm ? 'rgba(99,102,241,0.15)' : '#ede9fe');
     const tabBarBg = isOled ? '#050508' : (dm ? '#12122a' : '#f3f4f6');
     const tabActiveBg = isOled ? '#0a0a14' : (dm ? '#1e1e3a' : 'white');
-    const shadow = dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)';
+    const shadow = isMobile
+        ? (isOled ? '0 0 60px rgba(124,58,237,0.25), 0 -4px 40px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 -4px 40px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 -4px 30px rgba(0,0,0,0.15)')
+        : (dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)');
+
+    const panelStyle: React.CSSProperties = isMobile
+        ? { position: 'fixed', left: 0, right: 0, bottom: 0, backgroundColor: bg, borderRadius: '20px 20px 0 0', maxHeight: '92svh', display: 'flex', flexDirection: 'column', overflow: 'hidden', paddingBottom: 'env(safe-area-inset-bottom, 0px)', boxShadow: shadow }
+        : { backgroundColor: bg, borderRadius: 20, width: 440, maxWidth: '92vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: shadow, position: 'relative' };
 
     return (
         <>
         <div
-            style={{ position: 'fixed', inset: 0, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000 }}
+            style={{ position: 'fixed', inset: 0, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center', zIndex: 3000 }}
             className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'}
             onClick={close}
         >
             <div
-                style={{ backgroundColor: bg, borderRadius: 20, width: 440, maxWidth: '92vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: shadow, position: 'relative' }}
-                className={closing ? 'modal-exit' : 'modal-enter'}
+                style={panelStyle}
+                className={(closing ? 'modal-exit' : 'modal-enter') + (isMobile ? ' mobile-bottom-sheet' : '')}
                 onClick={e => e.stopPropagation()}
             >
+                {isMobile && <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px', flexShrink: 0 }}><div style={{ width: 36, height: 4, borderRadius: 2, background: dm ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)' }} /></div>}
                 {/* Header */}
-                <div style={{ padding: '20px 24px 0', flexShrink: 0 }}>
+                <div style={{ padding: isMobile ? '8px 20px 0' : '20px 24px 0', flexShrink: 0 }}>
                     <button onClick={close} style={{ position: 'absolute', top: 14, right: 16, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: dm ? '#9999bb' : '#9ca3af' }}>✕</button>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
                         <span style={{ fontSize: 28 }}>🌅</span>
@@ -275,7 +283,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ isDark = false, initialTab = 'fea
                 </div>
 
                 {/* Content */}
-                <div style={{ overflowY: 'auto', flex: 1, padding: '16px 24px 20px' }}>
+                <div style={{ overflowY: 'auto', flex: 1, padding: isMobile ? '12px 16px 20px' : '16px 24px 20px' }}>
                     {tab === 'authors' ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                             {/* Policy buttons */}
@@ -314,7 +322,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ isDark = false, initialTab = 'fea
                                                 {a.tag[0].toUpperCase()}
                                             </div>
                                             <div>
-                                                <div style={{ fontWeight: 700, fontSize: 14, color: dm ? '#e0e0f0' : '#1e1b4b' }}>@{a.tag}</div>
+                                                <div style={{ fontWeight: 700, fontSize: 14, color: dm ? '#e0e0f0' : '#1e1b4b' }}>@{a.tag} <span style={{ fontSize: 12 }}>🧪</span></div>
                                                 <div style={{ fontSize: 12, color: dm ? '#7c7caa' : '#9ca3af' }}>{a.role}</div>
                                             </div>
                                         </div>
@@ -323,7 +331,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ isDark = false, initialTab = 'fea
                             </div>
                         </div>
                     ) : tab === 'features' ? (
-                        <div className="help-features-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <div className="help-features-grid" style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8 }}>
                             {FEATURES.map(f => (
                                 <div key={f.title} style={{ backgroundColor: cardBg, borderRadius: 12, padding: '10px 12px', border: `1px solid ${cardBorder}` }}>
                                     <div style={{ fontSize: 18, marginBottom: 4 }}>{f.icon}</div>

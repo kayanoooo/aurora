@@ -35,6 +35,13 @@ const CallOverlay: React.FC<Props> = ({
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
     const remoteAudioRef = useRef<HTMLAudioElement>(null);
     const [elapsed, setElapsed] = useState(0);
+    // Start minimized immediately when initiating a call (no flash of full-screen)
+    const [minimized, setMinimized] = useState(() => callInfo.state === 'calling');
+
+    // Expand when ringing so accept/reject is visible
+    useEffect(() => {
+        if (state === 'ringing') setMinimized(false);
+    }, [state]);
 
     useEffect(() => {
         if (state !== 'connected') { setElapsed(0); return; }
@@ -101,6 +108,82 @@ const CallOverlay: React.FC<Props> = ({
 
     const waves = [0, 0.45, 0.9, 1.35];
 
+    // ── Minimized pill ──────────────────────────────────────────────────────────
+    if (minimized) {
+        const pillBg = isOled
+            ? 'rgba(10,6,24,0.97)'
+            : dm ? 'rgba(20,14,44,0.97)' : 'rgba(15,10,40,0.96)';
+        return (
+            <>
+                <style>{`@keyframes callPillEnter { from { opacity: 0; transform: translateX(-50%) scale(0.92); } to { opacity: 1; transform: translateX(-50%) scale(1); } }`}</style>
+                <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
+                <div style={{
+                    position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+                    zIndex: 9999, display: 'flex', alignItems: 'center', gap: 10,
+                    background: pillBg,
+                    border: `1.5px solid ${accent}44`,
+                    borderRadius: 40, padding: '8px 12px 8px 8px',
+                    boxShadow: `0 8px 40px rgba(0,0,0,0.7), 0 0 0 1px ${accent}22`,
+                    backdropFilter: 'blur(20px)',
+                    userSelect: 'none', minWidth: 220,
+                    animation: 'callPillEnter 0.2s ease',
+                }}>
+                    {/* Avatar */}
+                    <div style={{
+                        width: 40, height: 40, borderRadius: '50%', flexShrink: 0,
+                        background: peerAvatar ? 'transparent' : (peerAvatarColor || 'linear-gradient(135deg,#6366f1,#8b5cf6)'),
+                        overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 17, fontWeight: 700, color: 'white',
+                        boxShadow: state === 'connected' ? `0 0 0 2px ${accent}` : undefined,
+                    }}>
+                        {peerAvatar ? <img src={peerAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : avatarLetter}
+                    </div>
+
+                    {/* Info */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: 'white', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{peerName}</div>
+                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', fontVariantNumeric: 'tabular-nums' }}>{statusLabel}</div>
+                    </div>
+
+                    {/* Mute (only when connected/calling) */}
+                    {(state === 'connected' || state === 'calling') && (
+                        <button onClick={onToggleMute} style={{
+                            width: 36, height: 36, borderRadius: '50%', border: 'none', cursor: 'pointer',
+                            background: isMuted ? 'rgba(239,68,68,0.25)' : 'rgba(255,255,255,0.1)',
+                            color: isMuted ? '#f87171' : 'rgba(255,255,255,0.7)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                        }}>
+                            {isMuted
+                                ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                                : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                            }
+                        </button>
+                    )}
+
+                    {/* Expand */}
+                    <button onClick={() => setMinimized(false)} style={{
+                        width: 36, height: 36, borderRadius: '50%', border: 'none', cursor: 'pointer',
+                        background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                    }}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                    </button>
+
+                    {/* End */}
+                    <button onClick={onEnd} style={{
+                        width: 36, height: 36, borderRadius: '50%', border: 'none', cursor: 'pointer',
+                        background: 'linear-gradient(135deg,#ef4444,#dc2626)',
+                        color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                        boxShadow: '0 4px 14px rgba(239,68,68,0.5)',
+                    }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" transform="rotate(135 12 12)"/></svg>
+                    </button>
+                </div>
+            </>
+        );
+    }
+
+    // ── Full-screen overlay ─────────────────────────────────────────────────────
     return (
         <div style={{
             position: 'fixed', inset: 0, zIndex: 9999,
@@ -123,6 +206,20 @@ const CallOverlay: React.FC<Props> = ({
                     50%      { box-shadow: 0 0 0 12px ${accent}22, 0 8px 50px ${accent}80; }
                 }
             `}</style>
+
+            {/* Minimize button */}
+            <button
+                onClick={() => setMinimized(true)}
+                style={{
+                    position: 'absolute', top: 16, right: 16, zIndex: 1,
+                    width: 40, height: 40, borderRadius: '50%', border: 'none', cursor: 'pointer',
+                    background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(8px)',
+                    color: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+                title="Свернуть"
+            >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/></svg>
+            </button>
 
             {/* Hidden audio — always plays remote audio */}
             <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />

@@ -27,15 +27,16 @@ body.oled-theme  { background-color: #000000; }
 
 /* Кнопки */
 button {
-    transition: all 0.18s ease;
+    transition: opacity 0.15s ease, transform 0.15s cubic-bezier(0.34, 1.3, 0.64, 1), box-shadow 0.15s ease;
 }
 button:hover {
-    opacity: 0.88;
+    opacity: 0.87;
     transform: translateY(-1px);
 }
 button:active {
-    transform: translateY(0px);
+    transform: translateY(0px) scale(0.96);
     opacity: 1;
+    transition: opacity 0.08s ease, transform 0.08s ease;
 }
 
 /* Скроллбар */
@@ -105,6 +106,10 @@ input:focus {
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
 
 @keyframes slideInRight {
     from { transform: translateX(100%); opacity: 0; }
@@ -113,34 +118,46 @@ input:focus {
 
 /* Modal / popup animations */
 @keyframes modalEnter {
-    from { opacity: 0; transform: scale(0.92) translateY(16px); }
-    to   { opacity: 1; transform: scale(1)    translateY(0); }
+    0%   { opacity: 0; transform: scale(0.90) translateY(20px); filter: blur(2px); }
+    60%  { opacity: 1; filter: blur(0); }
+    100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
 }
 @keyframes backdropEnter {
-    from { opacity: 0; }
+    from { opacity: 0; backdrop-filter: blur(0px); }
     to   { opacity: 1; }
 }
 @keyframes floatingEnter {
-    from { opacity: 0; transform: scale(0.86) translateY(10px); }
-    to   { opacity: 1; transform: scale(1)    translateY(0); }
+    0%   { opacity: 0; transform: scale(0.82) translateY(12px); }
+    65%  { opacity: 1; transform: scale(1.02) translateY(-1px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
 }
 @keyframes slideInRight {
-    from { opacity: 0; transform: translateX(24px) scale(0.97); }
-    to   { opacity: 1; transform: translateX(0)    scale(1); }
+    from { opacity: 0; transform: translateX(28px) scale(0.96); }
+    to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+/* Own messages slide in from right, others from left */
+@keyframes msgInOwn {
+    from { opacity: 0; transform: translateX(12px) translateY(6px) scale(0.95); }
+    to   { opacity: 1; transform: translateX(0) translateY(0) scale(1); }
+}
+@keyframes msgInOther {
+    from { opacity: 0; transform: translateX(-12px) translateY(6px) scale(0.95); }
+    to   { opacity: 1; transform: translateX(0) translateY(0) scale(1); }
 }
 @keyframes msgIn {
-    from { opacity: 0; transform: translateY(8px) scale(0.97); }
-    to   { opacity: 1; transform: translateY(0)   scale(1); }
+    from { opacity: 0; transform: translateY(10px) scale(0.95); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 @keyframes msgDelete {
-    0%   { opacity: 1; transform: scale(1)    translateX(0);    max-height: 200px; margin-bottom: 12px; }
-    40%  { opacity: 0; transform: scale(0.88) translateX(12px); }
-    100% { opacity: 0; transform: scale(0.88) translateX(12px); max-height: 0;   margin-bottom: 0; }
+    0%   { opacity: 1; transform: scale(1) translateX(0); max-height: 200px; margin-bottom: 12px; }
+    30%  { opacity: 0; transform: scale(0.85) translateX(16px); filter: blur(2px); }
+    100% { opacity: 0; transform: scale(0.85) translateX(16px); max-height: 0; margin-bottom: 0; }
 }
 
 @keyframes modalExit {
-    from { opacity: 1; transform: scale(1) translateY(0); }
-    to   { opacity: 0; transform: scale(0.92) translateY(14px); }
+    from { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
+    to   { opacity: 0; transform: scale(0.93) translateY(12px); filter: blur(1px); }
 }
 @keyframes backdropExit {
     from { opacity: 1; }
@@ -148,10 +165,10 @@ input:focus {
 }
 @keyframes floatingExit {
     from { opacity: 1; transform: scale(1) translateY(0); }
-    to   { opacity: 0; transform: scale(0.86) translateY(8px); }
+    to   { opacity: 0; transform: scale(0.88) translateY(6px); }
 }
 @keyframes barEnter {
-    from { opacity: 0; transform: translateY(-8px); }
+    from { opacity: 0; transform: translateY(-10px); }
     to   { opacity: 1; transform: translateY(0); }
 }
 @keyframes barExit {
@@ -159,48 +176,71 @@ input:focus {
     to   { opacity: 0; transform: translateY(-8px); }
 }
 
-.modal-backdrop-enter  { animation: backdropEnter 0.2s ease forwards; }
+.modal-backdrop-enter  { animation: backdropEnter 0.22s ease forwards; }
 .modal-backdrop-exit   { animation: backdropExit  0.18s ease forwards; pointer-events: none; }
-.modal-enter           { animation: modalEnter    0.25s cubic-bezier(0.34, 1.28, 0.64, 1) forwards; }
-.modal-exit            { animation: modalExit     0.18s cubic-bezier(0.4, 0, 1, 1) forwards; }
-.floating-enter        { animation: floatingEnter 0.18s cubic-bezier(0.34, 1.2, 0.64, 1) forwards; }
-.floating-exit         { animation: floatingExit  0.14s ease forwards; pointer-events: none; }
-.panel-slide-in        { animation: slideInRight  0.22s cubic-bezier(0.34, 1.1, 0.64, 1) forwards; }
-.msg-in                { animation: msgIn         0.18s ease forwards; }
-.msg-delete            { animation: msgDelete     0.32s ease forwards; pointer-events: none; overflow: hidden; }
-.bar-enter             { animation: barEnter      0.18s ease forwards; }
+.modal-enter           { animation: modalEnter    0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.modal-exit            { animation: modalExit     0.2s cubic-bezier(0.4, 0, 1, 1) forwards; }
+.floating-enter        { animation: floatingEnter 0.22s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.floating-exit         { animation: floatingExit  0.14s cubic-bezier(0.4, 0, 1, 1) forwards; pointer-events: none; }
+.panel-slide-in        { animation: slideInRight  0.24s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.msg-in                { animation: msgIn         0.22s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.msg-in-own            { animation: msgInOwn      0.24s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.msg-in-other          { animation: msgInOther    0.24s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.msg-delete            { animation: msgDelete     0.3s cubic-bezier(0.4, 0, 1, 1) forwards; pointer-events: none; overflow: hidden; }
+.bar-enter             { animation: barEnter      0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
 .bar-exit              { animation: barExit       0.15s ease forwards; }
 
 /* Sidebar */
 .sidebar-item {
-    transition: background 0.15s ease;
+    transition: background 0.14s ease, transform 0.14s cubic-bezier(0.34, 1.2, 0.64, 1);
+    will-change: transform;
 }
 .sidebar-item:hover {
-    background: rgba(99, 102, 241, 0.06) !important;
+    background: rgba(99, 102, 241, 0.07) !important;
+    transform: translateX(2px);
+}
+.sidebar-item:active {
+    transform: translateX(1px) scale(0.99);
+    transition: transform 0.08s ease;
 }
 .sidebar-item-dark:hover {
-    background: rgba(99, 102, 241, 0.12) !important;
+    background: rgba(99, 102, 241, 0.13) !important;
+    transform: translateX(2px);
 }
 body.oled-theme .sidebar-item-dark:hover {
-    background: rgba(167, 139, 250, 0.07) !important;
-    box-shadow: inset 0 0 12px rgba(167, 139, 250, 0.04);
+    background: rgba(167, 139, 250, 0.08) !important;
+    box-shadow: inset 0 0 14px rgba(167, 139, 250, 0.05);
 }
 
 /* Toast notifications */
 @keyframes toastSlideIn {
-    from { opacity: 0; transform: translateX(40px) scale(0.95); }
-    to   { opacity: 1; transform: translateX(0)    scale(1); }
+    0%   { opacity: 0; transform: translateX(48px) scale(0.92); filter: blur(2px); }
+    60%  { opacity: 1; filter: blur(0); }
+    80%  { transform: translateX(-4px) scale(1.01); }
+    100% { opacity: 1; transform: translateX(0) scale(1); filter: blur(0); }
 }
 @keyframes toastSlideOut {
-    from { opacity: 1; transform: translateX(0) scale(1); max-height: 200px; margin-bottom: 0; }
-    to   { opacity: 0; transform: translateX(40px) scale(0.95); max-height: 0; margin-bottom: -12px; }
+    0%   { opacity: 1; transform: translateX(0) scale(1); max-height: 200px; margin-bottom: 0; }
+    100% { opacity: 0; transform: translateX(48px) scale(0.92); max-height: 0; margin-bottom: -12px; }
+}
+@keyframes toastSlideDown {
+    0%   { opacity: 0; transform: translateY(-110%) scale(0.96); }
+    60%  { opacity: 1; }
+    80%  { transform: translateY(4px) scale(1.005); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes toastSlideUp {
+    0%   { opacity: 1; transform: translateY(0) scale(1); }
+    100% { opacity: 0; transform: translateY(-110%) scale(0.96); }
 }
 @keyframes toastProgress {
     from { width: 100%; }
     to   { width: 0%; }
 }
-.toast-enter { animation: toastSlideIn 0.28s cubic-bezier(0.34, 1.2, 0.64, 1) forwards; }
-.toast-exit  { animation: toastSlideOut 0.22s ease forwards; pointer-events: none; overflow: hidden; }
+.toast-enter { animation: toastSlideIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.toast-exit  { animation: toastSlideOut 0.22s cubic-bezier(0.4, 0, 1, 1) forwards; pointer-events: none; overflow: hidden; }
+.toast-mobile-enter { animation: toastSlideDown 0.36s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.toast-mobile-exit  { animation: toastSlideUp 0.24s cubic-bezier(0.4, 0, 1, 1) forwards; pointer-events: none; }
 
 .sidebar-section-title {
     display: flex !important;
@@ -243,12 +283,14 @@ body.oled-theme .sidebar-item-dark:hover {
 
 /* Pop-in for unread badges, reaction counts */
 @keyframes popIn {
-    0%   { transform: scale(0.5); opacity: 0; }
-    70%  { transform: scale(1.15); }
-    100% { transform: scale(1);   opacity: 1; }
+    0%   { transform: scale(0.4); opacity: 0; }
+    60%  { transform: scale(1.18); opacity: 1; }
+    80%  { transform: scale(0.95); }
+    100% { transform: scale(1); opacity: 1; }
 }
 .badge-pop {
-    animation: popIn 0.2s cubic-bezier(0.34, 1.4, 0.64, 1) forwards;
+    animation: popIn 0.25s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    will-change: transform;
 }
 
 /* Fade-in for empty/welcome screen */
@@ -262,20 +304,22 @@ body.oled-theme .sidebar-item-dark:hover {
 
 /* Chat switch fade */
 @keyframes chatEnter {
-    from { opacity: 0; transform: translateY(6px); }
-    to   { opacity: 1; transform: translateY(0); }
+    0%   { opacity: 0; transform: translateY(10px) scale(0.99); filter: blur(1px); }
+    60%  { opacity: 1; filter: blur(0); }
+    100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
 }
 .chat-enter {
-    animation: chatEnter 0.18s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+    animation: chatEnter 0.24s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 /* Reaction picker pop */
 @keyframes reactionPop {
-    from { opacity: 0; transform: scale(0.82) translateY(6px); }
-    to   { opacity: 1; transform: scale(1)    translateY(0); }
+    0%   { opacity: 0; transform: scale(0.76) translateY(8px); }
+    65%  { opacity: 1; transform: scale(1.03) translateY(-1px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
 }
 .reaction-picker-enter {
-    animation: reactionPop 0.16s cubic-bezier(0.34, 1.3, 0.64, 1) forwards;
+    animation: reactionPop 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 /* Typing indicator dots */
@@ -292,6 +336,42 @@ body.oled-theme .sidebar-item-dark:hover {
 }
 .typing-dot:nth-child(2) { animation-delay: 0.2s; }
 .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* ─── Chat skeleton loading ──────────────────────────────────────────── */
+@keyframes skeletonShimmer {
+    0%   { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
+}
+.skeleton-bubble {
+    border-radius: 16px;
+    height: 36px;
+    animation: skeletonShimmer 1.4s ease infinite;
+    background-size: 800px 100%;
+    flex-shrink: 0;
+}
+.skeleton-bubble-dark {
+    background-image: linear-gradient(90deg, #1a1830 0%, #252440 40%, #2a2850 50%, #252440 60%, #1a1830 100%);
+}
+.skeleton-bubble-oled {
+    background-image: linear-gradient(90deg, #080814 0%, #111126 40%, #161630 50%, #111126 60%, #080814 100%);
+}
+.skeleton-bubble-light {
+    background-image: linear-gradient(90deg, #ede9fe 0%, #f5f3ff 40%, #faf9ff 50%, #f5f3ff 60%, #ede9fe 100%);
+}
+@keyframes skeletonFadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+.skeleton-container {
+    animation: skeletonFadeIn 0.18s ease forwards;
+}
+@keyframes messagesReveal {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+.messages-reveal {
+    animation: messagesReveal 0.22s ease forwards;
+}
 
 /* ─── OLED theme overrides ──────────────────────────────────────────── */
 /*
@@ -610,4 +690,26 @@ body.oled-theme .sidebar-search-dropdown {
 body.oled-theme .oled-sidebar {
     box-shadow: none;
 }
+
+/* ── Mobile profile fullscreen animations ── */
+@keyframes profileSlideUp {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+}
+@keyframes profileSlideDown {
+    from { transform: translateY(0); }
+    to   { transform: translateY(100%); }
+}
+@keyframes mediaPanelSlideIn {
+    from { transform: translateX(100%); }
+    to   { transform: translateX(0); }
+}
+@keyframes mediaPanelSlideOut {
+    from { transform: translateX(0); }
+    to   { transform: translateX(100%); }
+}
+.mobile-profile-enter { animation: profileSlideUp 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.mobile-profile-exit  { animation: profileSlideDown 0.25s cubic-bezier(0.4, 0, 1, 1) forwards; }
+.mobile-media-enter   { animation: mediaPanelSlideIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.mobile-media-exit    { animation: mediaPanelSlideOut 0.22s cubic-bezier(0.4, 0, 1, 1) forwards; }
 

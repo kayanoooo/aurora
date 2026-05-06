@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { User } from '../types';
 import { api } from '../services/api';
@@ -18,24 +18,27 @@ interface UserProfileModalProps {
     messages?: any[];
     isOnline?: boolean;
     isSelf?: boolean;
+    initialMediaOpen?: boolean;
     onClose: () => void;
     onStartChat?: () => void;
     onGoToMessage?: (id: number) => void;
 }
 
 const UserProfileModal: React.FC<UserProfileModalProps> = ({
-    user, token, isDark = false, messages = [], isOnline, isSelf = false, onClose, onStartChat, onGoToMessage
+    user, token, isDark = false, messages = [], isOnline, isSelf = false, initialMediaOpen = false, onClose, onStartChat, onGoToMessage
 }) => {
     const dm = isDark;
     const { t, lang } = useLang();
     const [fullUser, setFullUser] = useState<User>(user);
     const [closing, setClosing] = useState(false);
     const [avatarLightbox, setAvatarLightbox] = useState(false);
-    const [expanded, setExpanded] = useState(false);
+    const [expanded, setExpanded] = useState(initialMediaOpen);
     const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
     const [mediaTab, setMediaTab] = useState<'images' | 'video' | 'audio' | 'files'>('images');
     const [lightbox, setLightbox] = useState<{ src: string; filename: string; isVideo: boolean } | null>(null);
+    const [mediaClosing, setMediaClosing] = useState(false);
     const close = () => { setClosing(true); setTimeout(onClose, 180); };
+    const collapseMedia = () => { setMediaClosing(true); setTimeout(() => { setExpanded(false); setMediaClosing(false); }, 220); };
 
     useEffect(() => {
         api.findUser(token, user.username).then(res => {
@@ -122,14 +125,185 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
     const currentTabData = mediaTab === 'images' ? imgs : mediaTab === 'video' ? vids : mediaTab === 'audio' ? auds : files;
 
-    return (
+    // ── Mobile fullscreen layout ─────────────────────────────────────────────
+    if (isMobile) {
+        // For Favorites (isSelf + initialMediaOpen): show media panel title
+        const profileTitle = isSelf && initialMediaOpen
+            ? (lang === 'en' ? 'Favorites' : 'Избранное')
+            : (lang === 'en' ? 'Profile' : 'Профиль');
+
+        return ReactDOM.createPortal(
+            <>
+            {/* Full-screen backdrop */}
+            <div style={{ position: 'fixed', inset: 0, zIndex: 3000, backgroundColor: isOled ? 'rgba(0,0,0,0.88)' : (dm ? 'rgba(15,10,40,0.6)' : 'rgba(15,10,40,0.3)'), backdropFilter: 'blur(10px)' }}
+                className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'}
+                onClick={close} />
+
+            {/* Profile screen — slides up from bottom; hidden when initialMediaOpen (favorites goes straight to media) */}
+            {!(isSelf && initialMediaOpen) && (
+            <div
+                style={{ position: 'fixed', left: 0, right: 0, bottom: 0, top: 0, zIndex: 3001, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+                className={closing ? 'mobile-profile-exit' : 'mobile-profile-enter'}
+                onClick={e => e.stopPropagation()}
+            >
+                {/* Top bar */}
+                <div style={{ display: 'flex', alignItems: 'center', paddingTop: 'max(14px, env(safe-area-inset-top, 14px))', paddingBottom: 10, paddingLeft: 16, paddingRight: 16, gap: 10, flexShrink: 0 }}>
+                    <button onClick={close} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: 4, display: 'flex', alignItems: 'center' }}>
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                    </button>
+                    <span style={{ fontWeight: 700, fontSize: 17, color: dm ? '#e2e8f0' : '#1e1b4b', flex: 1 }}>
+                        {profileTitle}
+                    </span>
+                </div>
+
+                {/* Profile content */}
+                <div style={{ flex: 1, overflowY: 'auto', padding: '24px 20px', paddingBottom: 'max(32px, calc(32px + env(safe-area-inset-bottom, 0px)))', textAlign: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 20 }}>
+                        <div onClick={() => avatarUrl && setAvatarLightbox(true)} style={{ width: 96, height: 96, borderRadius: '50%', backgroundColor: avatarUrl ? (dm ? '#1a1a2e' : '#f3f4f6') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14, overflow: 'hidden', boxShadow: '0 4px 20px rgba(108,71,212,0.4)', cursor: avatarUrl ? 'zoom-in' : 'default' }}>
+                            {avatarUrl ? <img src={avatarUrl} alt={fullUser.username} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : <span style={{ color: 'white', fontSize: 40, fontWeight: 700 }}>{fullUser.username[0]?.toUpperCase()}</span>}
+                        </div>
+                        <h2 style={{ fontSize: 22, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', margin: '0 0 2px', display: 'flex', alignItems: 'center', gap: 6 }}>{fullUser.username}</h2>
+                        {fullUser.tag && <p style={{ fontSize: 13, color: '#6366f1', margin: '0 0 4px', fontWeight: 600 }}>@{fullUser.tag}</p>}
+                        {(isOnline ?? fullUser.is_online)
+                            ? <p style={{ fontSize: 13, color: '#22c55e', margin: '0 0 4px', fontWeight: 600 }}>🟢 {t('Online')}</p>
+                            : fullUser.last_seen && fullUser.last_seen !== 'hidden'
+                                ? <p style={{ fontSize: 13, color: sub, margin: '0 0 4px' }}>{formatLastSeenProfile(fullUser.last_seen)}</p>
+                                : null}
+                        {fullUser.status && <p style={{ fontSize: 14, color: sub, margin: 0 }}>{fullUser.status}</p>}
+                    </div>
+                    <div style={tk.infoCard}>
+                        {fullUser.email && <div style={tk.infoRow}><span style={{ fontSize: 16, flexShrink: 0 }}>📧</span><span style={{ fontSize: 13, color: dm ? '#c0c0d8' : '#374151' }}>{fullUser.email}</span></div>}
+                        {fullUser.phone && <div style={tk.infoRow}><span style={{ fontSize: 16, flexShrink: 0 }}>📱</span><span style={{ fontSize: 13, color: dm ? '#c0c0d8' : '#374151' }}>{fullUser.phone}</span></div>}
+                        {fullUser.birthday && <div style={tk.infoRow}><span style={{ fontSize: 16, flexShrink: 0 }}>🎂</span><span style={{ fontSize: 13, color: dm ? '#c0c0d8' : '#374151' }}>{formatBirthday(fullUser.birthday)}</span></div>}
+                        {fullUser.created_at && <div style={{ ...tk.infoRow, borderBottom: 'none' }}><span style={{ fontSize: 16, flexShrink: 0 }}>📅</span><span style={{ fontSize: 13, color: dm ? '#c0c0d8' : '#374151' }}>{lang === 'en' ? `In chat since ${new Date(fullUser.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}` : `В чате с ${new Date(fullUser.created_at).toLocaleDateString('ru-RU', { year: 'numeric', month: 'long', day: 'numeric' })}`}</span></div>}
+                    </div>
+                    {hasMedia && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+                            {mediaTabs.map(tab => {
+                                const tabIcons: Record<string, React.ReactNode> = {
+                                    images: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>,
+                                    video: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>,
+                                    audio: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
+                                    files: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
+                                };
+                                return (
+                                    <button key={tab.key} onClick={() => openMediaTab(tab.key)}
+                                        style={{ padding: '14px 8px', borderRadius: 14, border: 'none', boxShadow: isOled ? '0 2px 12px rgba(0,0,0,0.8)' : dm ? '0 2px 10px rgba(0,0,0,0.35)' : '0 2px 8px rgba(99,102,241,0.07)', background: isOled ? '#050508' : (dm ? '#12122a' : '#f5f3ff'), cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, color: sub }}>
+                                        {tabIcons[tab.key]}
+                                        <span style={{ fontSize: 12, fontWeight: 600 }}>{tab.label}</span>
+                                        {tab.count > 0 && <span style={{ fontSize: 11, color: '#6366f1', fontWeight: 700 }}>{tab.count}</span>}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                    {onStartChat && (
+                        <button onClick={onStartChat} style={{ width: '100%', padding: 14, background: 'linear-gradient(135deg, #6c47d4, #8b5cf6)', color: 'white', border: 'none', borderRadius: 14, cursor: 'pointer', fontSize: 15, fontWeight: 600 }}>
+                            {isSelf ? `⭐ ${lang === 'en' ? 'Favorites' : 'Избранное'}` : `${t('Start chat')}`}
+                        </button>
+                    )}
+                </div>
+            </div>
+            )}
+
+            {/* Media panel — slides in from right over profile; for Favorites goes straight here */}
+            {expanded && (
+                <div
+                    style={{ position: 'fixed', inset: 0, zIndex: 3002, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+                    className={(isSelf && initialMediaOpen) ? (closing ? 'mobile-profile-exit' : 'mobile-profile-enter') : (mediaClosing ? 'mobile-media-exit' : 'mobile-media-enter')}
+                    onClick={e => e.stopPropagation()}
+                >
+                    {/* Media top bar */}
+                    <div style={{ display: 'flex', alignItems: 'center', paddingTop: 'max(14px, env(safe-area-inset-top, 14px))', paddingBottom: 10, paddingLeft: 16, paddingRight: 16, gap: 10, flexShrink: 0 }}>
+                        <button onClick={isSelf && initialMediaOpen ? close : collapseMedia} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: 4, display: 'flex', alignItems: 'center' }}>
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                        </button>
+                        <span style={{ fontWeight: 700, fontSize: 17, color: dm ? '#e2e8f0' : '#1e1b4b', flex: 1 }}>
+                            {isSelf && initialMediaOpen && !mediaClosing
+                                ? (lang === 'en' ? 'Favorites' : 'Избранное')
+                                : (mediaTabs.find(tab => tab.key === mediaTab)?.label || '')}
+                        </span>
+                    </div>
+                    {/* Tab strip */}
+                    <div style={{ display: 'flex', padding: '8px 12px', gap: 4, borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
+                        {mediaTabs.map(tab => {
+                            const isActive = mediaTab === tab.key;
+                            return (
+                                <button key={tab.key} onClick={() => setMediaTab(tab.key)}
+                                    style={{ flex: 1, padding: '8px 4px', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 11, fontWeight: 700, background: isActive ? (isOled ? 'rgba(167,139,250,0.15)' : dm ? 'rgba(99,102,241,0.18)' : 'rgba(99,102,241,0.1)') : 'transparent', color: isActive ? '#6366f1' : sub, transition: 'all 0.15s' }}>
+                                    {tab.label}
+                                    {tab.count > 0 && <span style={{ marginLeft: 4, fontSize: 10 }}>({tab.count})</span>}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    {/* Media content */}
+                    <div style={{ flex: 1, overflowY: 'auto', padding: (mediaTab === 'images' || mediaTab === 'video') ? 8 : 0 }}>
+                        {currentTabData.length === 0 ? (
+                            <div style={{ padding: 40, textAlign: 'center', color: sub, fontSize: 14 }}>{t('No files')}</div>
+                        ) : (mediaTab === 'images' || mediaTab === 'video') ? (
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 3 }}>
+                                {currentTabData.map((f, i) => (
+                                    <div key={i} style={{ position: 'relative', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', cursor: 'pointer', background: dm ? '#252540' : '#f0f0f8' }}
+                                        onClick={() => setLightbox({ src: f.src, filename: f.filename, isVideo: isVid(f.filename) })}>
+                                        {isVid(f.filename) ? <video src={f.src} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <img src={f.src} alt={f.filename} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                                        {isVid(f.filename) && <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ width: 28, height: 28, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ color: 'white', fontSize: 12, marginLeft: 2 }}>▶</span></div></div>}
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div>
+                                {currentTabData.map((f, i) => (
+                                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.06)' : dm ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.05)'}` }}>
+                                        <div style={{ width: 40, height: 40, borderRadius: 10, background: dm ? '#252540' : '#ede9fe', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: mediaTab === 'audio' ? 18 : 10, fontWeight: 700, color: '#6366f1' }}>
+                                            {mediaTab === 'audio' ? '🎵' : (f.filename.split('.').pop()?.toUpperCase() || 'FILE')}
+                                        </div>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ fontSize: 13, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>{f.filename}</div>
+                                            {f.fileSize && <div style={{ fontSize: 11, color: sub }}>{formatSize(f.fileSize)}</div>}
+                                        </div>
+                                        {onGoToMessage && <button onClick={() => { onGoToMessage(f.messageId); close(); }} style={{ width: 32, height: 32, borderRadius: 10, background: dm ? '#252540' : '#f0f0ff', border: 'none', cursor: 'pointer', color: '#6366f1', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>→</button>}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {avatarLightbox && avatarUrl && ReactDOM.createPortal(
+                <div className="modal-backdrop-enter" onClick={() => setAvatarLightbox(false)} style={{ position: 'fixed', inset: 0, zIndex: 9000, background: 'rgba(0,0,0,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)' }}>
+                    <img src={avatarUrl} alt={fullUser.username} style={{ maxWidth: '90vw', maxHeight: '90vh', borderRadius: 16, objectFit: 'contain' }} onClick={e => e.stopPropagation()} />
+                    <button onClick={() => setAvatarLightbox(false)} style={{ position: 'fixed', top: 20, right: 20, background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'white', fontSize: 18 }}>✕</button>
+                </div>,
+                document.body
+            )}
+            {lightbox && ReactDOM.createPortal(
+                <div className="modal-backdrop-enter" onClick={() => setLightbox(null)} style={{ position: 'fixed', inset: 0, zIndex: 9500, background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(rgba(0,0,0,0.6), transparent)' }} onClick={e => e.stopPropagation()}>
+                        <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14, maxWidth: '70%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lightbox.filename}</span>
+                        <button onClick={() => setLightbox(null)} style={{ width: 36, height: 36, background: 'rgba(255,255,255,0.12)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 18 }}>✕</button>
+                    </div>
+                    <div onClick={e => e.stopPropagation()} style={{ maxWidth: '92vw', maxHeight: '84vh' }}>
+                        {lightbox.isVideo ? <video src={lightbox.src} controls autoPlay style={{ maxWidth: '92vw', maxHeight: '84vh', borderRadius: 12 }} /> : <img src={lightbox.src} alt={lightbox.filename} style={{ maxWidth: '92vw', maxHeight: '84vh', borderRadius: 12, objectFit: 'contain' }} />}
+                    </div>
+                </div>,
+                document.body
+            )}
+            </>,
+            document.body
+        );
+    }
+
+    // ── Desktop layout ─────────────────────────────────────────────────────────
+    return ReactDOM.createPortal((
         <>
         <div style={tk.overlay} className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'} onClick={close}>
             <div
                 style={{
                     backgroundColor: bg,
-                    borderRadius: isMobile ? 20 : 20,
-                    width: isMobile ? '95vw' : (expanded ? Math.min(720, window.innerWidth * 0.92) : 340),
+                    borderRadius: 20,
+                    width: expanded ? Math.min(720, window.innerWidth * 0.92) : 340,
                     maxWidth: '95vw',
                     boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.3), 0 30px 80px rgba(0,0,0,0.95)' : (dm ? '0 0 50px rgba(99,102,241,0.25), 0 30px 80px rgba(0,0,0,0.7)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)'),
                     position: 'relative' as const,
@@ -141,7 +315,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 onClick={e => e.stopPropagation()}
             >
                 {/* Profile panel */}
-                <div className="user-profile-left" style={{ width: 340, flexShrink: 0, padding: isMobile ? '24px 20px 16px' : '32px 28px 24px', boxSizing: 'border-box', textAlign: 'center', overflowY: 'auto', maxHeight: isMobile ? (expanded ? '45svh' : '88svh') : '88vh' }}>
+                <div className="user-profile-left" style={{ width: 340, flexShrink: 0, padding: '32px 28px 24px', boxSizing: 'border-box', textAlign: 'center', overflowY: 'auto', maxHeight: '88vh' }}>
                     {/* Close button only when media panel is closed */}
                     {!expanded && (
                         <button onClick={close} style={{ position: 'absolute', top: 14, right: 16, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: dm ? '#9999bb' : '#9ca3af', zIndex: 1 }}>✕</button>
@@ -241,7 +415,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
                     {onStartChat && (
                         <button onClick={onStartChat} style={{ width: '100%', padding: 12, background: 'linear-gradient(135deg, #6c47d4, #8b5cf6)', color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
-                            {isSelf ? `⭐ ${lang === 'en' ? 'Favorites' : 'Избранное'}` : `💬 ${t('Start chat')}`}
+                            {isSelf ? `⭐ ${lang === 'en' ? 'Favorites' : 'Избранное'}` : `${t('Start chat')}`}
                         </button>
                     )}
                 </div>
@@ -378,7 +552,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
             document.body
         )}
         </>
-    );
+    ), document.body);
 };
 
 const tokens = (dm: boolean, o = false) => ({

@@ -260,11 +260,16 @@ class MessageModel:
                 return cur.lastrowid
     
     @staticmethod
-    async def get_conversation(user1_id: int, user2_id: int, limit: int = 50) -> List[Dict]:
+    async def get_conversation(user1_id: int, user2_id: int, limit: int = 50, before_id: int = None) -> List[Dict]:
         pool = await DatabasePool.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
-                await cur.execute("""
+                before_clause = "AND m.id < %s" if before_id else ""
+                params = [user1_id, user2_id, user2_id, user1_id, user1_id, user1_id]
+                if before_id:
+                    params.append(before_id)
+                params.append(limit + 1)
+                await cur.execute(f"""
                     SELECT m.id, m.sender_id, m.receiver_id, m.message_text,
                         m.file_path, m.filename, m.file_size, m.timestamp,
                         m.reply_to_id, m.reply_to_text, m.reply_to_sender, m.files,
@@ -279,20 +284,22 @@ class MessageModel:
                         AND m.is_deleted = 0
                         AND NOT (m.sender_id = %s AND m.deleted_by_sender = 1)
                         AND NOT (m.receiver_id = %s AND m.deleted_by_receiver = 1)
-                    ORDER BY m.timestamp DESC
+                        {before_clause}
+                    ORDER BY m.id DESC
                     LIMIT %s
-                """, (user1_id, user2_id, user2_id, user1_id, user1_id, user1_id, limit))
-                
-                messages = await cur.fetchall()
+                """, params)
+
+                rows = await cur.fetchall()
+                has_more = len(rows) > limit
+                messages = rows[:limit]
                 for msg in messages:
                     if msg.get('timestamp'):
-                        # Явно помечаем как UTC, чтобы браузер правильно конвертировал в МСК
                         msg['timestamp'] = msg['timestamp'].replace(tzinfo=__import__('datetime').timezone.utc).isoformat()
                     if msg.get('reply_to_text') is None:
                         msg['reply_to_text'] = ''
                     if msg.get('reply_to_sender') is None:
                         msg['reply_to_sender'] = ''
-                return list(reversed(messages))
+                return list(reversed(messages)), has_more
             
     @staticmethod
     async def get_undelivered_messages(user_id: int) -> List[Dict]:
@@ -405,14 +412,33 @@ class MessageModel:
                 return cur.rowcount > 0
     
     @staticmethod
-    async def search_conversation(user_id: int, other_user_id: int, query: str, limit: int = 50) -> List[Dict]:
+    async def search_conversation(user_id: int, other_user_id: int, query: str, limit: int = 1000,
+                                   date_from: str = None, date_to: str = None, content_type: str = 'all') -> List[Dict]:
         """Поиск сообщений в диалоге"""
         pool = await DatabasePool.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
-                await cur.execute("""
-                    SELECT m.id, m.sender_id, m.receiver_id, m.message_text, 
-                        m.file_path, m.filename, m.file_size, 
+                extra = []
+                params = [user_id, other_user_id, other_user_id, user_id]
+                if query:
+                    extra.append("AND m.message_text LIKE %s")
+                    params.append(f'%{query}%')
+                if date_from:
+                    extra.append("AND m.timestamp >= %s")
+                    params.append(date_from)
+                if date_to:
+                    extra.append("AND m.timestamp <= %s")
+                    params.append(date_to + ' 23:59:59')
+                if content_type == 'text':
+                    extra.append("AND (m.file_path IS NULL OR m.file_path = '') AND (m.files IS NULL OR m.files = '[]')")
+                elif content_type == 'media':
+                    extra.append("AND (m.file_path IS NOT NULL OR (m.files IS NOT NULL AND m.files != '[]'))")
+                elif content_type == 'links':
+                    extra.append("AND m.message_text LIKE '%http%'")
+                params.append(limit)
+                await cur.execute(f"""
+                    SELECT m.id, m.sender_id, m.receiver_id, m.message_text,
+                        m.file_path, m.filename, m.file_size,
                         DATE_FORMAT(m.timestamp, '%%Y-%%m-%%dT%%H:%%i:%%s') as timestamp,
                         u1.username as sender_name, u2.username as receiver_name
                     FROM messages m
@@ -420,33 +446,51 @@ class MessageModel:
                     JOIN users u2 ON m.receiver_id = u2.id
                     WHERE ((m.sender_id = %s AND m.receiver_id = %s)
                         OR (m.sender_id = %s AND m.receiver_id = %s))
-                        AND m.message_text LIKE %s
                         AND m.is_deleted = 0
+                        {' '.join(extra)}
                     ORDER BY m.timestamp DESC
                     LIMIT %s
-                """, (user_id, other_user_id, other_user_id, user_id, f'%{query}%', limit))
+                """, params)
                 return await cur.fetchall()
 
     @staticmethod
-    async def search_all_conversations(user_id: int, query: str, limit: int = 100) -> List[Dict]:
-        """Поиск по всем сообщениям пользователя"""
+    async def search_all_conversations(user_id: int, query: str, limit: int = 1000,
+                                        date_from: str = None, date_to: str = None, content_type: str = 'all') -> List[Dict]:
+        """Поиск по всем личным сообщениям пользователя"""
         pool = await DatabasePool.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
-                await cur.execute("""
-                    SELECT m.id, m.sender_id, m.receiver_id, m.message_text, 
+                extra = []
+                params = [user_id, user_id]
+                if query:
+                    extra.append("AND m.message_text LIKE %s")
+                    params.append(f'%{query}%')
+                if date_from:
+                    extra.append("AND m.timestamp >= %s")
+                    params.append(date_from)
+                if date_to:
+                    extra.append("AND m.timestamp <= %s")
+                    params.append(date_to + ' 23:59:59')
+                if content_type == 'text':
+                    extra.append("AND (m.file_path IS NULL OR m.file_path = '') AND (m.files IS NULL OR m.files = '[]')")
+                elif content_type == 'media':
+                    extra.append("AND (m.file_path IS NOT NULL OR (m.files IS NOT NULL AND m.files != '[]'))")
+                elif content_type == 'links':
+                    extra.append("AND m.message_text LIKE '%http%'")
+                params.append(limit)
+                await cur.execute(f"""
+                    SELECT m.id, m.sender_id, m.receiver_id, m.message_text,
                         m.file_path, m.filename, m.file_size, m.timestamp,
                         u1.username as sender_name, u2.username as receiver_name
                     FROM messages m
                     JOIN users u1 ON m.sender_id = u1.id
                     JOIN users u2 ON m.receiver_id = u2.id
                     WHERE (m.sender_id = %s OR m.receiver_id = %s)
-                        AND m.message_text LIKE %s
                         AND m.is_deleted = 0
+                        {' '.join(extra)}
                     ORDER BY m.timestamp DESC
                     LIMIT %s
-                """, (user_id, user_id, f'%{query}%', limit))
-                
+                """, params)
                 results = await cur.fetchall()
                 for row in results:
                     if row.get('timestamp'):
@@ -747,12 +791,17 @@ class GroupMessageModel:
                 return cur.lastrowid
     
     @staticmethod
-    async def get_messages(group_id: int, limit: int = 50, offset: int = 0) -> List[Dict]:
+    async def get_messages(group_id: int, limit: int = 50, before_id: int = None) -> List[Dict]:
         """Получить историю сообщений группы"""
         pool = await DatabasePool.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
-                await cur.execute("""
+                before_clause = "AND gm.id < %s" if before_id else ""
+                params = [group_id]
+                if before_id:
+                    params.append(before_id)
+                params.append(limit + 1)
+                await cur.execute(f"""
                     SELECT
                         gm.id, gm.group_id, gm.sender_id,
                         COALESCE(gm.message_text, '') as message_text,
@@ -772,11 +821,14 @@ class GroupMessageModel:
                     LEFT JOIN group_messages rm ON gm.reply_to_id = rm.id
                     LEFT JOIN users ru ON rm.sender_id = ru.id
                     WHERE gm.group_id = %s AND gm.is_deleted = 0
-                    ORDER BY gm.timestamp DESC
-                    LIMIT %s OFFSET %s
-                """, (group_id, limit, offset))
-                
-                messages = await cur.fetchall()
+                        {before_clause}
+                    ORDER BY gm.id DESC
+                    LIMIT %s
+                """, params)
+
+                rows = await cur.fetchall()
+                has_more = len(rows) > limit
+                messages = rows[:limit]
 
                 for msg in messages:
                     if msg.get('timestamp'):
@@ -790,27 +842,49 @@ class GroupMessageModel:
                     else:
                         msg['reply_to_sender'] = str(msg['reply_to_sender'])
 
-                return list(reversed(messages))
+                return list(reversed(messages)), has_more
             
     @staticmethod
-    async def search_messages(group_id: int, query: str, limit: int = 50) -> List[Dict]:
+    async def search_messages(group_id: int, query: str, limit: int = 1000,
+                               date_from: str = None, date_to: str = None,
+                               content_type: str = 'all', sender_id: int = None) -> List[Dict]:
         """Поиск сообщений в группе"""
         pool = await DatabasePool.get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
-                await cur.execute("""
-                    SELECT gm.id, gm.group_id, gm.sender_id, gm.message_text, 
+                extra = []
+                params = [group_id]
+                if query:
+                    extra.append("AND gm.message_text LIKE %s")
+                    params.append(f'%{query}%')
+                if date_from:
+                    extra.append("AND gm.timestamp >= %s")
+                    params.append(date_from)
+                if date_to:
+                    extra.append("AND gm.timestamp <= %s")
+                    params.append(date_to + ' 23:59:59')
+                if content_type == 'text':
+                    extra.append("AND (gm.file_path IS NULL OR gm.file_path = '') AND (gm.files IS NULL OR gm.files = '[]')")
+                elif content_type == 'media':
+                    extra.append("AND (gm.file_path IS NOT NULL OR (gm.files IS NOT NULL AND gm.files != '[]'))")
+                elif content_type == 'links':
+                    extra.append("AND gm.message_text LIKE '%http%'")
+                if sender_id:
+                    extra.append("AND gm.sender_id = %s")
+                    params.append(sender_id)
+                params.append(limit)
+                await cur.execute(f"""
+                    SELECT gm.id, gm.group_id, gm.sender_id, gm.message_text,
                         gm.file_path, gm.filename, gm.file_size, gm.timestamp,
                         u.username as sender_name
                     FROM group_messages gm
                     JOIN users u ON gm.sender_id = u.id
                     WHERE gm.group_id = %s
-                        AND gm.message_text LIKE %s
                         AND gm.is_deleted = 0
+                        {' '.join(extra)}
                     ORDER BY gm.timestamp DESC
                     LIMIT %s
-                """, (group_id, f'%{query}%', limit))
-                
+                """, params)
                 results = await cur.fetchall()
                 for row in results:
                     if row.get('timestamp'):

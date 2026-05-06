@@ -115,6 +115,7 @@ interface ProfileSubProps { token: string; currentUsername: string; currentAvata
 const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, currentAvatar, currentStatus, theme, onThemeChange, onProfileUpdate, onBack }) => {
     const { t } = useLang();
     const dm = theme.darkMode;
+    const isMobile = window.innerWidth < 600;
     const col = dm ? '#e2e8f0' : '#1e1b4b';
     const subCol = dm ? '#7c7caa' : '#6b7280';
     const inputBg = dmC(dm, '#1e1e30', '#f5f3ff', '#050508');
@@ -214,8 +215,8 @@ const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, cu
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px', backgroundColor: dmC(dm, '#1a1a2e', '#f5f3ff', '#050508'), borderRadius: 16, marginBottom: 4 }}>
                 <div style={{ width: 72, height: 72, borderRadius: '50%', backgroundColor: avatarUrl ? 'transparent' : avatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, cursor: 'pointer', boxShadow: '0 4px 14px rgba(99,102,241,0.3)', position: 'relative' }} onClick={() => fileRef.current?.click()}>
                     {avatarUrl ? <img src={avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ color: 'white', fontSize: 26, fontWeight: 800 }}>{initials}</span>}
-                    <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, borderRadius: '50%', opacity: 0, transition: 'opacity 0.2s' }}
-                        onMouseEnter={e => (e.currentTarget.style.opacity = '1')} onMouseLeave={e => (e.currentTarget.style.opacity = '0')}>📷</div>
+                    <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, borderRadius: '50%', opacity: isMobile ? 0.75 : 0, transition: 'opacity 0.2s' }}
+                        onMouseEnter={e => (e.currentTarget.style.opacity = '1')} onMouseLeave={e => (e.currentTarget.style.opacity = isMobile ? '0.75' : '0')}>📷</div>
                 </div>
                 <div style={{ flex: 1 }}>
                     <div style={{ marginBottom: 8 }}>
@@ -470,13 +471,15 @@ const PrivacySubModal: React.FC<PrivacySubProps> = ({ token, theme, onBack, onLo
             {/* Blocked users */}
             <button
                 onClick={() => setShowBlocked(true)}
-                style={{ width: '100%', padding: '12px 14px', borderRadius: 12, backgroundColor: cardBg, boxShadow: cardBox(dm), display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', color: col, fontSize: 14, fontWeight: 500, marginBottom: 14, textAlign: 'left' as const }}
+                style={{ width: '100%', padding: '12px 14px', borderRadius: 12, backgroundColor: cardBg, boxShadow: cardBox(dm), display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', color: col, fontSize: 14, fontWeight: 500, marginBottom: 14, textAlign: 'left' as const, border: 'none' }}
             >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: 20 }}>🚫</span>
-                    <span>{lang === 'en' ? 'Blocked users' : 'Заблокированные пользователи'}</span>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg,#ef4444,#dc2626)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
                 </div>
-                <span style={{ color: subCol, fontSize: 16 }}>›</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: col }}>{lang === 'en' ? 'Blocked users' : 'Заблокированные пользователи'}</div>
+                </div>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={subCol} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
 
             <button onClick={handleSave} disabled={saving} style={{ width: '100%', padding: '12px', background: primaryGrad(), color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600, boxShadow: '0 4px 14px rgba(99,102,241,0.35)' }}>
@@ -617,7 +620,7 @@ const ChatSettingsSubModal: React.FC<ChatSettingsSubProps> = ({ theme, onThemeCh
                                     fontSize: 12, fontWeight: 700,
                                     color: isLight ? '#4b5563' : isOled ? '#c4b5fd' : 'rgba(255,255,255,0.9)',
                                     letterSpacing: '0.2px',
-                                }}>{th.labelKey}</span>
+                                }}>{t(th.labelKey)}</span>
                             </button>
                         );
                     })}
@@ -1042,7 +1045,7 @@ const AboutSubModal: React.FC<AboutSubProps> = ({ theme, onBack }) => {
                 <img src="/logo192.png" alt="Aurora" style={{ width: 80, height: 80, borderRadius: 22, boxShadow: '0 8px 28px rgba(99,102,241,0.3)' }} />
                 <div style={{ textAlign: 'center' }}>
                     <div style={{ fontSize: 32, fontWeight: 900, color: col, letterSpacing: -1 }}>Aurora</div>
-                    <div style={{ marginTop: 6, display: 'inline-block', padding: '3px 14px', borderRadius: 20, background: dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.1)'), color: '#a78bfa', fontSize: 13, fontWeight: 700, border: dm && getIsOled() ? '1px solid rgba(167,139,250,0.2)' : 'none' }}>beta v0.7.0</div>
+                    <div style={{ marginTop: 6, display: 'inline-block', padding: '3px 14px', borderRadius: 20, background: dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.1)'), color: '#a78bfa', fontSize: 13, fontWeight: 700, border: dm && getIsOled() ? '1px solid rgba(167,139,250,0.2)' : 'none' }}>beta v0.7.1 pre-release 1</div>
                 </div>
                 <div style={{ fontSize: 13, color: subCol, textAlign: 'center', lineHeight: 1.6 }}>{lang === 'en' ? 'Modern open-source messenger' : 'Современный мессенджер с открытым исходным кодом'}</div>
 
@@ -1146,6 +1149,130 @@ const ServerSubModal: React.FC<ServerSubProps> = ({ theme, onBack }) => {
 
 // ─── Main SettingsModal (drawer panel) ────────────────────────────────────────
 
+// ─── Notifications sub-modal ──────────────────────────────────────────────────
+
+const NOTIF_KEY = 'aurora_notif_settings';
+
+interface NotifSettings {
+    enabled: boolean;
+    sound: boolean;
+    showName: boolean;
+    showText: boolean;
+    privateChats: boolean;
+    groups: boolean;
+    channels: boolean;
+}
+
+const defaultNotif = (): NotifSettings => {
+    try { const s = localStorage.getItem(NOTIF_KEY); if (s) return JSON.parse(s); } catch {}
+    return { enabled: true, sound: true, showName: true, showText: true, privateChats: true, groups: true, channels: false };
+};
+
+const saveNotif = (s: NotifSettings) => localStorage.setItem(NOTIF_KEY, JSON.stringify(s));
+
+interface NotifSubProps { theme: ThemeSettings; onBack: () => void; }
+const NotificationsSubModal: React.FC<NotifSubProps> = ({ theme, onBack }) => {
+    const dm = theme.darkMode;
+    const col = dm ? '#e2e8f0' : '#1e1b4b';
+    const subCol = dm ? '#7c7caa' : '#6b7280';
+    const cardBg = dmC(dm, '#1a1a2e', '#fafbff', '#050508');
+    const sectionCol = dm ? (getIsOled() ? '#a78bfa' : '#818cf8') : '#6366f1';
+    const { t, lang } = useLang();
+
+    const [settings, setSettings] = useState<NotifSettings>(defaultNotif);
+    const [permState, setPermState] = useState<NotificationPermission>('default');
+
+    useEffect(() => {
+        if ('Notification' in window) setPermState(Notification.permission);
+    }, []);
+
+    const update = (patch: Partial<NotifSettings>) => {
+        const next = { ...settings, ...patch };
+        setSettings(next);
+        saveNotif(next);
+    };
+
+    const requestPermission = async () => {
+        if (!('Notification' in window)) return;
+        const p = await Notification.requestPermission();
+        setPermState(p);
+        if (p === 'granted') update({ enabled: true });
+    };
+
+    const Row: React.FC<{ icon: React.ReactNode; label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }> = ({ icon, label, hint, value, onChange }) => (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', borderRadius: 12, backgroundColor: cardBg, marginBottom: 8, boxShadow: cardBox(dm) }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: value ? primaryGrad() : (dm ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'), display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'background 0.2s' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={value ? 'white' : subCol} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{icon}</svg>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: col }}>{label}</div>
+                {hint && <div style={{ fontSize: 12, color: subCol, marginTop: 1 }}>{hint}</div>}
+            </div>
+            <Toggle value={value} onChange={onChange} />
+        </div>
+    );
+
+    return (
+        <SubModal title={lang === 'en' ? 'Notifications' : 'Уведомления'} onBack={onBack} dm={dm}>
+            {/* Permission banner */}
+            {permState === 'denied' && (
+                <div style={{ padding: '12px 14px', borderRadius: 12, background: dm ? 'rgba(239,68,68,0.12)' : '#fff5f5', border: `1px solid ${dm ? 'rgba(239,68,68,0.25)' : '#fecaca'}`, marginBottom: 16, fontSize: 13, color: dm ? '#fca5a5' : '#b91c1c', lineHeight: 1.5 }}>
+                    {lang === 'en' ? '🔕 Notifications are blocked by your browser. Allow them in site settings.' : '🔕 Уведомления заблокированы браузером. Разрешите их в настройках сайта.'}
+                </div>
+            )}
+            {permState === 'default' && (
+                <div onClick={requestPermission} style={{ padding: '12px 14px', borderRadius: 12, background: dm ? 'rgba(99,102,241,0.12)' : '#eef2ff', border: `1px solid ${dm ? 'rgba(99,102,241,0.25)' : '#c7d2fe'}`, marginBottom: 16, fontSize: 13, color: dm ? '#a5b4fc' : '#4338ca', cursor: 'pointer', lineHeight: 1.5, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                    <span>{lang === 'en' ? 'Click to allow desktop notifications' : 'Нажмите чтобы разрешить уведомления'}</span>
+                </div>
+            )}
+
+            {/* General */}
+            <div style={{ fontSize: 11, fontWeight: 700, color: sectionCol, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>
+                {lang === 'en' ? 'General' : 'Общие настройки'}
+            </div>
+            <Row icon={<><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></>} label={lang === 'en' ? 'Desktop notifications' : 'Уведомления на рабочем столе'} value={settings.enabled} onChange={v => update({ enabled: v })} />
+            <Row icon={<><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></>} label={lang === 'en' ? 'Sound' : 'Звук'} value={settings.sound} onChange={v => update({ sound: v })} />
+
+            {/* Preview */}
+            <div style={{ fontSize: 11, fontWeight: 700, color: sectionCol, textTransform: 'uppercase', letterSpacing: '0.8px', margin: '16px 0 8px' }}>
+                {lang === 'en' ? 'Notification content' : 'Содержимое уведомлений'}
+            </div>
+            <div style={{ padding: '14px 16px', borderRadius: 12, backgroundColor: cardBg, boxShadow: cardBox(dm), marginBottom: 8 }}>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'linear-gradient(135deg,#10b981,#059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>🐸</div>
+                    <div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: settings.showName ? col : subCol }}>{settings.showName ? 'Aurora' : (lang === 'en' ? 'New message' : 'Новое сообщение')}</div>
+                        <div style={{ fontSize: 13, color: subCol, marginTop: 2 }}>{settings.showText ? (lang === 'en' ? 'Hey! Check this out 👀' : 'Привет! Смотри сюда 👀') : (lang === 'en' ? 'You have a new message' : 'У вас новое сообщение')}</div>
+                    </div>
+                </div>
+                <div style={{ display: 'flex', gap: 16 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: col }}>
+                        <div onClick={() => update({ showName: !settings.showName })} style={{ width: 20, height: 20, borderRadius: 6, border: `2px solid ${settings.showName ? '#6366f1' : (dm ? '#4a4a6a' : '#d1d5db')}`, background: settings.showName ? '#6366f1' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer', transition: 'all 0.15s' }}>
+                            {settings.showName && <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M2 6L5 9L10 3" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                        </div>
+                        {lang === 'en' ? 'Name' : 'Имя'}
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: col }}>
+                        <div onClick={() => update({ showText: !settings.showText })} style={{ width: 20, height: 20, borderRadius: 6, border: `2px solid ${settings.showText ? '#6366f1' : (dm ? '#4a4a6a' : '#d1d5db')}`, background: settings.showText ? '#6366f1' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer', transition: 'all 0.15s' }}>
+                            {settings.showText && <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M2 6L5 9L10 3" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                        </div>
+                        {lang === 'en' ? 'Text' : 'Текст'}
+                    </label>
+                </div>
+            </div>
+
+            {/* Per-type */}
+            <div style={{ fontSize: 11, fontWeight: 700, color: sectionCol, textTransform: 'uppercase', letterSpacing: '0.8px', margin: '16px 0 8px' }}>
+                {lang === 'en' ? 'Chat notifications' : 'Уведомления из чатов'}
+            </div>
+            <Row icon={<><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></>} label={lang === 'en' ? 'Private chats' : 'Личные чаты'} hint={settings.privateChats ? (lang === 'en' ? 'Enabled' : 'Включены') : (lang === 'en' ? 'Disabled' : 'Отключены')} value={settings.privateChats} onChange={v => update({ privateChats: v })} />
+            <Row icon={<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>} label={lang === 'en' ? 'Groups' : 'Группы'} hint={settings.groups ? (lang === 'en' ? 'Enabled' : 'Включены') : (lang === 'en' ? 'Disabled' : 'Отключены')} value={settings.groups} onChange={v => update({ groups: v })} />
+            <Row icon={<><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></>} label={lang === 'en' ? 'Channels' : 'Каналы'} hint={settings.channels ? (lang === 'en' ? 'Enabled' : 'Включены') : (lang === 'en' ? 'Disabled' : 'Отключены')} value={settings.channels} onChange={v => update({ channels: v })} />
+        </SubModal>
+    );
+};
+
 interface SettingsModalProps {
     token: string;
     currentUsername: string;
@@ -1165,7 +1292,179 @@ interface SettingsModalProps {
     onClose: () => void;
 }
 
-type SubSection = 'profile' | 'privacy' | 'chat' | 'emoji' | 'language' | 'patchnotes' | 'about' | 'server' | null;
+// ─── Audio & Camera Sub-Modal ─────────────────────────────────────────────────
+const LS_AUDIO = 'aurora_audio_settings';
+const loadAudioSettings = () => { try { return JSON.parse(localStorage.getItem(LS_AUDIO) || '{}'); } catch { return {}; } };
+
+const BARS = 28;
+
+const AudioSubModal: React.FC<{ theme: ThemeSettings; onBack: () => void }> = ({ theme, onBack }) => {
+    const { lang } = useLang();
+    const dm = theme.darkMode;
+    const isOled = getIsOled();
+    const accent = '#6366f1';
+    const col = dm ? '#e2e8f0' : '#1e1b4b';
+    const cardBg = isOled ? '#050508' : (dm ? '#12122a' : '#f8f7ff');
+    const cardBorder = isOled ? 'rgba(167,139,250,0.12)' : (dm ? 'rgba(99,102,241,0.15)' : '#ede9fe');
+    const barEmpty = isOled ? 'rgba(255,255,255,0.06)' : dm ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+
+    const saved = loadAudioSettings();
+    const [outputDeviceId, setOutputDeviceId] = React.useState<string>(saved.outputDeviceId || 'default');
+    const [inputDeviceId, setInputDeviceId] = React.useState<string>(saved.inputDeviceId || 'default');
+    const [useForCalls, setUseForCalls] = React.useState<boolean>(saved.useForCalls !== false);
+    const [outputDevices, setOutputDevices] = React.useState<MediaDeviceInfo[]>([]);
+    const [inputDevices, setInputDevices] = React.useState<MediaDeviceInfo[]>([]);
+    const [permDenied, setPermDenied] = React.useState(false);
+    // meter: DOM ref — updates bars directly, zero React re-renders
+    const meterRef = React.useRef<HTMLDivElement>(null);
+    const streamRef = React.useRef<MediaStream | null>(null);
+    const rafRef = React.useRef<number>(0);
+    const audioCtxRef = React.useRef<AudioContext | null>(null);
+
+    const save = (patch: Record<string, any>) =>
+        localStorage.setItem(LS_AUDIO, JSON.stringify({ ...loadAudioSettings(), ...patch }));
+
+    // Request permission once → enumerate with labels
+    React.useEffect(() => {
+        (async () => {
+            try {
+                const tmp = await navigator.mediaDevices.getUserMedia({ audio: true });
+                tmp.getTracks().forEach(t => t.stop());
+            } catch { setPermDenied(true); }
+            try {
+                const devs = await navigator.mediaDevices.enumerateDevices();
+                setOutputDevices(devs.filter(d => d.kind === 'audiooutput' && d.deviceId));
+                setInputDevices(devs.filter(d => d.kind === 'audioinput' && d.deviceId));
+            } catch {}
+        })();
+    }, []);
+
+    // Mic level — writes directly to DOM, no setState
+    React.useEffect(() => {
+        let alive = true;
+        (async () => {
+            try {
+                const constraints: MediaStreamConstraints = {
+                    audio: inputDeviceId !== 'default' ? { deviceId: { exact: inputDeviceId } } : true,
+                };
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                if (!alive) { stream.getTracks().forEach(t => t.stop()); return; }
+                streamRef.current = stream;
+                const ctx = new AudioContext();
+                audioCtxRef.current = ctx;
+                const analyser = ctx.createAnalyser();
+                analyser.fftSize = 256;
+                ctx.createMediaStreamSource(stream).connect(analyser);
+                const data = new Uint8Array(analyser.frequencyBinCount);
+                let last = 0;
+                const tick = () => {
+                    if (!alive) return;
+                    rafRef.current = requestAnimationFrame(tick);
+                    const now = Date.now();
+                    if (now - last < 50) return;
+                    last = now;
+                    analyser.getByteFrequencyData(data);
+                    const level = Math.min(100, (data.reduce((s, v) => s + v, 0) / data.length / 128) * 100);
+                    const filled = Math.round((level / 100) * BARS);
+                    const container = meterRef.current;
+                    if (!container) return;
+                    const children = container.children;
+                    for (let i = 0; i < children.length; i++) {
+                        const bar = children[i] as HTMLElement;
+                        if (i < filled) {
+                            bar.style.backgroundColor = i > BARS * 0.75 ? '#ef4444' : i > BARS * 0.5 ? '#f59e0b' : accent;
+                        } else {
+                            bar.style.backgroundColor = barEmpty;
+                        }
+                    }
+                };
+                tick();
+            } catch { setPermDenied(true); }
+        })();
+        return () => {
+            alive = false;
+            cancelAnimationFrame(rafRef.current);
+            streamRef.current?.getTracks().forEach(t => t.stop());
+            audioCtxRef.current?.close().catch(() => {});
+        };
+    }, [inputDeviceId, accent, barEmpty]);
+
+    const selectStyle: React.CSSProperties = {
+        background: isOled ? '#0a0a14' : (dm ? '#1e1e30' : '#f5f3ff'),
+        color: col, border: `1px solid ${cardBorder}`, borderRadius: 8,
+        padding: '7px 10px', fontSize: 13, outline: 'none', width: '100%', marginTop: 8,
+        fontFamily: 'inherit',
+    };
+
+    const Section = ({ title }: { title: string }) => (
+        <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '16px 0 8px' }}>{title}</div>
+    );
+    const Card = ({ children }: { children: React.ReactNode }) => (
+        <div style={{ background: cardBg, border: `1px solid ${cardBorder}`, borderRadius: 12, padding: '12px 14px', marginBottom: 8 }}>{children}</div>
+    );
+    const CardRow = ({ label, right }: { label: string; right?: React.ReactNode }) => (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 14, color: col }}>{label}</span>
+            {right}
+        </div>
+    );
+
+    return (
+        <SubModal title={lang === 'en' ? 'Sound & Camera' : 'Звук и камера'} onBack={onBack} dm={dm}>
+            <div style={{ padding: '4px 20px 20px', display: 'flex', flexDirection: 'column' }}>
+
+                {permDenied && (
+                    <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 12, padding: '10px 14px', marginTop: 8, marginBottom: 4, fontSize: 13, color: '#ef4444', display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16" strokeWidth="3"/></svg>
+                        {lang === 'en' ? 'Microphone access denied. Allow it in browser settings.' : 'Доступ к микрофону запрещён. Разрешите в настройках браузера.'}
+                    </div>
+                )}
+
+                <Section title={lang === 'en' ? 'Speakers & headphones' : 'Колонки и наушники'} />
+                <Card>
+                    <CardRow label={lang === 'en' ? 'Playback device' : 'Устройство воспроизведения'} />
+                    <select style={selectStyle} value={outputDeviceId} onChange={e => { setOutputDeviceId(e.target.value); save({ outputDeviceId: e.target.value }); }}>
+                        <option value="default">{lang === 'en' ? 'Default' : 'По умолчанию'}</option>
+                        {outputDevices.map(d => <option key={d.deviceId} value={d.deviceId}>{d.label || d.deviceId.slice(0, 16)}</option>)}
+                    </select>
+                </Card>
+
+                <Section title={lang === 'en' ? 'Microphone' : 'Микрофон'} />
+                <Card>
+                    <CardRow label={lang === 'en' ? 'Recording device' : 'Устройство записи'} />
+                    <select style={selectStyle} value={inputDeviceId} onChange={e => { setInputDeviceId(e.target.value); save({ inputDeviceId: e.target.value }); }}>
+                        <option value="default">{lang === 'en' ? 'Default' : 'По умолчанию'}</option>
+                        {inputDevices.map(d => <option key={d.deviceId} value={d.deviceId}>{d.label || d.deviceId.slice(0, 16)}</option>)}
+                    </select>
+                    <div ref={meterRef} style={{ display: 'flex', gap: 2, marginTop: 10, height: 14 }}>
+                        {Array.from({ length: BARS }).map((_, i) => (
+                            <div key={i} style={{ flex: 1, height: '100%', borderRadius: 2, backgroundColor: barEmpty }} />
+                        ))}
+                    </div>
+                </Card>
+
+                <Section title={lang === 'en' ? 'Calls & video chats' : 'Звонки и видеочаты'} />
+                <Card>
+                    <CardRow
+                        label={lang === 'en' ? 'Use these devices for calls' : 'Использовать эти устройства для звонков'}
+                        right={<Toggle value={useForCalls} onChange={v => { setUseForCalls(v); save({ useForCalls: v }); }} />}
+                    />
+                </Card>
+
+                <Section title={lang === 'en' ? 'Other settings' : 'Другие настройки'} />
+                <button
+                    onClick={() => window.open('https://support.mozilla.org/kb/microphone-access', '_blank')}
+                    style={{ background: 'none', border: `1px solid ${cardBorder}`, borderRadius: 12, padding: '12px 14px', cursor: 'pointer', color: accent, fontSize: 14, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'inherit' }}
+                >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                    {lang === 'en' ? 'Go to system sound settings' : 'Перейти к системным настройкам звука'}
+                </button>
+            </div>
+        </SubModal>
+    );
+};
+
+type SubSection = 'profile' | 'privacy' | 'chat' | 'emoji' | 'language' | 'patchnotes' | 'about' | 'server' | 'notifications' | 'audio' | null;
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
     token, currentUsername, currentUserTag, currentAvatar, currentStatus, isOnline,
@@ -1285,8 +1584,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
                     {/* Quick actions */}
                     <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-                        <button onClick={() => { setClosing(true); setTimeout(() => { onClose(); onOpenFavorites(); }, 200); }} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: 'rgba(255,255,255,0.13)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 20, cursor: 'pointer', color: 'white', fontSize: 12, fontWeight: 600, backdropFilter: 'blur(4px)' }}>⭐ {t('Favorites')}</button>
-                        <button onClick={() => { setClosing(true); setTimeout(() => { onClose(); onOpenArchive(); }, 200); }} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: 'rgba(255,255,255,0.13)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 20, cursor: 'pointer', color: 'white', fontSize: 12, fontWeight: 600, backdropFilter: 'blur(4px)' }}>🗂️ {t('Archive')}</button>
+                        <button onClick={() => { setClosing(true); setTimeout(() => { onClose(); onOpenFavorites(); }, 200); }} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: 'rgba(255,255,255,0.13)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 20, cursor: 'pointer', color: 'white', fontSize: 12, fontWeight: 600, backdropFilter: 'blur(4px)' }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="#f59e0b" stroke="#f59e0b" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                            {t('Favorites')}
+                        </button>
+                        <button onClick={() => { setClosing(true); setTimeout(() => { onClose(); onOpenArchive(); }, 200); }} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: 'rgba(255,255,255,0.13)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 20, cursor: 'pointer', color: 'white', fontSize: 12, fontWeight: 600, backdropFilter: 'blur(4px)' }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+                            {t('Archive')}
+                        </button>
                     </div>
                 </div>
 
@@ -1295,6 +1600,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     <SectionDivider label={t('Account')} />
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>} label={t('Profile')} hint={t('Name, tag, photo, about')} color="linear-gradient(135deg,#f59e0b,#f97316)" onClick={() => setActiveSub('profile')} />
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} label={t('Privacy')} hint={t('What others see')} color="linear-gradient(135deg,#10b981,#059669)" onClick={() => setActiveSub('privacy')} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>} label={lang === 'en' ? 'Notifications' : 'Уведомления'} hint={lang === 'en' ? 'Sound, alerts, per-chat settings' : 'Звук, оповещения, настройки чатов'} color="linear-gradient(135deg,#8b5cf6,#a78bfa)" onClick={() => setActiveSub('notifications')} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} label={lang === 'en' ? 'Sound & Camera' : 'Звук и камера'} hint={lang === 'en' ? 'Microphone, speakers, calls' : 'Микрофон, колонки, звонки'} color="linear-gradient(135deg,#0ea5e9,#2563eb)" onClick={() => setActiveSub('audio')} />
 
                     <SectionDivider label={t('Appearance')} />
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.437-.652-.437-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>} label={t('Chat settings')} hint={t('Themes, wallpapers, animations')} color="linear-gradient(135deg,#3b82f6,#6366f1)" onClick={() => setActiveSub('chat')} />
@@ -1333,6 +1640,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             {activeSub === 'privacy' && (
                 <PrivacySubModal token={token} theme={theme} onBack={() => setActiveSub(null)} onLogout={onLogout} />
             )}
+            {activeSub === 'notifications' && (
+                <NotificationsSubModal theme={theme} onBack={() => setActiveSub(null)} />
+            )}
             {activeSub === 'chat' && (
                 <ChatSettingsSubModal theme={theme} onThemeChange={onThemeChange} onBack={() => setActiveSub(null)} />
             )}
@@ -1350,6 +1660,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
             {activeSub === 'server' && (
                 <ServerSubModal theme={theme} onBack={() => setActiveSub(null)} />
+            )}
+            {activeSub === 'audio' && (
+                <AudioSubModal theme={theme} onBack={() => setActiveSub(null)} />
             )}
         </>,
         document.body

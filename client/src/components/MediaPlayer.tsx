@@ -97,6 +97,7 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
             audio.removeEventListener('loadedmetadata', onDur);
             audio.removeEventListener('ended', onEnded);
         };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentTrack, repeat, shuffle, activePlaylist]);
 
     const loadAndPlay = useCallback((track: Track) => {
@@ -128,6 +129,7 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
             else if (repeat === 'all') loadAndPlay(tracks[0]);
             else stopPlayback();
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activePlaylist, currentTrack, repeat, shuffle, loadAndPlay]);
 
     const stopPlayback = () => {
@@ -140,8 +142,15 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
 
     const togglePlay = () => {
         const audio = audioRef.current!;
-        if (isPlaying) { audio.pause(); setIsPlaying(false); }
-        else { audio.play().catch(() => {}); setIsPlaying(true); }
+        if (isPlaying) {
+            audio.pause();
+            setIsPlaying(false);
+            api.setNowPlaying(token, null).catch(() => {});
+        } else {
+            audio.play().catch(() => {});
+            setIsPlaying(true);
+            if (currentTrack) api.setNowPlaying(token, currentTrack.title, currentTrack.artist).catch(() => {});
+        }
     };
 
     const playTrack = (track: Track, playlist: Playlist) => {
@@ -153,17 +162,29 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
     const prevTrack = () => {
         if (!activePlaylist || !currentTrack) return;
         const tracks = activePlaylist.tracks;
-        const idx = tracks.findIndex(t => t.id === currentTrack.id);
-        if (idx > 0) loadAndPlay(tracks[idx - 1]);
-        else if (repeat === 'all') loadAndPlay(tracks[tracks.length - 1]);
+        if (shuffle) {
+            const idx = shuffleOrder.current.indexOf(currentTrack.id);
+            const prevIdx = idx > 0 ? idx - 1 : repeat === 'all' ? shuffleOrder.current.length - 1 : -1;
+            if (prevIdx >= 0) { const t = tracks.find(t => t.id === shuffleOrder.current[prevIdx]); if (t) loadAndPlay(t); }
+        } else {
+            const idx = tracks.findIndex(t => t.id === currentTrack.id);
+            if (idx > 0) loadAndPlay(tracks[idx - 1]);
+            else if (repeat === 'all') loadAndPlay(tracks[tracks.length - 1]);
+        }
     };
 
     const nextTrack = () => {
         if (!activePlaylist || !currentTrack) return;
         const tracks = activePlaylist.tracks;
-        const idx = tracks.findIndex(t => t.id === currentTrack.id);
-        if (idx < tracks.length - 1) loadAndPlay(tracks[idx + 1]);
-        else if (repeat === 'all') loadAndPlay(tracks[0]);
+        if (shuffle) {
+            const idx = shuffleOrder.current.indexOf(currentTrack.id);
+            const nextIdx = idx < shuffleOrder.current.length - 1 ? idx + 1 : repeat === 'all' ? 0 : -1;
+            if (nextIdx >= 0) { const t = tracks.find(t => t.id === shuffleOrder.current[nextIdx]); if (t) loadAndPlay(t); }
+        } else {
+            const idx = tracks.findIndex(t => t.id === currentTrack.id);
+            if (idx < tracks.length - 1) loadAndPlay(tracks[idx + 1]);
+            else if (repeat === 'all') loadAndPlay(tracks[0]);
+        }
     };
 
     const handleVolumeChange = (v: number) => {
@@ -250,6 +271,7 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
             ? { ...currentTrack, cover_path: currentTrack.cover_path || activePlaylist?.cover || undefined }
             : null;
         onStateChange?.({ track: trackWithCover, isPlaying, volume, progress, duration, toggle: stableToggle, prev: stablePrev, next: stableNext, setVol: stableSetVol });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentTrack, isPlaying, volume, progress, duration, activePlaylist]);
 
     const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -365,6 +387,8 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
                                                     onClick={() => playTrack(track, pl)}
                                                     onMouseEnter={e => { if (currentTrack?.id !== track.id) e.currentTarget.style.background = isOled ? 'rgba(167,139,250,0.05)' : 'rgba(99,102,241,0.04)'; }}
                                                     onMouseLeave={e => { if (currentTrack?.id !== track.id) e.currentTarget.style.background = 'transparent'; }}
+                                                    onTouchStart={e => { if (currentTrack?.id !== track.id) e.currentTarget.style.background = isOled ? 'rgba(167,139,250,0.08)' : 'rgba(99,102,241,0.07)'; }}
+                                                    onTouchEnd={e => { if (currentTrack?.id !== track.id) e.currentTarget.style.background = 'transparent'; }}
                                                     style={{ padding: isMobile ? '9px 12px' : '7px 14px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', background: currentTrack?.id === track.id ? (isOled ? 'rgba(167,139,250,0.1)' : 'rgba(99,102,241,0.08)') : 'transparent', transition: 'background 0.15s' }}>
                                                     {/* Track cover or number */}
                                                     <div style={{ width: 32, height: 32, borderRadius: 6, flexShrink: 0, overflow: 'hidden', background: track.cover_path ? `url(${coverUrl(track.cover_path)}) center/cover` : (currentTrack?.id === track.id ? accent : bg3), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: currentTrack?.id === track.id ? 'white' : sub }}>
@@ -430,42 +454,60 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
                                 gap: isMobile ? 24 : 16, marginBottom: isMobile ? 20 : 20,
                                 marginTop: isMobile ? 12 : 8, width: '100%' }}>
-                                <button onClick={() => setShuffle(s => !s)}
-                                    style={{ ...btnStyle(shuffle), fontSize: isMobile ? 24 : 20, padding: isMobile ? '8px' : '6px 8px' }}
-                                    title="Перемешать">🔀</button>
+                                <button onClick={() => {
+                                    setShuffle(s => {
+                                        const next = !s;
+                                        if (next && activePlaylist) shuffleOrder.current = [...activePlaylist.tracks].sort(() => Math.random() - 0.5).map(t => t.id);
+                                        return next;
+                                    });
+                                }}
+                                    style={{ ...btnStyle(shuffle), padding: isMobile ? '8px' : '6px 8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                    title="Перемешать">
+                                    <svg width={isMobile ? 24 : 20} height={isMobile ? 24 : 20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg>
+                                </button>
                                 <button onClick={prevTrack}
                                     style={{ background: 'none', border: 'none', cursor: 'pointer', color: text,
-                                        fontSize: isMobile ? 36 : 28, padding: isMobile ? '6px' : '4px 8px',
-                                        display: 'flex', alignItems: 'center' }}>⏮</button>
+                                        padding: isMobile ? '6px' : '4px 8px',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <svg width={isMobile ? 30 : 24} height={isMobile ? 30 : 24} viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+                                </button>
                                 <button onClick={togglePlay}
                                     style={{ width: isMobile ? 80 : 64, height: isMobile ? 80 : 64,
                                         borderRadius: '50%',
                                         background: `linear-gradient(135deg, ${accent}, ${isOled ? '#7c3aed' : '#8b5cf6'})`,
-                                        border: 'none', cursor: 'pointer', fontSize: isMobile ? 32 : 26,
+                                        border: 'none', cursor: 'pointer',
                                         color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
                                         boxShadow: `0 8px 28px ${isOled ? 'rgba(139,92,246,0.6)' : 'rgba(99,102,241,0.5)'}`,
                                         flexShrink: 0 }}>
-                                    {isPlaying ? '⏸' : '▶'}
+                                    {isPlaying
+                                        ? <svg width={isMobile ? 28 : 22} height={isMobile ? 28 : 22} viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="4" height="16" rx="1"/><rect x="15" y="4" width="4" height="16" rx="1"/></svg>
+                                        : <svg width={isMobile ? 28 : 22} height={isMobile ? 28 : 22} viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 3 }}><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                                    }
                                 </button>
                                 <button onClick={nextTrack}
                                     style={{ background: 'none', border: 'none', cursor: 'pointer', color: text,
-                                        fontSize: isMobile ? 36 : 28, padding: isMobile ? '6px' : '4px 8px',
-                                        display: 'flex', alignItems: 'center' }}>⏭</button>
+                                        padding: isMobile ? '6px' : '4px 8px',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <svg width={isMobile ? 30 : 24} height={isMobile ? 30 : 24} viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+                                </button>
                                 <button onClick={() => setRepeat(r => r === 'none' ? 'all' : r === 'all' ? 'one' : 'none')}
-                                    style={{ ...btnStyle(repeat !== 'none'), fontSize: isMobile ? 24 : 20, padding: isMobile ? '8px' : '6px 8px' }}>
-                                    {repeat === 'one' ? '🔂' : '🔁'}
+                                    style={{ ...btnStyle(repeat !== 'none'), padding: isMobile ? '8px' : '6px 8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    {repeat === 'one'
+                                        ? <svg width={isMobile ? 24 : 20} height={isMobile ? 24 : 20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/><text x="10" y="14" fontSize="7" fontWeight="bold" fill="currentColor" stroke="none">1</text></svg>
+                                        : <svg width={isMobile ? 24 : 20} height={isMobile ? 24 : 20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+                                    }
                                 </button>
                             </div>
 
                             {/* Volume — shown on mobile too as horizontal slider */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%',
                                 marginBottom: isMobile ? 8 : 0 }}>
-                                <span style={{ color: sub, fontSize: 16 }}>🔈</span>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/></svg>
                                 <input type="range" min={0} max={1} step={0.01} value={volume}
                                     onChange={e => handleVolumeChange(parseFloat(e.target.value))}
                                     style={{ flex: 1, accentColor: accent, cursor: 'pointer',
                                         height: isMobile ? 5 : 4 }} />
-                                <span style={{ color: sub, fontSize: 16 }}>🔊</span>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
                             </div>
                         </div>
                         );
@@ -513,7 +555,11 @@ export const MiniPlayer: React.FC<{
     const sub = isOled ? '#7c6aaa' : dm ? '#5a5a8a' : '#9ca3af';
     const accent = isOled ? '#a78bfa' : '#6366f1';
     const trackCover = track?.cover_path ? (config.fileUrl(track.cover_path) ?? track.cover_path) : null;
-    const volIcon = volume === 0 ? '🔇' : volume < 0.5 ? '🔈' : '🔊';
+    const volIcon = volume === 0
+        ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+        : volume < 0.5
+            ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+            : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>;
     const fmtTime = (s: number) => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
     const handleVolToggle = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -528,8 +574,7 @@ export const MiniPlayer: React.FC<{
     const showMusic = hasMusic && !hasAudio;
     const isVoice = showAudio && /^voice_/i.test(chatAudio!.filename);
 
-    const glowColor = isOled ? 'rgba(167,139,250,0.18)' : dm ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.1)';
-    const glowShadow = `0 0 8px ${glowColor}, 0 2px 12px ${isOled ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.18)'}${isOled ? ', 0 0 0 1px rgba(167,139,250,0.08)' : ''}`;
+    const borderTopCol = isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.1)';
 
     const coverEl = showAudio
         ? <div style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0, background: `linear-gradient(135deg,#6366f1,#8b5cf6)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15 }}>
@@ -540,7 +585,7 @@ export const MiniPlayer: React.FC<{
           </div>;
 
     return (
-        <div style={{ margin: '0 8px 6px', background: bg, borderRadius: 14, boxShadow: glowShadow, overflow: 'visible' }}>
+        <div style={{ margin: '0 8px 6px', background: bg, borderRadius: 14, border: `1px solid ${borderTopCol}`, overflow: 'hidden' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: showMusic ? 'pointer' : 'default', borderRadius: 14 }} onClick={showMusic ? onOpen : undefined}>
                 {coverEl}
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -556,16 +601,16 @@ export const MiniPlayer: React.FC<{
                     </>}
                 </div>
                 {showAudio ? <>
-                    {!isVoice && onChatAudioPrev && <button onClick={e => { e.stopPropagation(); onChatAudioPrev!(); }} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', fontSize: 14, padding: '2px 3px' }}>⏮</button>}
-                    <button onClick={e => { e.stopPropagation(); onChatAudioToggle?.(); }} style={{ background: 'none', border: 'none', color: accent, cursor: 'pointer', fontSize: 16, padding: '2px 4px' }}>{chatAudioPlaying ? '⏸' : '▶'}</button>
-                    {!isVoice && onChatAudioNext && <button onClick={e => { e.stopPropagation(); onChatAudioNext!(); }} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', fontSize: 14, padding: '2px 3px' }}>⏭</button>}
-                    <button onClick={e => { e.stopPropagation(); onChatAudioStop?.(); }} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', fontSize: 13, padding: '2px 3px' }}>✕</button>
+                    {!isVoice && onChatAudioPrev && <button onClick={e => { e.stopPropagation(); onChatAudioPrev!(); }} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', padding: '2px 3px', display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg></button>}
+                    <button onClick={e => { e.stopPropagation(); onChatAudioToggle?.(); }} style={{ background: 'none', border: 'none', color: accent, cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center' }}>{chatAudioPlaying ? <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="4" height="16" rx="1"/><rect x="15" y="4" width="4" height="16" rx="1"/></svg> : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 1 }}><polygon points="5 3 19 12 5 21 5 3"/></svg>}</button>
+                    {!isVoice && onChatAudioNext && <button onClick={e => { e.stopPropagation(); onChatAudioNext!(); }} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', padding: '2px 3px', display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg></button>}
+                    <button onClick={e => { e.stopPropagation(); onChatAudioStop?.(); }} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', padding: '2px 3px', display: 'flex', alignItems: 'center' }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                 </> : <>
-                    <button onClick={e => { e.stopPropagation(); onPrev(); }} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', fontSize: 14, padding: '2px 4px' }}>⏮</button>
-                    <button onClick={e => { e.stopPropagation(); onToggle(); }} style={{ background: 'none', border: 'none', color: accent, cursor: 'pointer', fontSize: 16, padding: '2px 4px' }}>{isPlaying ? '⏸' : '▶'}</button>
-                    <button onClick={e => { e.stopPropagation(); onNext(); }} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', fontSize: 14, padding: '2px 4px' }}>⏭</button>
+                    <button onClick={e => { e.stopPropagation(); onPrev(); }} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg></button>
+                    <button onClick={e => { e.stopPropagation(); onToggle(); }} style={{ background: 'none', border: 'none', color: accent, cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center' }}>{isPlaying ? <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="4" height="16" rx="1"/><rect x="15" y="4" width="4" height="16" rx="1"/></svg> : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 1 }}><polygon points="5 3 19 12 5 21 5 3"/></svg>}</button>
+                    <button onClick={e => { e.stopPropagation(); onNext(); }} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg></button>
                     <div style={{ position: 'relative' }}>
-                        <button ref={volBtnRef} onClick={handleVolToggle} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', fontSize: 14, padding: '2px 4px' }}>{volIcon}</button>
+                        <button ref={volBtnRef} onClick={handleVolToggle} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center' }}>{volIcon}</button>
                         {showVol && volPos && <div style={{ position: 'fixed', top: volPos.top, right: volPos.right, background: bg, borderRadius: 10, padding: '8px 10px', boxShadow: '0 4px 20px rgba(0,0,0,0.35)', border: `1px solid ${isOled ? 'rgba(167,139,250,0.15)' : dm ? 'rgba(99,102,241,0.2)' : '#ede9fe'}`, zIndex: 9999 }} onClick={e => e.stopPropagation()}>
                             <input type="range" min={0} max={1} step={0.01} value={volume} onChange={e => onVolume(parseFloat(e.target.value))} style={{ width: 80, accentColor: accent, cursor: 'pointer', display: 'block' }} />
                         </div>}

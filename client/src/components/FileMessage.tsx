@@ -10,18 +10,20 @@ interface FileMessageProps {
     messageId?: number;
     isGroup?: boolean;
     isDark?: boolean;
+    inBubble?: boolean;
+    hasCaption?: boolean;
     onPlay?: (src: string, filename: string) => void;
     onPlayVideo?: (src: string, filename: string) => void;
-    // Global player state (for audio progress sync)
     nowPlayingSrc?: string;
     globalPlaying?: boolean;
     globalCurrentTime?: number;
     globalDuration?: number;
     onGlobalSeek?: (e: React.MouseEvent<HTMLDivElement>) => void;
     onGlobalToggle?: () => void;
+    onDurationKnown?: (src: string, duration: number) => void;
 }
 
-const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize, isOwn, messageId, isGroup, isDark = false, onPlay, onPlayVideo, nowPlayingSrc, globalPlaying, globalCurrentTime, globalDuration, onGlobalSeek, onGlobalToggle }) => {
+const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize, isOwn, messageId, isGroup, isDark = false, inBubble = false, hasCaption = false, onPlay, onPlayVideo, nowPlayingSrc, globalPlaying, globalCurrentTime, globalDuration, onGlobalSeek, onGlobalToggle, onDurationKnown }) => {
     const dm = isDark;
     const displayName = filename || 'file';
     const isImage = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(displayName);
@@ -80,22 +82,40 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
         return () => document.removeEventListener('keydown', handler);
     }, [lightboxOpen]);
 
+    // Gradient color that fades into bubble background
+    const fadeColor = isOwn
+        ? 'rgba(109,40,217,'  // purple own
+        : dm
+            ? 'rgba(37,32,72,'   // dark other
+            : 'rgba(240,237,255,'; // light other
+
     // ── IMAGE ──
     if (isImage) {
+        const topRadius = isOwn ? '18px 4px 0 0' : '4px 18px 0 0';
+        const allRadius = isOwn ? '18px 4px 18px 18px' : '4px 18px 18px 18px';
+        const imgWrap: React.CSSProperties = inBubble ? {
+            margin: hasCaption ? '-11px -15px 6px' : '-11px -15px -11px',
+            width: 'calc(100% + 30px)',
+            display: 'block',
+            borderRadius: hasCaption ? topRadius : allRadius,
+        } : {
+            borderRadius: 18,
+            display: 'inline-block',
+            maxWidth: 320,
+        };
         return (
             <>
                 <div
-                    style={{ position: 'relative', display: 'inline-block', borderRadius: 14, overflow: 'hidden', maxWidth: 280, cursor: 'zoom-in' }}
+                    style={{ ...imgWrap, position: 'relative', overflow: 'hidden', cursor: 'zoom-in' }}
                     onClick={() => setLightboxOpen(true)}
                 >
                     <img
                         src={fileUrl}
                         alt=""
-                        style={{ display: 'block', maxWidth: '100%', maxHeight: 260, objectFit: 'cover', borderRadius: 14 }}
+                        style={{ display: 'block', width: '100%', height: 'auto', maxHeight: 360, objectFit: 'cover' }}
                         onError={e => { e.currentTarget.style.display = 'none'; }}
                     />
                 </div>
-
                 {lightboxOpen && (
                     <Lightbox url={fileUrl} type="image" name={displayName} onClose={() => setLightboxOpen(false)} onDownload={downloadFile} />
                 )}
@@ -105,39 +125,45 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
 
     // ── VIDEO ──
     if (isVideo) {
+        const vidTopRadius = isOwn ? '18px 4px 0 0' : '4px 18px 0 0';
+        const vidAllRadius = isOwn ? '18px 4px 18px 18px' : '4px 18px 18px 18px';
+        const vidWrap: React.CSSProperties = inBubble ? {
+            margin: hasCaption ? '-11px -15px 6px' : '-11px -15px -11px',
+            width: 'calc(100% + 30px)',
+            display: 'block',
+            borderRadius: hasCaption ? vidTopRadius : vidAllRadius,
+        } : {
+            borderRadius: 18,
+            maxWidth: 360,
+        };
         return (
             <>
-                <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', maxWidth: 300 }}>
-                    <div
-                        style={{ cursor: 'zoom-in' }}
-                        onClick={() => setLightboxOpen(true)}
-                        title="Нажмите для просмотра"
-                    >
+                <div style={{ ...vidWrap, position: 'relative', overflow: 'hidden' }}>
+                    <div style={{ cursor: 'zoom-in', width: '100%' }} onClick={() => setLightboxOpen(true)}>
                         <video
                             src={fileUrl}
-                            style={{ display: 'block', maxWidth: '100%', maxHeight: 200, borderRadius: 14, backgroundColor: '#000', pointerEvents: 'none' }}
+                            style={{ display: 'block', width: '100%', maxHeight: 360, backgroundColor: '#000', pointerEvents: 'none', objectFit: 'cover' }}
                         />
-                        {/* Play overlay */}
                         <div style={{
                             position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            background: 'rgba(0,0,0,0.28)', borderRadius: 14,
+                            background: 'rgba(0,0,0,0.22)',
                         }}>
                             <div style={{
-                                width: 48, height: 48, borderRadius: '50%',
+                                width: 54, height: 54, borderRadius: '50%',
                                 background: 'rgba(255,255,255,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                fontSize: 20, boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
-                            }}>▶</div>
+                                boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+                            }}>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="#1e1b4b"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            </div>
                         </div>
                     </div>
                     {onPlayVideo && (
                         <button
                             onClick={e => { e.stopPropagation(); onPlayVideo(fileUrl, displayName); }}
-                            title="Смотреть в фоне"
-                            style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: 8, color: 'white', fontSize: 13, padding: '3px 7px', cursor: 'pointer', backdropFilter: 'blur(4px)' }}
+                            style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: 8, color: 'white', fontSize: 13, padding: '3px 8px', cursor: 'pointer', backdropFilter: 'blur(4px)' }}
                         >⛶</button>
                     )}
                 </div>
-
                 {lightboxOpen && (
                     <Lightbox url={fileUrl} type="video" name={displayName} onClose={() => setLightboxOpen(false)} onDownload={downloadFile} />
                 )}
@@ -147,7 +173,7 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
 
     // ── AUDIO ──
     if (isAudio) {
-        return <AudioPlayer url={fileUrl} name={displayName} fileSize={fileSize} isOwn={isOwn} isDark={dm} onDownload={downloadFile} onPlay={onPlay} nowPlayingSrc={nowPlayingSrc} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} globalDuration={globalDuration} onGlobalSeek={onGlobalSeek} onGlobalToggle={onGlobalToggle} />;
+        return <AudioPlayer url={fileUrl} name={displayName} fileSize={fileSize} isOwn={isOwn} isDark={dm} onDownload={downloadFile} onPlay={onPlay} nowPlayingSrc={nowPlayingSrc} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} globalDuration={globalDuration} onGlobalSeek={onGlobalSeek} onGlobalToggle={onGlobalToggle} onDurationKnown={onDurationKnown} />;
     }
 
     // ── FILE ──
@@ -194,9 +220,10 @@ interface AudioPlayerProps {
     globalDuration?: number;
     onGlobalSeek?: (e: React.MouseEvent<HTMLDivElement>) => void;
     onGlobalToggle?: () => void;
+    onDurationKnown?: (src: string, duration: number) => void;
 }
 
-const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSize, isOwn, isDark: dm, onDownload, onPlay, nowPlayingSrc, globalPlaying, globalCurrentTime, globalDuration, onGlobalSeek, onGlobalToggle }) => {
+const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSize, isOwn, isDark: dm, onDownload, onPlay, nowPlayingSrc, globalPlaying, globalCurrentTime, globalDuration, onGlobalSeek, onGlobalToggle, onDurationKnown }) => {
     const audioRef = useRef<HTMLAudioElement>(null);
     const [playing, setPlaying] = useState(false);
     const [localDuration, setLocalDuration] = useState(0);
@@ -212,11 +239,42 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
     const dispProgress = dispDuration > 0 ? dispCurrentTime / dispDuration : 0;
 
     const formatTime = (s: number) => {
-        if (!isFinite(s) || s === 0) return '0:00';
+        if (!isFinite(s) || s <= 0) return '0:00';
         const m = Math.floor(s / 60);
         const sec = Math.floor(s % 60);
         return `${m}:${sec.toString().padStart(2, '0')}`;
     };
+
+    useEffect(() => {
+        const a = audioRef.current;
+        if (!a) return;
+        a.load();
+        const reportDuration = (dur: number) => {
+            setLocalDuration(dur);
+            onDurationKnown?.(url, dur);
+        };
+        const tryFixDuration = () => {
+            if (isFinite(a.duration) && a.duration > 0) {
+                reportDuration(a.duration);
+                return;
+            }
+            const onSeeked = () => {
+                a.removeEventListener('seeked', onSeeked);
+                if (isFinite(a.duration) && a.duration > 0) {
+                    reportDuration(a.duration);
+                    a.currentTime = 0;
+                }
+            };
+            a.addEventListener('seeked', onSeeked);
+            a.currentTime = 1e101;
+        };
+        a.addEventListener('loadedmetadata', tryFixDuration);
+        a.addEventListener('durationchange', tryFixDuration);
+        return () => {
+            a.removeEventListener('loadedmetadata', tryFixDuration);
+            a.removeEventListener('durationchange', tryFixDuration);
+        };
+    }, [url, onDurationKnown]);
 
     const handleEnded = () => {
         setPlaying(false);
@@ -269,6 +327,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
             onEnded={!onPlay ? handleEnded : undefined}
             onLoadedMetadata={handleDurationChange}
             onDurationChange={handleDurationChange}
+            onCanPlay={handleDurationChange}
             onTimeUpdate={!onPlay ? handleTimeUpdate : undefined}
         />
     );
@@ -307,9 +366,9 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
                             ))}
                         </div>
                         <div style={{ fontSize: 11, color: timeColor }}>
-                            {(dispPlaying || dispCurrentTime > 0)
-                                ? `${formatTime(dispCurrentTime)} / ${formatTime(safeDispDuration > 0 ? safeDispDuration : 0)}`
-                                : formatTime(safeDispDuration > 0 ? safeDispDuration : 0)}
+                            {dispPlaying || dispCurrentTime > 0
+                                ? `${formatTime(dispCurrentTime)} / ${formatTime(safeDispDuration)}`
+                                : formatTime(safeDispDuration)}
                         </div>
                     </div>
                 </div>
@@ -547,8 +606,9 @@ const LightboxGallery: React.FC<{ images: GalleryImage[]; initialIndex: number; 
     );
 };
 
-// ── ImageGrid — сетка изображений для нескольких фото ──
+// ── ImageGrid / MediaGrid ──
 export interface GridImage { url: string; name: string; }
+export interface MediaGridItem { url: string; name: string; type: 'image' | 'video'; onPlayVideo?: (src: string, name: string) => void; }
 
 interface CellDef { index: number; col: string; row: string; h: number; }
 
@@ -595,6 +655,77 @@ const buildCells = (count: number, MAX: number): { cells: CellDef[]; cols: strin
         cells.push({ index: i, col: String(col), row: String(row), h: 105 });
     }
     return { cells, cols: '1fr 1fr 1fr', gridW: 320 };
+};
+
+export const MediaGrid: React.FC<{ items: MediaGridItem[] }> = ({ items }) => {
+    const [lightboxImgIndex, setLightboxImgIndex] = useState<number | null>(null);
+    const [lightboxVideo, setLightboxVideo] = useState<{ url: string; name: string } | null>(null);
+    const imgItems: GridImage[] = items.filter(i => i.type === 'image').map(i => ({ url: i.url, name: i.name }));
+    const count = items.length;
+    const MAX = 9;
+    const hiddenCount = Math.max(0, count - MAX);
+    const { cells, cols, gridW } = buildCells(count, MAX);
+
+    const downloadVideo = async (url: string, name: string) => {
+        try {
+            const res = await fetch(url);
+            const blob = await res.blob();
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        } catch {
+            const a = document.createElement('a'); a.href = url; a.download = name;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        }
+    };
+
+    return (
+        <>
+            <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 2, width: gridW, borderRadius: 12, overflow: 'hidden' }}>
+                {cells.map(({ index, col, row, h }) => {
+                    const item = items[index];
+                    if (!item) return null;
+                    const isLast = index === cells.length - 1 && hiddenCount > 0;
+                    const handleClick = () => {
+                        if (item.type === 'video') {
+                            setLightboxVideo({ url: item.url, name: item.name });
+                        } else {
+                            const imgIdx = imgItems.findIndex(im => im.url === item.url);
+                            setLightboxImgIndex(imgIdx >= 0 ? imgIdx : 0);
+                        }
+                    };
+                    return (
+                        <div key={index} onClick={handleClick}
+                            style={{ position: 'relative', height: h, overflow: 'hidden', cursor: 'pointer', gridColumn: col, gridRow: row }}
+                        >
+                            {item.type === 'image' ? (
+                                <img src={item.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                            ) : (
+                                <>
+                                    <video src={item.url} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} preload="metadata" />
+                                    <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.22)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'rgba(255,255,255,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 12px rgba(0,0,0,0.35)' }}>
+                                            <svg width="17" height="17" viewBox="0 0 24 24" fill="#1e1b4b"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                            {isLast && (
+                                <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.58)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 700, color: 'white' }}>
+                                    +{hiddenCount}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+            {lightboxImgIndex !== null && imgItems.length > 0 && (
+                <LightboxGallery images={imgItems} initialIndex={lightboxImgIndex} onClose={() => setLightboxImgIndex(null)} />
+            )}
+            {lightboxVideo && (
+                <Lightbox url={lightboxVideo.url} type="video" name={lightboxVideo.name} onClose={() => setLightboxVideo(null)} onDownload={() => downloadVideo(lightboxVideo.url, lightboxVideo.name)} />
+            )}
+        </>
+    );
 };
 
 export const ImageGrid: React.FC<{ images: GridImage[] }> = ({ images }) => {

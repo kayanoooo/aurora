@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo, lazy, Suspense } from 'react';
 import { api } from '../services/api';
-import { wsService } from '../services/websocket';
-import { User, Message, Group, GroupMessage, ChatItem, ThemeSettings } from '../types';
+import { wsService, WsConnectionState } from '../services/websocket';
+import { DevBadge, TesterBadge, TESTER_TAGS, DEV_TAGS } from './UserBadges';
+import { User, Message, Group, GroupMessage, ChatItem, ThemeSettings, AccountEntry } from '../types';
 import FileMessage, { ImageGrid, MediaGrid } from './FileMessage';
 import CreateGroupModal from './CreateGroupModal';
 import CreateChannelModal from './CreateChannelModal';
@@ -26,6 +27,8 @@ const HelpModal      = lazy(() => import('./HelpModal'));
 const SupportChat    = lazy(() => import('./SupportChat'));
 const AdminPanel     = lazy(() => import('./AdminPanel'));
 const ChatMediaPanel = lazy(() => import('./ChatMediaPanel'));
+const LocationPicker = lazy(() => import('./LocationPicker'));
+const ContactPicker  = lazy(() => import('./ContactPicker'));
 
 const BASE_URL = config.BASE_URL;
 
@@ -57,8 +60,12 @@ interface ChatProps {
     onThemeChange: (theme: ThemeSettings) => void;
     onProfileUpdate: (username: string, avatar?: string, status?: string, tag?: string) => void;
     onLogout: () => void;
+    onShowOnboarding?: () => void;
+    accounts?: AccountEntry[];
+    onSwitchAccount?: (acc: AccountEntry) => void;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function renderTextWithLinks(text: string | null | undefined, onMentionClick?: (username: string) => void, mentionColor = '#6366f1'): React.ReactNode {
     if (!text) return null;
     const re = /(@\w+)|https?:\/\/[^\s<>"{}|\\^`[\]]+/gi;
@@ -82,7 +89,113 @@ function renderTextWithLinks(text: string | null | undefined, onMentionClick?: (
     return parts.length > 0 ? <>{parts}</> : text;
 }
 
-const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, currentUserAvatar, currentUserStatus, currentUserTag, theme, onThemeChange, onProfileUpdate, onLogout }) => {
+// Highlight search query occurrences in plain text
+function highlightSearchText(text: string, query: string, isActive: boolean): React.ReactNode {
+    if (!query.trim()) return text;
+    const re = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    const parts = text.split(re);
+    if (parts.length <= 1) return text;
+    return (
+        <React.Fragment>
+            {parts.map((p, i) =>
+                re.test(p)
+                    ? <mark key={i} style={{ background: isActive ? '#f59e0b' : 'rgba(251,191,36,0.45)', color: isActive ? '#000' : 'inherit', borderRadius: 2, padding: '0 1px' }}>{p}</mark>
+                    : p
+            )}
+        </React.Fragment>
+    );
+}
+
+// Inline markdown tokens: process text left-to-right, emit React nodes
+function renderMarkdown(
+    text: string | null | undefined,
+    onMentionClick?: (username: string) => void,
+    mentionColor = '#6366f1',
+    isDark = false
+): React.ReactNode {
+    if (!text) return null;
+
+    const nodes: React.ReactNode[] = [];
+    let key = 0;
+
+    // Code block (triple backtick)
+    const codeBlockRe = /```([\s\S]*?)```/g;
+    let last = 0;
+    let cb: RegExpExecArray | null;
+    while ((cb = codeBlockRe.exec(text)) !== null) {
+        if (cb.index > last) nodes.push(...tokenize(text.slice(last, cb.index), key++, onMentionClick, mentionColor, isDark));
+        nodes.push(
+            <pre key={`cb${cb.index}`} style={{ background: isDark ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.06)', borderRadius: 8, padding: '8px 12px', margin: '4px 0', fontSize: 12, fontFamily: '"Fira Code","Courier New",monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', overflowX: 'auto', display: 'block' }}>
+                <code>{cb[1].trimEnd()}</code>
+            </pre>
+        );
+        last = cb.index + cb[0].length;
+    }
+    if (last < text.length) nodes.push(...tokenize(text.slice(last), key++, onMentionClick, mentionColor, isDark));
+
+    return nodes.length === 0 ? null : nodes.length === 1 ? nodes[0] : <React.Fragment>{nodes}</React.Fragment>;
+}
+
+function tokenize(
+    text: string,
+    baseKey: number,
+    onMentionClick?: (username: string) => void,
+    mentionColor = '#6366f1',
+    isDark = false
+): React.ReactNode[] {
+    if (!text) return [];
+    // Regex: inline code > bold > italic > strikethrough > spoiler > url/mention
+    const re = /(`[^`]+`)|(\*\*|__)([\s\S]+?)\2|([*_])([\s\S]+?)\4|(~~)([\s\S]+?)~~|(\|\|)([\s\S]+?)\|\||(@\w+)|https?:\/\/[^\s<>"{}|\\^`[\]]+/g;
+    const nodes: React.ReactNode[] = [];
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+        if (m.index > last) nodes.push(text.slice(last, m.index));
+        const k = `${baseKey}_${m.index}`;
+        if (m[1]) {
+            // Inline code
+            nodes.push(<code key={k} style={{ background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)', borderRadius: 4, padding: '1px 5px', fontFamily: '"Fira Code","Courier New",monospace', fontSize: '0.88em' }}>{m[1].slice(1, -1)}</code>);
+        } else if (m[2]) {
+            // Bold
+            nodes.push(<strong key={k}>{tokenize(m[3], baseKey + 1000, onMentionClick, mentionColor, isDark)}</strong>);
+        } else if (m[4]) {
+            // Italic
+            nodes.push(<em key={k}>{tokenize(m[5], baseKey + 2000, onMentionClick, mentionColor, isDark)}</em>);
+        } else if (m[6]) {
+            // Strikethrough
+            nodes.push(<s key={k}>{tokenize(m[7], baseKey + 3000, onMentionClick, mentionColor, isDark)}</s>);
+        } else if (m[8]) {
+            // Spoiler
+            nodes.push(<SpoilerSpan key={k} isDark={isDark}>{m[9]}</SpoilerSpan>);
+        } else if (m[10]?.startsWith('@') && onMentionClick) {
+            const uname = m[10].slice(1);
+            nodes.push(<span key={k} style={{ color: mentionColor, fontWeight: 600, cursor: 'pointer', background: mentionColor === '#6366f1' ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.12)', borderRadius: 4, padding: '0 2px' }} onClick={e => { e.stopPropagation(); onMentionClick(uname); }}>@{uname}</span>);
+        } else {
+            const chunk = m[0];
+            if (chunk.startsWith('http')) {
+                nodes.push(<a key={k} href={chunk} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline', wordBreak: 'break-all' }} onClick={e => e.stopPropagation()}>{chunk}</a>);
+            } else {
+                nodes.push(chunk);
+            }
+        }
+        last = m.index + m[0].length;
+    }
+    if (last < text.length) nodes.push(text.slice(last));
+    return nodes;
+}
+
+const SpoilerSpan: React.FC<{ children: React.ReactNode; isDark: boolean }> = ({ children, isDark }) => {
+    const [revealed, setRevealed] = React.useState(false);
+    return (
+        <span
+            onClick={e => { e.stopPropagation(); setRevealed(r => !r); }}
+            style={{ filter: revealed ? 'none' : 'blur(5px)', cursor: 'pointer', userSelect: revealed ? 'text' : 'none', transition: 'filter 0.2s', background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', borderRadius: 3, padding: '0 2px' }}
+        >{children}</span>
+    );
+};
+
+
+const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, currentUserAvatar, currentUserStatus, currentUserTag, theme, onThemeChange, onProfileUpdate, onLogout, onShowOnboarding, accounts, onSwitchAccount }) => {
     const { t, lang } = useLang();
     const { callInfo, startCall, acceptCall, rejectCall, endCall, toggleMute: callToggleMute, toggleCamera: callToggleCamera } = useCall();
     const callConnectedAtRef = useRef<number | null>(null);
@@ -94,6 +207,50 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         return () => window.removeEventListener('resize', handler);
     }, []);
     useEffect(() => { api.getServerInfo().then(r => { if (r) setServerInfo(r); }); }, []);
+
+    // Global keyboard shortcuts
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            const tag = (e.target as HTMLElement)?.tagName;
+            const inInput = tag === 'INPUT' || tag === 'TEXTAREA';
+
+            // Ctrl+F / Cmd+F — in-chat search
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f' && activeChatRef.current) {
+                e.preventDefault();
+                setChatSearchOpen(true);
+                setTimeout(() => chatSearchInputRef.current?.focus(), 50);
+                return;
+            }
+            // Ctrl+Shift+F — global message search
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'F') {
+                e.preventDefault();
+                setGlobalMsgSearch(true);
+                return;
+            }
+            // Ctrl+K / Cmd+K — focus sidebar search
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                const sidebarInput = document.querySelector<HTMLInputElement>('.sidebar-search-input');
+                sidebarInput?.focus();
+                return;
+            }
+            // Esc — close modals / cancel editing / deselect
+            if (e.key === 'Escape' && !inInput) {
+                setMenuMessageId(null);
+                setShowAttachMenu(false);
+                setShowEmojiPicker(false);
+                return;
+            }
+            // Ctrl+Enter — send message (alternative to Enter)
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && activeChatRef.current && inputRef.current === document.activeElement) {
+                e.preventDefault();
+                // sendMessage is called via the normal keydown handler on the textarea
+                return;
+            }
+        };
+        document.addEventListener('keydown', handler);
+        return () => document.removeEventListener('keydown', handler);
+    }, []);
 
     // Track call connect time and send call-ended bubble
     useEffect(() => {
@@ -126,6 +283,48 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const messagesRef = useRef<(Message | GroupMessage)[]>([]);
     const [chatKey, setChatKey] = useState(0);
     useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+    // IntersectionObserver: send read_group for visible non-own group messages
+    useEffect(() => {
+        if (!activeChat || activeChat.type !== 'group') return;
+        const groupId = activeChat.id;
+        const observer = new IntersectionObserver(entries => {
+            for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                const el = entry.target as HTMLElement;
+                const msgId = parseInt(el.dataset.groupMsgId || '0', 10);
+                if (!msgId || sentGroupReadRef.current.has(msgId)) continue;
+                sentGroupReadRef.current.add(msgId);
+                wsService.send({ type: 'read_group', group_id: groupId, message_id: msgId });
+                observer.unobserve(el);
+            }
+        }, { threshold: 0.5 });
+        // Observe all non-own group message elements
+        const els = document.querySelectorAll('[data-group-msg-id]');
+        els.forEach(el => observer.observe(el));
+        return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [messages, activeChat]);
+    // Client-side auto-delete for disappearing messages
+    useEffect(() => {
+        const timers: ReturnType<typeof setTimeout>[] = [];
+        messages.forEach(msg => {
+            const da = (msg as any).disappear_after;
+            if (!da) return;
+            const elapsed = (Date.now() - new Date((msg as any).timestamp).getTime()) / 1000;
+            const remaining = da - elapsed;
+            if (remaining <= 0) {
+                setMessages(prev => prev.filter(m => m.id !== msg.id));
+            } else {
+                timers.push(setTimeout(() => {
+                    setMessages(prev => prev.filter(m => m.id !== msg.id));
+                }, remaining * 1000));
+            }
+        });
+        return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [messages.map(m => m.id).join(',')]);
+
     const [typing, setTyping] = useState(false);
     const [typingUser, setTypingUser] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
@@ -167,11 +366,24 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [playlistShareSearch, setPlaylistShareSearch] = useState('');
     const [playlistPreview, setPlaylistPreview] = useState<PlaylistShareData | null>(null);
     const [playlistSaving, setPlaylistSaving] = useState(false);
+    // Disappearing messages
+    const [disappearSettings, setDisappearSettings] = useState<Record<string, number | null>>({});
+    const [showDisappearDropdown, setShowDisappearDropdown] = useState(false);
+
     // Scheduled messages
     const [scheduledMessages, setScheduledMessages] = useState<any[]>([]);
     const [showSchedulePicker, setShowSchedulePicker] = useState(false);
+
+    // Clear legacy wallpaper data
+    React.useEffect(() => { localStorage.removeItem('aurora_chat_wallpapers'); }, []);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [_groupSlowModes, setGroupSlowModes] = useState<Record<number, number>>({});
+    const [slowModeCooldowns, setSlowModeCooldowns] = useState<Record<number, number>>({}); // groupId → remaining seconds
+    const slowModeTimers = useRef<Record<number, ReturnType<typeof setInterval>>>({});
     const [scheduleDateTime, setScheduleDateTime] = useState('');
+    const [sendWhenOnline, setSendWhenOnline] = useState(false);
     const [decryptedTexts, setDecryptedTexts] = useState<Record<number, string>>({});
+    const [pollTitles, setPollTitles] = useState<Record<number, string>>({});
     const [newSupportReply, setNewSupportReply] = useState<{ msg_id: number; message_text: string; admin_id: number } | null>(null);
     const [newSupportMsg, setNewSupportMsg] = useState<{ user_id: number; message_text: string; msg_id: number; file_path?: string; filename?: string } | null>(null);
     const [favoritesLastMsg, setFavoritesLastMsg] = useState<{ text?: string | null; time?: string | null; file?: string | null; filename?: string | null } | null>(null);
@@ -191,6 +403,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [showAttachMenu, setShowAttachMenu] = useState(false);
     const attachBtnRef = useRef<HTMLButtonElement>(null);
     const [attachMenuPos, setAttachMenuPos] = useState({ x: 0, bottom: 0 });
+    const [showLocationPicker, setShowLocationPicker] = useState(false);
+    const [showContactPicker, setShowContactPicker] = useState(false);
     const [dragOver, setDragOver] = useState(false);
     const dragCounterRef = useRef(0);
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -202,6 +416,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [selectedMsgIds, setSelectedMsgIds] = useState<Set<number>>(new Set());
     const [forwardingMessages, setForwardingMessages] = useState<any[] | null>(null);
     const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+    const [reportTarget, setReportTarget] = useState<{ type: 'user' | 'group' | 'message'; id: number; name: string } | null>(null);
+    const [reportReason, setReportReason] = useState('');
+    const [reportComment, setReportComment] = useState('');
+    const [reportSent, setReportSent] = useState(false);
+    const [reportLoading, setReportLoading] = useState(false);
     const [previewGroup, setPreviewGroup] = useState<Group | null>(null); // channel being viewed but not yet joined
 
     // Channel comments panel
@@ -240,6 +459,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [sidebarSearchQuery, setSidebarSearchQuery] = useState('');
     const [sidebarSearchFocused, setSidebarSearchFocused] = useState(false);
     const [sidebarSearchResults, setSidebarSearchResults] = useState<User[]>([]);
+    const [sidebarMsgResults, setSidebarMsgResults] = useState<any[]>([]);
     const [sidebarChannelResults, setSidebarChannelResults] = useState<any[]>([]);
     const [sidebarSearchLoading, setSidebarSearchLoading] = useState(false);
     const sidebarSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -275,18 +495,46 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [showClearConfirm, setShowClearConfirm] = useState(false);
 
     // Sidebar state: full | compact | hidden
-    type SidebarState = 'full' | 'compact' | 'hidden';
+    type SidebarState = 'full' | 'compact' | 'minimal' | 'hidden';
     const [sidebarState, setSidebarState] = useState<SidebarState>('full');
     const sidebarHidden = sidebarState === 'hidden'; // compat
-    const cycleSidebar = () => setSidebarState(s => s === 'full' ? 'compact' : s === 'compact' ? 'hidden' : 'full');
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _cycleSidebar = () => setSidebarState(s => s === 'full' ? 'compact' : s === 'compact' ? 'minimal' : s === 'minimal' ? 'hidden' : 'full');
     const sidebarCompact = sidebarState === 'compact';
+    const sidebarMinimal = sidebarState === 'minimal';
+    const [wsConnState, setWsConnState] = useState<WsConnectionState>('connecting');
+    const [globalMsgSearch, setGlobalMsgSearch] = useState(false);
+    const [globalMsgQuery, setGlobalMsgQuery] = useState('');
+    const [globalMsgResults, setGlobalMsgResults] = useState<any[]>([]);
+    const [globalMsgLoading, setGlobalMsgLoading] = useState(false);
+    useEffect(() => wsService.onConnectionState(setWsConnState), []);
+
+    const runGlobalMsgSearch = React.useCallback(async (q: string) => {
+        if (!q.trim() || q.trim().length < 2) { setGlobalMsgResults([]); return; }
+        setGlobalMsgLoading(true);
+        try {
+            const res = await fetch(`${config.API_URL}/search/global?token=${token}&query=${encodeURIComponent(q)}&limit=30`);
+            const data = await res.json();
+            setGlobalMsgResults(data.results || []);
+        } catch {} finally { setGlobalMsgLoading(false); }
+    }, [token]);
+
+    useEffect(() => {
+        if (!globalMsgQuery.trim()) { setGlobalMsgResults([]); return; }
+        const tid = setTimeout(() => runGlobalMsgSearch(globalMsgQuery), 400);
+        return () => clearTimeout(tid);
+    }, [globalMsgQuery, runGlobalMsgSearch]);
+    const [sidebarWidth, setSidebarWidth] = useState(340);
+    const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+    const sidebarIsDragging = useRef(false);
 
     // Chat folders
     interface ChatFolder { id: number; name: string; color: string; chats: {chat_type: string; chat_id: number}[]; }
     const [folders, setFolders] = useState<ChatFolder[]>([]);
     const [activeFolder, setActiveFolder] = useState<number | null>(null); // null = all chats
     const [showFolderManager, setShowFolderManager] = useState(false);
-    const folderTabsRef = useRef<HTMLDivElement>(null);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _folderTabsRef = useRef<HTMLDivElement>(null);
 
     // Per-user localStorage key helper
     const lsKey = (name: string) => `aurora_${name}_${currentUserId}`;
@@ -357,13 +605,29 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     };
 
     // Pinned messages within chats (localStorage only)
-    const [pinnedMessages, setPinnedMessages] = useState<Record<string, { id: number; text: string; sender: string } | null>>(() => {
-        try { return JSON.parse(localStorage.getItem(`aurora_pinned_msgs_${currentUserId}`) || '{}'); }
-        catch { return {}; }
+    const [pinnedMessages, setPinnedMessages] = useState<Record<string, Array<{ id: number; text: string; sender: string }>>>(() => {
+        try {
+            const raw = JSON.parse(localStorage.getItem(`aurora_pinned_msgs_${currentUserId}`) || '{}');
+            // Migrate old format (single object) to array format
+            const migrated: Record<string, Array<{ id: number; text: string; sender: string }>> = {};
+            for (const k of Object.keys(raw)) {
+                const v = raw[k];
+                if (!v) continue;
+                migrated[k] = Array.isArray(v) ? v : [v];
+            }
+            return migrated;
+        } catch { return {}; }
     });
+    const [pinnedMsgIdx, setPinnedMsgIdx] = useState<Record<string, number>>({});
+
     const togglePinMessage = (chatKey: string, msg: any) => {
+        const pinEntry = { id: msg.id, text: msg.message_text || (lang === 'en' ? '[file]' : '[файл]'), sender: (msg as any).sender_name || t('You') };
         setPinnedMessages(prev => {
-            const next = { ...prev, [chatKey]: prev[chatKey]?.id === msg.id ? null : { id: msg.id, text: msg.message_text || (lang === 'en' ? '[file]' : '[файл]'), sender: (msg as any).sender_name || t('You') } };
+            const list = prev[chatKey] || [];
+            const exists = list.findIndex(p => p.id === msg.id);
+            const next = exists >= 0
+                ? { ...prev, [chatKey]: list.filter(p => p.id !== msg.id) }
+                : { ...prev, [chatKey]: [...list, pinEntry] };
             localStorage.setItem(lsKey('pinned_msgs'), JSON.stringify(next));
             return next;
         });
@@ -372,6 +636,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
     // Folder context menu
     const [folderCtxMenu, setFolderCtxMenu] = useState<{ x: number; y: number; folderId: number } | null>(null);
+    const [allChatsCtxMenu, setAllChatsCtxMenu] = useState<{ x: number; y: number } | null>(null);
     // "Add to folder" submenu key within chat context menu
     const [addToFolderKey, setAddToFolderKey] = useState<string | null>(null);
 
@@ -437,6 +702,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
     // Voice recording
     const [isRecording, setIsRecording] = useState(false);
+    const [isPaused, setIsPaused] = useState(false);
     const [recordingTime, setRecordingTime] = useState(0);
     const recordingTimeRef = useRef(0);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -475,6 +741,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [postViews, setPostViews] = useState<Record<number, number>>({});
     // Group message read counts: msgId → count
     const [groupReadCounts, setGroupReadCounts] = useState<Record<number, number>>({});
+    // Group read receipts: msgId → list of readers (id, name)
+    const [groupReadReceipts, setGroupReadReceipts] = useState<Record<number, {id: number, name: string}[]>>({});
+    // Track which group messages we've already sent read_group for (to avoid duplicates)
+    const sentGroupReadRef = useRef<Set<number>>(new Set());
+    // Popover showing reader names: msgId or null
+    const [readersPopoverMsgId, setReadersPopoverMsgId] = useState<number | null>(null);
 
     // Sidebar read receipts (✓✓)
     const [lastReadByOther, setLastReadByOther] = useState<Record<number, boolean>>({});
@@ -538,6 +810,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             mr.start();
             mediaRecorderRef.current = mr;
             setIsRecording(true);
+            // Notify peers about voice recording
+            const recChat = activeChatRef.current;
+            if (recChat) {
+                if (recChat.type === 'private') wsService.send({ type: 'typing', receiver_id: recChat.id, action: 'recording' });
+                else wsService.send({ type: 'group_typing', group_id: recChat.id, action: 'recording' });
+            }
             recordingTimeRef.current = 0;
             recordingTimerRef.current = setInterval(() => {
                 recordingTimeRef.current += 1;
@@ -548,11 +826,44 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         }
     };
 
+    const pauseRecording = () => {
+        const mr = mediaRecorderRef.current;
+        if (!mr || !isRecording) return;
+        if (mr.state === 'recording') {
+            mr.pause();
+            setIsPaused(true);
+            if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+        } else if (mr.state === 'paused') {
+            mr.resume();
+            setIsPaused(false);
+            recordingTimerRef.current = setInterval(() => {
+                recordingTimeRef.current += 1;
+                setRecordingTime(recordingTimeRef.current);
+            }, 1000);
+        }
+    };
+
     const stopRecording = () => {
         if (!isRecording || !mediaRecorderRef.current) return;
+        if (mediaRecorderRef.current.state === 'paused') mediaRecorderRef.current.resume();
         mediaRecorderRef.current.stop();
         mediaRecorderRef.current = null;
         setIsRecording(false);
+        setIsPaused(false);
+    };
+
+    const cancelRecording = () => {
+        if (!mediaRecorderRef.current) return;
+        mediaRecorderRef.current.ondataavailable = null;
+        mediaRecorderRef.current.onstop = null;
+        if (mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop();
+        mediaRecorderRef.current = null;
+        recordingChunksRef.current = [];
+        if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+        recordingTimeRef.current = 0;
+        setRecordingTime(0);
+        setIsRecording(false);
+        setIsPaused(false);
     };
 
     // === Global audio mini player ===
@@ -678,6 +989,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const getPollId = (text?: string | null) => { const m = text?.match(/^__poll__:(\d+)$/); return m ? parseInt(m[1]) : null; };
     const isCallEnded = (text?: string | null) => !!text?.startsWith('__call_ended__');
     const getCallDuration = (text?: string | null) => { const m = text?.match(/^__call_ended__(\d+)$/); return m ? parseInt(m[1]) : 0; };
+    const isGeo = (text?: string | null) => !!text?.startsWith('__geo__:');
+    const getGeo = (text?: string | null) => { try { return JSON.parse(text!.slice(8)); } catch { return null; } };
+    const isContact = (text?: string | null) => !!text?.startsWith('__contact__:');
+    const getContact = (text?: string | null) => { try { return JSON.parse(text!.slice(12)); } catch { return null; } };
     const isSpecialMsg = (text?: string | null) => isSticker(text) || isGif(text);
 
     // Single emoji detection — renders big
@@ -734,6 +1049,26 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             });
         });
     }, [users]);
+
+    // Load poll titles for sidebar previews
+    useEffect(() => {
+        const ids = new Set<number>();
+        const extract = (txt: string | null | undefined) => {
+            if (!txt) return;
+            const raw = txt.startsWith('↪️ ') ? (() => { const nl = txt.indexOf('\n'); return nl !== -1 ? txt.slice(nl + 1).trim() : ''; })() : txt;
+            const m = raw.match(/^__poll__:(\d+)$/);
+            if (m) ids.add(parseInt(m[1]));
+        };
+        users.forEach(u => extract(u.last_msg_text));
+        groups.forEach(g => extract(g.last_msg_text));
+        ids.forEach(id => {
+            if (pollTitles[id] !== undefined) return;
+            api.getPoll(token, id).then((data: any) => {
+                if (data?.question) setPollTitles(prev => ({ ...prev, [id]: data.question }));
+            }).catch(() => {});
+        });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [users, groups]);
 
     // Resolve display text (decrypt if needed)
     const getDisplayText = (msg: any, partnerId: number): string => {
@@ -982,6 +1317,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         return messages
             .filter(msg => msg.message_text?.toLowerCase().includes(q))
             .map(msg => msg.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [messages, chatSearchQuery, chatSearchHasFilters, chatSearchServerResults]);
 
     const goToChatSearchMatch = (idx: number) => {
@@ -1068,6 +1404,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         document.addEventListener('click', close);
         return () => document.removeEventListener('click', close);
     }, [menuMessageId]);
+
+    useEffect(() => {
+        if (!showDisappearDropdown) return;
+        const close = () => setShowDisappearDropdown(false);
+        document.addEventListener('click', close);
+        return () => document.removeEventListener('click', close);
+    }, [showDisappearDropdown]);
 
     // Online/offline based on tab visibility and window focus
     useEffect(() => {
@@ -1304,7 +1647,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         });
                         if (!document.hasFocus()) {
                             const ns2 = (() => { try { const s = localStorage.getItem('aurora_notif_settings'); return s ? JSON.parse(s) : null; } catch { return null; } })();
-                            const isChannel = !!(groups.find(g => g.id === data.data.group_id) as any)?.is_channel;
+                            const isChannel = !!(groupsRef.current.find((g: Group) => g.id === data.data.group_id) as any)?.is_channel;
                             const typeKey = isChannel ? 'channels' : 'groups';
                             if (!ns2 || ns2.enabled !== false) {
                                 if (!ns2 || ns2[typeKey] !== false) {
@@ -1321,27 +1664,39 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 }
 
             } else if (data.type === 'message_edited') {
+                const editedId = data.data.message_id as number;
+                const newText = data.data.new_text as string;
                 setMessages(prev => prev.map(msg =>
-                    msg.id === data.data.message_id
-                        ? { ...msg, message_text: data.data.new_text, edited_at: new Date().toISOString() }
+                    msg.id === editedId
+                        ? { ...msg, message_text: newText, edited_at: new Date().toISOString() }
                         : msg
                 ));
-                // Update sidebar if this was the last message
+                // Update sidebar only if this was the last visible message in this chat
+                const currentMsgs = messagesRef.current;
+                const isLastMsg = currentMsgs.length > 0 && currentMsgs[currentMsgs.length - 1].id === editedId;
                 const editedInGroup = data.data.group_id as number | undefined;
                 if (editedInGroup) {
-                    setGroups(prev => prev.map(g => g.id === editedInGroup && g.last_msg_sender_id === data.data.sender_id
-                        ? { ...g, last_msg_text: data.data.new_text }
-                        : g
-                    ));
+                    // Always update group sidebar when message in this group is edited (last msg check via sender)
+                    setGroups(prev => prev.map(g => {
+                        if (g.id !== editedInGroup) return g;
+                        // Update if it's the last message (check by text+sender match, or via isLastMsg for active chat)
+                        const isActiveChatGroup = activeChatRef.current?.type === 'group' && activeChatRef.current?.id === editedInGroup;
+                        if (isActiveChatGroup && isLastMsg) return { ...g, last_msg_text: newText };
+                        if (!isActiveChatGroup && g.last_msg_sender_id === data.data.sender_id) return { ...g, last_msg_text: newText };
+                        return g;
+                    }));
                 } else {
                     const editSenderId = data.data.sender_id as number | undefined;
                     const editReceiverId = data.data.receiver_id as number | undefined;
                     const editOther = editSenderId === currentUserId ? editReceiverId : editSenderId;
                     if (editOther) {
-                        setUsers(prev => prev.map(u => u.id === editOther && u.last_msg_sender_id === data.data.sender_id
-                            ? { ...u, last_msg_text: data.data.new_text }
-                            : u
-                        ));
+                        setUsers(prev => prev.map(u => {
+                            if (u.id !== editOther) return u;
+                            const isActiveChatUser = activeChatRef.current?.type === 'private' && activeChatRef.current?.id === editOther;
+                            if (isActiveChatUser && isLastMsg) return { ...u, last_msg_text: newText };
+                            if (!isActiveChatUser && u.last_msg_sender_id === editSenderId) return { ...u, last_msg_text: newText };
+                            return u;
+                        }));
                     }
                 }
 
@@ -1358,9 +1713,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
             } else if (data.type === 'typing') {
                 if (chat?.type === 'private' && chat.id === data.data.user_id && data.data.user_id !== currentUserId) {
-                    setTypingUser(data.data.username || t('Contact'));
+                    const action = data.data.action || 'typing';
+                    const actionLabel = action === 'uploading' ? (lang === 'en' ? 'sending file...' : 'отправляет файл...') : action === 'recording' ? (lang === 'en' ? 'recording...' : 'записывает...') : t('is typing...');
+                    setTypingUser(`${data.data.username || t('Contact')} ${actionLabel}`);
                     if (typingUserTimerRef.current) clearTimeout(typingUserTimerRef.current);
-                    typingUserTimerRef.current = setTimeout(() => setTypingUser(null), 1000);
+                    typingUserTimerRef.current = setTimeout(() => setTypingUser(null), 3000);
                 }
                 const tKey = `private-${data.data.user_id}`;
                 setTypingChats(prev => ({ ...prev, [tKey]: data.data.username || '' }));
@@ -1369,9 +1726,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
             } else if (data.type === 'group_typing') {
                 if (chat?.type === 'group' && chat.id === data.data.group_id) {
-                    setTypingUser(data.data.username || t('Member'));
+                    const action = data.data.action || 'typing';
+                    const actionLabel = action === 'uploading' ? (lang === 'en' ? 'sending file...' : 'отправляет файл...') : action === 'recording' ? (lang === 'en' ? 'recording...' : 'записывает...') : t('is typing...');
+                    setTypingUser(`${data.data.username || t('Member')} ${actionLabel}`);
                     if (typingUserTimerRef.current) clearTimeout(typingUserTimerRef.current);
-                    typingUserTimerRef.current = setTimeout(() => setTypingUser(null), 1000);
+                    typingUserTimerRef.current = setTimeout(() => setTypingUser(null), 3000);
                 }
                 const tKeyG = `group-${data.data.group_id}`;
                 setTypingChats(prev => ({ ...prev, [tKeyG]: data.data.username || '' }));
@@ -1411,11 +1770,15 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 ));
 
             } else if (data.type === 'group_info_updated') {
-                setGroups(prev => prev.map(g =>
-                    g.id === data.data.group_id
-                        ? { ...g, name: data.data.name, description: data.data.description }
-                        : g
-                ));
+                setGroups(prev => prev.map(g => {
+                    if (g.id !== data.data.group_id) return g;
+                    const patch: any = { name: data.data.name, description: data.data.description };
+                    if (data.data.channel_type !== undefined) patch.channel_type = data.data.channel_type;
+                    if (data.data.channel_tag !== undefined) patch.channel_tag = data.data.channel_tag;
+                    if (data.data.invite_link !== undefined) patch.invite_link = data.data.invite_link;
+                    if (data.data.slow_mode !== undefined) patch.slow_mode = data.data.slow_mode;
+                    return { ...g, ...patch };
+                }));
                 if (chat?.type === 'group' && chat.id === data.data.group_id) {
                     setActiveChat(prev => prev ? { ...prev, name: data.data.name } : prev);
                 }
@@ -1489,6 +1852,14 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     });
                 }
 
+            } else if (data.type === 'group_read_receipt') {
+                const { message_id, reader_id, reader_name } = data.data;
+                setGroupReadReceipts(prev => {
+                    const existing = prev[message_id] || [];
+                    if (existing.some(r => r.id === reader_id)) return prev;
+                    return { ...prev, [message_id]: [...existing, { id: reader_id, name: reader_name }] };
+                });
+
             } else if (data.type === 'reaction_update') {
                 const { message_id, user_id, emoji, action } = data.data;
                 setReactions(prev => {
@@ -1504,7 +1875,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             } else if (data.type === 'visibility_update') {
                 setUsers(prev => prev.map(u =>
                     u.id === data.data.user_id
-                        ? { ...u, last_seen: data.data.last_seen ?? u.last_seen, is_online: data.data.last_seen === 'blocked_you' ? false : u.is_online }
+                        ? {
+                            ...u,
+                            last_seen: data.data.last_seen === '__reset__' ? null : (data.data.last_seen !== undefined ? data.data.last_seen : u.last_seen),
+                            is_online: data.data.last_seen === 'blocked_you' ? false : u.is_online,
+                          }
                         : u
                 ));
 
@@ -1550,6 +1925,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
             } else if (data.type === 'account_deleted') {
                 onLogout();
+            } else if (data.type === 'account_banned') {
+                const reason = data.data?.reason;
+                const expiresAt = data.data?.expires_at;
+                localStorage.setItem('aurora_banned_reason', reason || '');
+                localStorage.setItem('aurora_banned_userid', String(currentUserId));
+                if (expiresAt) localStorage.setItem('aurora_banned_expires_at', expiresAt);
+                onLogout();
 
             } else if (data.type === 'support_reply') {
                 // Admin replied to current user
@@ -1580,6 +1962,37 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         avatarColor: '#ef4444',
                     });
                 }
+            } else if (data.type === 'disappear_setting_changed') {
+                const key = `${data.data.chat_type}-${data.data.other_id}`;
+                setDisappearSettings(prev => ({ ...prev, [key]: data.data.seconds }));
+
+            } else if (data.type === 'slow_mode_updated') {
+                const gid = data.data.group_id as number;
+                setGroupSlowModes(prev => ({ ...prev, [gid]: data.data.slow_mode }));
+
+            } else if (data.type === 'slow_mode_wait') {
+                const gid = data.data.group_id as number;
+                const wait = data.data.wait_seconds as number;
+                setSlowModeCooldowns(prev => ({ ...prev, [gid]: wait }));
+                if (slowModeTimers.current[gid]) clearInterval(slowModeTimers.current[gid]);
+                slowModeTimers.current[gid] = setInterval(() => {
+                    setSlowModeCooldowns(prev => {
+                        const cur = (prev[gid] || 0) - 1;
+                        if (cur <= 0) {
+                            clearInterval(slowModeTimers.current[gid]);
+                            delete slowModeTimers.current[gid];
+                            const next = { ...prev }; delete next[gid]; return next;
+                        }
+                        return { ...prev, [gid]: cur };
+                    });
+                }, 1000);
+            } else if (data.type === 'error') {
+                showInAppToastRef.current?.({
+                    title: lang === 'en' ? 'Error' : 'Ошибка',
+                    body: data.data.message || '',
+                    chatType: 'private', chatId: 0,
+                    avatarLetter: '⚠️', avatarColor: '#ef4444',
+                });
             }
         });
 
@@ -1656,6 +2069,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             }).catch(() => {});
         }
         loadScheduled({ type: 'private', id: user.id, name: user.username });
+        api.getDisappearSetting(token, 'private', user.id).then(res => {
+            if (res.seconds !== undefined) {
+                setDisappearSettings(prev => ({ ...prev, [`private-${user.id}`]: res.seconds }));
+            }
+        }).catch(() => {});
         setTimeout(() => inputRef.current?.focus(), 50);
     };
 
@@ -1670,6 +2088,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         setHasMoreMessages(false);
         setShowAttachMenu(false);
         setShowEmojiPicker(false);
+        sentGroupReadRef.current.clear();
         if (chatLoadingTimerRef.current) clearTimeout(chatLoadingTimerRef.current);
         chatLoadingTimerRef.current = setTimeout(() => { setChatLoading(true); chatLoadingTimerRef.current = null; }, 150);
         setChatKey(k => k + 1);
@@ -1680,6 +2099,18 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         loadGroupMessages(group.id);
         loadGroupMembers(group.id);
         loadScheduled({ type: 'group', id: group.id, name: group.name });
+        api.getDisappearSetting(token, 'group', group.id).then(res => {
+            if (res.seconds !== undefined) {
+                setDisappearSettings(prev => ({ ...prev, [`group-${group.id}`]: res.seconds }));
+            }
+        }).catch(() => {});
+        // Load slow mode setting
+        if (group.slow_mode !== undefined) {
+            setGroupSlowModes(prev => ({ ...prev, [group.id]: group.slow_mode as number }));
+        } else {
+            fetch(`${config.API_URL}/groups/${group.id}?token=${token}`)
+                .then(r => r.json()).then(d => { if (d.slow_mode !== undefined) setGroupSlowModes(prev => ({ ...prev, [group.id]: d.slow_mode })); }).catch(() => {});
+        }
         setTimeout(() => inputRef.current?.focus(), 50);
     };
 
@@ -1758,6 +2189,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             setPendingFiles([]);
             setUploading(true);
             setUploadProgress(0);
+            // Notify peers about file upload
+            if (targetChat.type === 'private') wsService.send({ type: 'typing', receiver_id: targetChat.id, action: 'uploading' });
+            else wsService.send({ type: 'group_typing', group_id: targetChat.id, action: 'uploading' });
 
             (async () => {
                 try {
@@ -1832,6 +2266,20 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         }
     };
 
+    const sendGeoMessage = (geo: { lat: number; lon: number; name: string; address: string }) => {
+        if (!activeChat) return;
+        const text = `__geo__:${JSON.stringify(geo)}`;
+        if (activeChat.type === 'private') { wsService.sendMessage(activeChat.id, text); loadUsers(); }
+        else wsService.sendGroupMessage(activeChat.id, text);
+    };
+
+    const sendContactMessage = (contact: { id: number; username: string; avatar?: string; avatar_color?: string }) => {
+        if (!activeChat) return;
+        const text = `__contact__:${JSON.stringify(contact)}`;
+        if (activeChat.type === 'private') { wsService.sendMessage(activeChat.id, text); loadUsers(); }
+        else wsService.sendGroupMessage(activeChat.id, text);
+    };
+
     // Send sticker or GIF as a special message (no file upload needed — URL already known)
     const sendSpecialMessage = (text: string) => {
         if (!activeChat) return;
@@ -1846,17 +2294,20 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     // === Scheduled message ===
     const sendScheduled = async () => {
         const text = (inputRef.current?.value || '').trim();
-        if (!text || !activeChat || !scheduleDateTime) return;
+        if (!text || !activeChat) return;
+        if (!sendWhenOnline && !scheduleDateTime) return;
         try {
+            const isoTime = sendWhenOnline ? undefined : new Date(scheduleDateTime).toISOString();
             const res = activeChat.type === 'private'
-                ? await api.scheduleMessage(token, text, new Date(scheduleDateTime).toISOString(), activeChat.id)
-                : await api.scheduleMessage(token, text, new Date(scheduleDateTime).toISOString(), undefined, activeChat.id);
+                ? await api.scheduleMessage(token, text, isoTime, activeChat.id, undefined, sendWhenOnline)
+                : await api.scheduleMessage(token, text, isoTime, undefined, activeChat.id, sendWhenOnline);
             if (res.success) {
                 const newItem = {
                     id: res.id,
                     sender_id: currentUserId,
                     message_text: text,
                     scheduled_at: res.scheduled_at,
+                    send_when_online: sendWhenOnline,
                     receiver_id: activeChat.type === 'private' ? activeChat.id : null,
                     group_id: activeChat.type === 'group' ? activeChat.id : null,
                 };
@@ -1866,6 +2317,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         } catch {}
         setShowSchedulePicker(false);
         setScheduleDateTime('');
+        setSendWhenOnline(false);
     };
 
     const cancelScheduled = async (id: number) => {
@@ -2208,8 +2660,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         if (isEncryptedMessage(text)) return lang === 'en' ? 'Message' : 'Сообщение';
         if (text.startsWith('__gif__')) return lang === 'en' ? '🎞 GIF' : '🎞 GIF';
         if (text.startsWith('__sticker__')) return lang === 'en' ? '🎭 Sticker' : '🎭 Стикер';
-        if (text.startsWith('__poll__:')) return lang === 'en' ? '📊 Poll' : '📊 Опрос';
+        if (text.startsWith('__poll__:')) { const pid = parseInt(text.slice(9)); return `📊 ${pollTitles[pid] || (lang === 'en' ? 'Poll' : 'Опрос')}`; }
         if (text.startsWith('__call_ended__')) return lang === 'en' ? '📞 Call ended' : '📞 Звонок завершён';
+        if (text.startsWith('__geo__:')) { try { const g = JSON.parse(text.slice(8)); return `📍 ${g.name || (lang === 'en' ? 'Location' : 'Геопозиция')}`; } catch { return `📍 ${lang === 'en' ? 'Location' : 'Геопозиция'}`; } }
+        if (text.startsWith('__contact__:')) { try { const c = JSON.parse(text.slice(12)); return `👤 ${c.username}`; } catch { return '👤 Контакт'; } }
         const files: any[] = d.files?.length ? d.files : d.file_path ? [{ filename: d.filename || t('File') }] : [];
         if (!files.length) return text || '...';
         if (files.length === 1) return text ? `📎 ${text}` : `📎 ${files[0].filename || t('File')}`;
@@ -2290,15 +2744,37 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             else return <span style={subStyle}>{prefix ? `${prefix}${fallback}` : fallback}</span>;
         } else if (rawPreview.startsWith('__gif__')) preview = '🎞 GIF';
         else if (rawPreview.startsWith('__sticker__')) preview = `🎭 ${t('Stickers')}`;
-        else if (rawPreview.startsWith('__poll__:')) preview = `📊 ${lang === 'en' ? 'Poll' : 'Опрос'}`;
+        else if (rawPreview.startsWith('__poll__:')) { const pid = parseInt(rawPreview.slice(9)); preview = `📊 ${pollTitles[pid] || (lang === 'en' ? 'Poll' : 'Опрос')}`; }
         else if (rawPreview.startsWith('__call_ended__')) preview = `📞 ${lang === 'en' ? 'Call ended' : 'Звонок завершён'}`;
+        else if (rawPreview.startsWith('__geo__:')) { try { const g = JSON.parse(rawPreview.slice(8)); preview = `📍 ${g.name || (lang === 'en' ? 'Location' : 'Геопозиция')}`; } catch { preview = `📍 ${lang === 'en' ? 'Location' : 'Геопозиция'}`; } }
+        else if (rawPreview.startsWith('__contact__:')) { try { const c = JSON.parse(rawPreview.slice(12)); preview = `👤 ${c.username}`; } catch { preview = '👤 Контакт'; } }
         else if (rawPreview.startsWith(PLAYLIST_MSG_PREFIX)) {
             try { const d = JSON.parse(rawPreview.slice(PLAYLIST_MSG_PREFIX.length)); preview = `🎵 ${d.name || (lang === 'en' ? 'Playlist' : 'Плейлист')}`; }
             catch { preview = `🎵 ${lang === 'en' ? 'Playlist' : 'Плейлист'}`; }
         } else if (rawPreview.startsWith('↪️ ')) {
             const nl = rawPreview.indexOf('\n');
             const body = nl !== -1 ? rawPreview.slice(nl + 1).trim() : '';
-            preview = `↪ ${body || (lang === 'en' ? 'Forwarded message' : 'Пересланное сообщение')}`;
+            const fwdLabel = (() => {
+                if (!body) return lang === 'en' ? 'Forwarded message' : 'Пересланное сообщение';
+                if (body.startsWith('__gif__')) return '🎞 GIF';
+                if (body.startsWith('__sticker__')) return `🎭 ${t('Stickers')}`;
+                if (body.startsWith('__poll__:')) { const pid = parseInt(body.slice(9)); return `📊 ${pollTitles[pid] || (lang === 'en' ? 'Poll' : 'Опрос')}`; }
+                if (body.startsWith('__geo__:')) { try { const g = JSON.parse(body.slice(8)); return `📍 ${g.name || (lang === 'en' ? 'Location' : 'Геопозиция')}`; } catch { return `📍 ${lang === 'en' ? 'Location' : 'Геопозиция'}`; } }
+                if (body.startsWith('__contact__:')) { try { const c = JSON.parse(body.slice(12)); return `👤 ${c.username}`; } catch { return '👤 Контакт'; } }
+                if (body.startsWith('__call_ended__')) return `📞 ${lang === 'en' ? 'Call ended' : 'Звонок завершён'}`;
+                return body;
+            })();
+            const ic = isOled ? '#a78bfa' : dm ? '#818cf8' : '#6366f1';
+            return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 3, overflow: 'hidden', minWidth: 0, flex: 1 }}>
+                    {prefix && <span style={{ color: subColor, fontSize: 13, flexShrink: 0 }}>{prefix.trimEnd()}</span>}
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={ic} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                        <polyline points="15 10 20 15 15 20"/>
+                        <path d="M4 4v7a4 4 0 0 0 4 4h12"/>
+                    </svg>
+                    <span style={{ ...subStyle, color: ic, fontWeight: 500, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{fwdLabel}</span>
+                </div>
+            );
         } else preview = rawPreview;
         return <span style={subStyle}>{prefix ? `${prefix}${preview}` : preview}</span>;
     };
@@ -2456,6 +2932,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const isChannelChat = !!(activeGroup?.is_channel);
     const isChannelMember = isChannelChat && groups.some(g => g.id === activeChat?.id);
     const isDeletedUser = activeChat?.type === 'private' && !!(usersById.get(activeChat.id) as any)?.is_deleted;
+    const isBlockedByMeInput = !!(activeChat?.type === 'private' && activeChat.id !== currentUserId && blockedUserIds.has(activeChat.id));
+    const isBlockedByThemInput = !!(activeChat?.type === 'private' && usersById.get(activeChat.id)?.last_seen === 'blocked_you');
 
     // === Рендер ===
 
@@ -2480,7 +2958,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const darkStyles = useMemo(() => ({
         sidebar: { ...styles.sidebar, backgroundColor: dm ? C.bg1 : '#f7f8fc', boxShadow: isOled ? 'none' : dm ? '2px 0 12px rgba(99,102,241,0.05)' : '2px 0 12px rgba(99,102,241,0.05)', borderRight: 'none' },
         chatArea: { ...styles.chatArea, backgroundColor: theme.chatBg || (dm ? C.bg0 : '#f2f4f8') },
-        chatHeader: { ...styles.chatHeader, borderBottom: 'none', gap: isMobile ? 6 : 10, background: dm ? (isOled ? 'linear-gradient(90deg, #1a0038 0%, #000000 320px)' : `linear-gradient(135deg, ${C.bg1} 0%, #1a1830 100%)`) : '#f7f8fc', backgroundAttachment: (isOled && !isMobile) ? 'fixed' : undefined, boxShadow: isOled ? '0 4px 32px rgba(139,92,246,0.08)' : dm ? '0 2px 16px rgba(0,0,0,0.25)' : '0 2px 12px rgba(99,102,241,0.08)' },
+        chatHeader: { ...styles.chatHeader, borderBottom: 'none', gap: isMobile ? 6 : 10, background: dm ? (isOled ? 'linear-gradient(90deg, #1a0038 0%, #000000 320px)' : `linear-gradient(135deg, ${C.bg1} 0%, #1a1830 100%)`) : '#f7f8fc', backgroundAttachment: (isOled && !isMobile) ? 'fixed' : undefined },
         inputArea: { ...styles.inputArea, backgroundColor: dm ? C.bg1 : '#f7f8fc', borderTop: 'none', boxShadow: isMobile ? 'none' : (isOled ? '0 -4px 24px rgba(139,92,246,0.06)' : dm ? '0 -2px 12px rgba(0,0,0,0.18)' : '0 -2px 10px rgba(99,102,241,0.07)'), padding: '0 12px', minHeight: 60, gap: 8 },
         input: { ...styles.input, backgroundColor: 'transparent', border: 'none', boxShadow: 'none', padding: '8px 4px', color: dm ? '#e2e8f0' : 'inherit', flex: '1 1 0', minWidth: 0, fontSize: 14 },
         inputPill: { display: 'flex' as const, alignItems: 'center' as const, gap: 0, flex: 1, minWidth: 0, background: isOled ? '#08080f' : dm ? C.bg4 : '#eef0f8', borderRadius: 24, border: 'none', padding: '4px 4px 4px 12px' },
@@ -2554,15 +3032,43 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 }}
             />
 
-            {/* Кнопка-ручка на краю сайдбара */}
-            {!isMobile && (
-            <button
-                onClick={cycleSidebar}
-                title={sidebarState === 'full' ? t('Compact mode') : sidebarState === 'compact' ? t('Hide panel') : t('Show panel')}
-                style={{ position: 'absolute', left: sidebarHidden ? 0 : sidebarCompact ? 64 : 340, top: '50%', transform: 'translateY(-50%)', zIndex: 30, width: isOled ? 14 : 16, height: isOled ? 44 : 48, borderRadius: '0 10px 10px 0', border: 'none', borderLeft: 'none', background: isOled ? '#000000' : (!dm ? 'white' : '#1e1a3d'), cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: isOled ? '#a78bfa' : (dm ? '#a5b4fc' : '#6366f1'), fontSize: 9, boxShadow: isOled ? 'none' : (dm ? '2px 0 8px rgba(0,0,0,0.3)' : '2px 0 8px rgba(99,102,241,0.1)'), padding: 0, transition: 'left 0.22s cubic-bezier(0.4,0,0.2,1)' }}
+            {/* Drag-to-resize handle */}
+            {!isMobile && !sidebarHidden && (
+            <div
+                style={{ position: 'absolute', left: sidebarMinimal ? 52 : sidebarCompact ? 64 : sidebarWidth, top: 0, bottom: 0, width: 4, zIndex: 30, cursor: 'col-resize', userSelect: 'none' as const }}
+                onMouseDown={e => {
+                    e.preventDefault();
+                    sidebarDragRef.current = { startX: e.clientX, startWidth: sidebarCompact ? 64 : sidebarWidth };
+                    sidebarIsDragging.current = true;
+                    document.body.style.cursor = 'col-resize';
+                    document.body.style.userSelect = 'none';
+                    const onMove = (me: MouseEvent) => {
+                        if (!sidebarDragRef.current || !sidebarIsDragging.current) return;
+                        const newW = Math.max(240, Math.min(520, sidebarDragRef.current.startWidth + (me.clientX - sidebarDragRef.current.startX)));
+                        if (newW < 80) { setSidebarState('hidden'); return; }
+                        if (newW < 130) { setSidebarState('minimal'); return; }
+                        if (newW < 180) { setSidebarState('compact'); return; }
+                        setSidebarState('full');
+                        setSidebarWidth(newW);
+                    };
+                    const onUp = () => {
+                        sidebarIsDragging.current = false;
+                        sidebarDragRef.current = null;
+                        document.body.style.cursor = '';
+                        document.body.style.userSelect = '';
+                        document.removeEventListener('mousemove', onMove);
+                        document.removeEventListener('mouseup', onUp);
+                    };
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
+                }}
             >
-                {sidebarState === 'full' ? '◀' : sidebarState === 'compact' ? '⊟' : '▶'}
-            </button>
+                {/* Visual indicator on hover */}
+                <div style={{ position: 'absolute', left: 1, top: '50%', transform: 'translateY(-50%)', width: 2, height: 40, borderRadius: 2, background: isOled ? 'rgba(167,139,250,0.3)' : dm ? 'rgba(99,102,241,0.3)' : 'rgba(99,102,241,0.2)', opacity: 0, transition: 'opacity 0.15s' }}
+                    onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                    onMouseLeave={e => (e.currentTarget.style.opacity = '0')}
+                />
+            </div>
             )}
 
             {/* Боковая панель */}
@@ -2579,9 +3085,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     visibility: 'visible',
                     willChange: 'transform',
                 } : {
-                    width: sidebarHidden ? 0 : sidebarCompact ? 64 : 340,
+                    width: sidebarHidden ? 0 : sidebarMinimal ? 52 : sidebarCompact ? 64 : sidebarWidth,
                     minWidth: 0,
-                    transition: 'width 0.22s cubic-bezier(0.4,0,0.2,1)',
+                    transition: sidebarIsDragging.current ? 'none' : 'width 0.22s cubic-bezier(0.4,0,0.2,1)',
                     overflow: 'hidden',
                     visibility: sidebarHidden ? 'hidden' : 'visible',
                 }),
@@ -2604,7 +3110,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             </div>
                         )}
                     </div>
-                ) : (
+                ) : sidebarMinimal ? null : (
                 <div style={{
                     ...styles.sidebarHeader,
                     background: !dm ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' : (isOled ? 'linear-gradient(90deg, #1a0038 0%, #000000 320px)' : 'linear-gradient(135deg, #1e1a3d 0%, #2d2060 100%)'),
@@ -2615,30 +3121,40 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     <img src={dm ? '/logo-dark.png' : '/logo-light.png'} alt="Aurora" style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, objectFit: 'cover' }} />
                     {!sidebarCompact && <>
                         <div style={{ flex: 1, lineHeight: 1.1 }}>
-                            <span style={isOled
-                                ? { fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px', color: '#d8b4fe' }
-                                : dm
-                                    ? { fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px', background: 'linear-gradient(90deg, #e0c4ff 0%, #a78bfa 55%, #818cf8 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }
-                                    : { fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px', color: 'white' }
-                            }>Aurora</span>
+                            {wsConnState !== 'connected' ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <div style={{ width: 14, height: 14, borderRadius: '50%', border: `2px solid ${isOled ? 'rgba(167,139,250,0.3)' : 'rgba(255,255,255,0.3)'}`, borderTopColor: isOled ? '#a78bfa' : 'white', animation: 'spin 0.9s linear infinite', flexShrink: 0 }} />
+                                    <span style={{ fontWeight: 600, fontSize: 14, color: isOled ? '#c4b5fd' : 'rgba(255,255,255,0.85)' }}>
+                                        {wsConnState === 'waiting' ? (lang === 'en' ? 'Waiting for network...' : 'Ожидание сети...') : (lang === 'en' ? 'Connecting...' : 'Подключение...')}
+                                    </span>
+                                </div>
+                            ) : (
+                                <span style={isOled
+                                    ? { fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px', color: '#d8b4fe' }
+                                    : dm
+                                        ? { fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px', background: 'linear-gradient(90deg, #e0c4ff 0%, #a78bfa 55%, #818cf8 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }
+                                        : { fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px', color: 'white' }
+                                }>Aurora</span>
+                            )}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <button
                                 onClick={() => setShowMediaPlayer(v => !v)}
-                                style={{ padding: '6px 10px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: miniTrack ? (isOled ? 'rgba(167,139,250,0.25)' : (dm ? 'rgba(99,102,241,0.3)' : 'rgba(255,255,255,0.3)')) : (isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)')), color: dm ? '#c4b5fd' : 'white', border: isOled ? '1px solid rgba(167,139,250,0.3)' : (dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 4, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none' }}
+                                style={{ padding: '6px 7px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: miniTrack ? (isOled ? 'rgba(167,139,250,0.25)' : (dm ? 'rgba(99,102,241,0.3)' : 'rgba(255,255,255,0.3)')) : (isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)')), color: dm ? '#c4b5fd' : 'white', border: isOled ? '1px solid rgba(167,139,250,0.3)' : (dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 4, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none' }}
                                 title={lang === 'en' ? 'Media Player' : 'Медиаплеер'}
                             ><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></button>
                             <button
                                 onClick={() => setShowHelp(true)}
-                                style={{ padding: '6px 10px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)'), color: dm ? '#c4b5fd' : 'white', border: isOled ? '1px solid rgba(167,139,250,0.3)' : (dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 4, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none' }}
+                                style={{ padding: '6px 7px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)'), color: dm ? '#c4b5fd' : 'white', border: isOled ? '1px solid rgba(167,139,250,0.3)' : (dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 4, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none' }}
                                 title={lang === 'en' ? "What's new" : 'Что нового'}
                             ><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>
                         <div style={{ position: 'relative' }}>
                             <button
                                 onClick={() => setShowCreateDropdown(v => !v)}
-                                style={{ padding: '6px 12px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)'), color: dm ? '#c4b5fd' : 'white', border: isOled ? '1px solid rgba(167,139,250,0.3)' : (dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 4, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none' }}
+                                style={{ padding: '6px 7px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)'), color: dm ? '#c4b5fd' : 'white', border: isOled ? '1px solid rgba(167,139,250,0.3)' : (dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 4, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none' }}
+                                title={lang === 'en' ? 'New chat' : 'Новый чат'}
                             >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                             </button>
                             {showCreateDropdown && (
                                 <>
@@ -2672,9 +3188,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 )}
 
                 {/* Sidebar search */}
-                {!sidebarCompact && !showArchive && <div style={{ padding: '8px 10px', borderBottom: 'none', position: 'relative' }}>
+                {!sidebarCompact && !sidebarMinimal && !showArchive && <div style={{ padding: '8px 10px', borderBottom: 'none', position: 'relative' }}>
                     <input
                         type="text"
+                        className="sidebar-search-input"
                         placeholder={`🔍 ${t('Search users...')}`}
                         value={sidebarSearchQuery}
                         onFocus={() => {
@@ -2688,23 +3205,27 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             const q = e.target.value;
                             setSidebarSearchQuery(q);
                             if (sidebarSearchTimerRef.current) clearTimeout(sidebarSearchTimerRef.current);
-                            if (!q.trim()) { setSidebarSearchResults([]); setSidebarChannelResults([]); return; }
+                            if (!q.trim()) { setSidebarSearchResults([]); setSidebarChannelResults([]); setSidebarMsgResults([]); return; }
                             sidebarSearchTimerRef.current = setTimeout(async () => {
                                 setSidebarSearchLoading(true);
                                 try {
-                                    const [userRes, chanRes] = await Promise.all([
+                                    const [userRes, chanRes, msgRes] = await Promise.all([
                                         api.searchUsers(token, q.trim()),
                                         api.searchChannels(token, q.trim()),
+                                        q.trim().length >= 2
+                                            ? fetch(`${config.API_URL}/search/global?token=${token}&query=${encodeURIComponent(q.trim())}&limit=5`).then(r => r.json())
+                                            : Promise.resolve({ results: [] }),
                                     ]);
                                     setSidebarSearchResults(userRes.users || []);
                                     setSidebarChannelResults(chanRes.channels || []);
-                                } catch { setSidebarSearchResults([]); setSidebarChannelResults([]); }
+                                    setSidebarMsgResults(msgRes.results || []);
+                                } catch { setSidebarSearchResults([]); setSidebarChannelResults([]); setSidebarMsgResults([]); }
                                 finally { setSidebarSearchLoading(false); }
                             }, 300);
                         }}
                         style={{ width: '100%', boxSizing: 'border-box', padding: '7px 12px', borderRadius: 10, border: 'none', background: !dm ? '#f5f3ff' : (isOled ? C.bg4 : '#1e1e3a'), color: dm ? '#e0e0f0' : '#1e1b4b', fontSize: 13, outline: 'none', boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.14), 0 2px 10px rgba(139,92,246,0.08)' : dm ? '0 0 0 1px rgba(99,102,241,0.2)' : '0 0 0 1px rgba(99,102,241,0.2)', transition: 'box-shadow 0.15s' }}
                     />
-                    {sidebarSearchFocused && (sidebarLocalMatches.users.length > 0 || sidebarLocalMatches.groups.length > 0 || sidebarSearchResults.length > 0 || sidebarChannelResults.length > 0 || sidebarSearchLoading || (!sidebarSearchQuery && (searchHistory.length > 0 || recentUsers.length > 0))) && (
+                    {sidebarSearchFocused && (sidebarLocalMatches.users.length > 0 || sidebarLocalMatches.groups.length > 0 || sidebarSearchResults.length > 0 || sidebarChannelResults.length > 0 || sidebarMsgResults.length > 0 || sidebarSearchLoading || (!sidebarSearchQuery && (searchHistory.length > 0 || recentUsers.length > 0))) && (
                         <div className="sidebar-search-dropdown" style={{ position: 'absolute', top: '100%', left: 10, right: 10, zIndex: 200, background: dm ? C.bg2 : 'white', border: `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 12, boxShadow: isOled ? '0 8px 32px rgba(0,0,0,0.8), 0 0 0 1px rgba(167,139,250,0.1)' : '0 8px 32px rgba(0,0,0,0.18)', overflow: 'hidden', maxHeight: 420, overflowY: 'auto' }}>
                             {sidebarSearchQuery ? (
                                 <>
@@ -2791,15 +3312,39 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 <div key={u.id} onMouseDown={() => { addToSearchHistory(u); setSelectedUserForProfile(u); setSidebarSearchQuery(''); setSidebarSearchResults([]); setSidebarChannelResults([]); setSidebarSearchFocused(false); }}
                                                     style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
                                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
-                                                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? (dm ? C.bg1 : '#f7f8fc') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
+                                                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? (dm ? C.bg1 : '#f7f8fc') : ((u as any).avatar_color || '#6366f1'), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
                                                         {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
                                                     </div>
                                                     <div style={{ minWidth: 0, flex: 1 }}>
                                                         <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
                                                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</span>
-                                                            {(u.tag === 'kayano' || u.tag === 'durov') && <span title={t('developer of Aurora')} style={{ flexShrink: 0, display: 'inline-flex', color: '#f59e0b' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
+                                                            {DEV_TAGS.includes(u.tag || '') && <DevBadge />}{TESTER_TAGS.includes(u.tag || '') && <TesterBadge />}
                                                         </div>
                                                         <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{u.tag ? `@${u.tag}` : ((users.find(lu => lu.id === u.id) ?? u).is_online ? `🟢 ${t('Online')}` : t('Offline'))}</div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </>
+                                    )}
+                                    {/* Message search results */}
+                                    {sidebarMsgResults.length > 0 && (
+                                        <>
+                                            <div style={{ padding: '6px 12px 4px', fontSize: 11, fontWeight: 600, color: dm ? '#5a5a8a' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                {lang === 'en' ? 'Messages' : 'Сообщения'}
+                                            </div>
+                                            {sidebarMsgResults.map((r, i) => (
+                                                <div key={i} onMouseDown={() => {
+                                                    const chat = r.chat_type === 'group' ? groups.find(g => g.id === r.chat_id) : users.find(u => u.id === r.chat_id);
+                                                    if (chat) { r.chat_type === 'group' ? selectGroupChat(chat as any) : selectPrivateChat(chat as any); setTimeout(() => goToMessage(r.message_id), 300); }
+                                                    setSidebarSearchQuery(''); setSidebarSearchFocused(false); setSidebarMsgResults([]);
+                                                }}
+                                                    style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
+                                                    className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={dm ? '#6366f1' : '#6366f1'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 2 }}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                                        <div style={{ fontSize: 12, fontWeight: 600, color: isOled ? '#c4b5fd' : '#6366f1', marginBottom: 1 }}>{r.chat_name}</div>
+                                                        <div style={{ fontSize: 12, color: dm ? '#e2e8f0' : '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.message_text}</div>
+                                                        <div style={{ fontSize: 10, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 1 }}>{r.sender_name} · {new Date(r.timestamp).toLocaleDateString(lang === 'en' ? 'en-US' : 'ru-RU', { day: '2-digit', month: 'short' })}</div>
                                                     </div>
                                                 </div>
                                             ))}
@@ -2819,13 +3364,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 <div key={u.id} onMouseDown={() => { addToSearchHistory(u); setSelectedUserForProfile(u); setSidebarSearchFocused(false); }}
                                                     style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
                                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
-                                                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? (dm ? C.bg1 : '#f7f8fc') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
+                                                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? (dm ? C.bg1 : '#f7f8fc') : ((u as any).avatar_color || '#6366f1'), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
                                                         {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
                                                     </div>
                                                     <div style={{ minWidth: 0, flex: 1 }}>
                                                         <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
                                                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</span>
-                                                            {(u.tag === 'kayano' || u.tag === 'durov') && <span title={t('developer of Aurora')} style={{ flexShrink: 0, display: 'inline-flex', color: '#f59e0b' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
+                                                            {DEV_TAGS.includes(u.tag || '') && <DevBadge />}{TESTER_TAGS.includes(u.tag || '') && <TesterBadge />}
                                                         </div>
                                                         <div style={{ fontSize: 11, color: (users.find(lu => lu.id === u.id) ?? u).is_online ? '#22c55e' : (dm ? '#5a5a8a' : '#9ca3af') }}>{(users.find(lu => lu.id === u.id) ?? u).is_online ? `🟢 ${t('Online')}` : t('Offline')}</div>
                                                     </div>
@@ -2840,13 +3385,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 <div key={u.id} onMouseDown={() => { addToSearchHistory(u); setSelectedUserForProfile(u); setSidebarSearchFocused(false); }}
                                                     style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
                                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
-                                                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? (dm ? C.bg1 : '#f7f8fc') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
+                                                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? (dm ? C.bg1 : '#f7f8fc') : ((u as any).avatar_color || '#6366f1'), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
                                                         {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
                                                     </div>
                                                     <div style={{ minWidth: 0, flex: 1 }}>
                                                         <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
                                                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</span>
-                                                            {(u.tag === 'kayano' || u.tag === 'durov') && <span title={t('developer of Aurora')} style={{ flexShrink: 0, display: 'inline-flex', color: '#f59e0b' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
+                                                            {DEV_TAGS.includes(u.tag || '') && <DevBadge />}{TESTER_TAGS.includes(u.tag || '') && <TesterBadge />}
                                                         </div>
                                                         <div style={{ fontSize: 11, color: (users.find(lu => lu.id === u.id) ?? u).is_online ? '#22c55e' : (dm ? '#5a5a8a' : '#9ca3af') }}>{(users.find(lu => lu.id === u.id) ?? u).is_online ? `🟢 ${t('Online')}` : t('Offline')}</div>
                                                     </div>
@@ -2878,7 +3423,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             const active = activeFolder === null;
                             const totalUnread = Object.values(unreadCounts).reduce((s, n) => s + n, 0);
                             return (
-                                <button onClick={() => setActiveFolder(null)} style={{ width: 52, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '7px 4px', borderRadius: 12, border: 'none', cursor: 'pointer', background: active ? (isOled ? 'rgba(124,58,237,0.25)' : dm ? 'rgba(99,102,241,0.2)' : 'rgba(99,102,241,0.14)') : 'none', position: 'relative', transition: 'background 0.15s', fontFamily: 'inherit' }}>
+                                <button onClick={() => setActiveFolder(null)} onContextMenu={e => { e.preventDefault(); setAllChatsCtxMenu({ x: e.clientX, y: e.clientY }); }} style={{ width: 52, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '7px 4px', borderRadius: 12, border: 'none', cursor: 'pointer', background: active ? (isOled ? 'rgba(124,58,237,0.25)' : dm ? 'rgba(99,102,241,0.2)' : 'rgba(99,102,241,0.14)') : 'none', position: 'relative', transition: 'background 0.15s', fontFamily: 'inherit' }}>
                                     {active && <div style={{ position: 'absolute', left: -6, top: '50%', transform: 'translateY(-50%)', width: 3, height: 20, borderRadius: '0 3px 3px 0', background: isOled ? '#a78bfa' : '#6366f1' }} />}
                                     <div style={{ width: 32, height: 32, borderRadius: '50%', background: active ? (isOled ? 'linear-gradient(135deg,#7c3aed,#a78bfa)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)') : (isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.1)'), display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', flexShrink: 0 }}>
                                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={active ? 'white' : (isOled ? '#a78bfa' : dm ? '#818cf8' : '#6366f1')} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -2903,9 +3448,39 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     {active && <div style={{ position: 'absolute', left: -6, top: '50%', transform: 'translateY(-50%)', width: 3, height: 20, borderRadius: '0 3px 3px 0', background: f.color }} />}
                                     <div style={{ width: 32, height: 32, borderRadius: '50%', background: active ? f.color : (isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.1)'), display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', flexShrink: 0 }}>
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={active ? 'white' : (isOled ? '#a78bfa' : dm ? '#818cf8' : '#6366f1')} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                                        {folderUnread > 0 && <span style={{ position: 'absolute', top: -3, right: -3, minWidth: 16, height: 16, borderRadius: 8, background: active ? 'rgba(255,255,255,0.35)' : f.color, color: 'white', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', lineHeight: 1 }}>{folderUnread > 99 ? '99+' : folderUnread}</span>}
+                                        {folderUnread > 0 && <span style={{ position: 'absolute', top: -4, right: -4, minWidth: 17, height: 17, borderRadius: 9, background: active ? '#ef4444' : f.color, color: 'white', fontSize: 9, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', lineHeight: 1, boxShadow: '0 1px 4px rgba(0,0,0,0.3)', border: `2px solid ${isOled ? '#000' : dm ? '#111128' : '#ececf7'}` }}>{folderUnread > 99 ? '99+' : folderUnread}</span>}
                                     </div>
                                     <span style={{ fontSize: 10, fontWeight: 600, color: active ? (isOled ? '#c4b5fd' : dm ? '#a5b4fc' : '#6366f1') : (isOled ? '#4a3a6a' : dm ? '#4a4a6a' : '#8b8bb0'), lineHeight: 1.2, textAlign: 'center', maxWidth: 52, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* ── Horizontal folder tabs (mobile only) ── */}
+                {isMobile && folders.length > 0 && (
+                    <div style={{ display: 'flex', overflowX: 'auto', scrollbarWidth: 'none', flexShrink: 0, background: isOled ? '#000' : dm ? '#111128' : '#ececf7', borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.08)'}`, paddingInline: 6, gap: 4, paddingTop: 4, paddingBottom: 4 }}>
+                        {/* All chats tab */}
+                        {(() => {
+                            const active = activeFolder === null;
+                            const totalUnread = Object.values(unreadCounts).reduce((s, n) => s + n, 0);
+                            return (
+                                <button onClick={() => setActiveFolder(null)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 20, border: 'none', cursor: 'pointer', flexShrink: 0, background: active ? (isOled ? 'rgba(124,58,237,0.3)' : dm ? 'rgba(99,102,241,0.22)' : 'rgba(99,102,241,0.15)') : 'transparent', fontFamily: 'inherit', position: 'relative' }}>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={active ? (isOled ? '#c4b5fd' : '#6366f1') : (isOled ? '#4a3a6a' : dm ? '#4a4a6a' : '#8b8bb0')} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                    <span style={{ fontSize: 12, fontWeight: active ? 700 : 500, color: active ? (isOled ? '#c4b5fd' : dm ? '#a5b4fc' : '#6366f1') : (isOled ? '#4a3a6a' : dm ? '#4a4a6a' : '#8b8bb0'), whiteSpace: 'nowrap' }}>{lang === 'en' ? 'All' : 'Все'}</span>
+                                    {totalUnread > 0 && !active && <span style={{ background: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 9, fontWeight: 700, borderRadius: 8, padding: '1px 4px', lineHeight: 1.4 }}>{totalUnread > 99 ? '99+' : totalUnread}</span>}
+                                </button>
+                            );
+                        })()}
+                        {/* Folder tabs */}
+                        {folders.map(f => {
+                            const active = activeFolder === f.id;
+                            const folderUnread = folderUnreadMap[f.id] || 0;
+                            return (
+                                <button key={f.id} onClick={() => setActiveFolder(f.id)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 20, border: 'none', cursor: 'pointer', flexShrink: 0, background: active ? `${f.color}22` : 'transparent', fontFamily: 'inherit' }}>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={active ? f.color : (isOled ? '#4a3a6a' : dm ? '#4a4a6a' : '#8b8bb0')} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                    <span style={{ fontSize: 12, fontWeight: active ? 700 : 500, color: active ? f.color : (isOled ? '#4a3a6a' : dm ? '#4a4a6a' : '#8b8bb0'), whiteSpace: 'nowrap' }}>{f.name}</span>
+                                    {folderUnread > 0 && <span style={{ background: active ? f.color : (dm ? '#3a3a5a' : '#d1d5db'), color: active ? 'white' : (dm ? '#9090b0' : '#6b7280'), fontSize: 9, fontWeight: 700, borderRadius: 8, padding: '1px 4px', lineHeight: 1.4 }}>{folderUnread > 99 ? '99+' : folderUnread}</span>}
                                 </button>
                             );
                         })}
@@ -3038,25 +3613,32 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     }}
                                     onContextMenu={e => { e.preventDefault(); setPinMenu({ x: e.clientX, y: e.clientY, key: favKey }); }}
                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}
-                                    style={{ ...darkStyles.chatItem, ...(activeChat?.type === 'private' && activeChat.id === currentUserId ? darkStyles.activeChatItem : {}), ...(sidebarCompact ? { justifyContent: 'center', padding: '6px 0' } : {}), position: 'relative' }}
+                                    style={{ ...darkStyles.chatItem, ...(activeChat?.type === 'private' && activeChat.id === currentUserId ? darkStyles.activeChatItem : {}), ...((sidebarCompact || sidebarMinimal) ? { justifyContent: 'center', padding: '6px 0' } : {}), position: 'relative' }}
                                 >
                                     <div style={{ position: 'relative', flexShrink: 0 }}>
                                         <div style={{ ...styles.avatar, background: 'linear-gradient(135deg,#f59e0b,#f97316)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', color: 'white' }}><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
                                         {pinnedChats.has(favKey) && <div style={{ position: 'absolute', top: -1, right: -1, width: 14, height: 14, borderRadius: '50%', background: dm ? C.bg4 : 'white', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, color: '#6366f1' }}><svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg></div>}
                                     </div>
-                                    {!sidebarCompact && <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 4 }}>
-                                            <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{lang === 'en' ? 'Favorites' : 'Избранное'}</div>
-                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, flexShrink: 0 }}>
-                                                {favoritesLastMsg?.time && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', whiteSpace: 'nowrap' }}>{formatSidebarTime(favoritesLastMsg.time)}</div>}
-                                                {unreadCounts[favKey] > 0 && <div className="badge-pop" style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[favKey] > 99 ? '99+' : unreadCounts[favKey]}</div>}
+                                    {!sidebarCompact && !sidebarMinimal && <>
+                                        <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
+                                                <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{lang === 'en' ? 'Favorites' : 'Избранное'}</div>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', minWidth: 0, height: 18 }}>
+                                                {renderSidebarSub(undefined, favoritesLastMsg?.text, favoritesLastMsg?.file, favoritesLastMsg?.filename, lang === 'en' ? 'Your saved messages' : 'Ваши сохранённые сообщения')}
                                             </div>
                                         </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', minWidth: 0, height: 18 }}>
-                                            {renderSidebarSub(undefined, favoritesLastMsg?.text, favoritesLastMsg?.file, favoritesLastMsg?.filename, lang === 'en' ? 'Your saved messages' : 'Ваши сохранённые сообщения')}
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'space-between', flexShrink: 0, minHeight: 38, paddingBottom: 1 }}>
+                                            <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', whiteSpace: 'nowrap' }}>
+                                                {favoritesLastMsg?.time && formatSidebarTime(favoritesLastMsg.time)}
+                                            </div>
+                                            {unreadCounts[favKey] > 0
+                                                ? <div className="badge-pop" style={{ minWidth: 20, height: 20, borderRadius: 10, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[favKey] > 99 ? '99+' : unreadCounts[favKey]}</div>
+                                                : <div style={{ height: 20 }} />
+                                            }
                                         </div>
-                                    </div>}
-                                    {sidebarCompact && unreadCounts[favKey] > 0 && <div className="badge-pop" style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>{unreadCounts[favKey] > 99 ? '99+' : unreadCounts[favKey]}</div>}
+                                    </>}
+                                    {(sidebarCompact || sidebarMinimal) && unreadCounts[favKey] > 0 && <div className="badge-pop" style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>{unreadCounts[favKey] > 99 ? '99+' : unreadCounts[favKey]}</div>}
                                 </div>
                             ); } else if (entry.kind === 'group') { const group = entry.data; return (
                                 <div
@@ -3085,52 +3667,72 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             <div style={{ position: 'absolute', bottom: 1, right: 1, width: 13, height: 13, borderRadius: '50%', background: dm ? C.bg6 : '#e0e0e0', border: `1.5px solid ${dm ? C.bg1 : 'white'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: dm ? '#9090b0' : '#6b7280' }}><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg></div>
                                         )}
                                     </div>
-                                    {!sidebarCompact && <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
-                                            <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                                <span style={{ flexShrink: 0, display: 'inline-flex', color: dm ? '#7c7caa' : '#9ca3af' }}>
-                                                    {group.is_channel
-                                                        ? <svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M18 3a1 1 0 00-1.447-.894L8.763 6H5a3 3 0 000 6h.28l1.771 5.316A1 1 0 008 18h1a1 1 0 001-1v-4.382l6.553 3.276A1 1 0 0018 15V3z" clipRule="evenodd"/></svg>
-                                                        : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>}
-                                                </span>
-                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.name}</span>
+                                    {!sidebarCompact && !sidebarMinimal && <>
+                                        <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden', flex: 1, minWidth: 0 }}>
+                                                {/* name + inline badges, no flex:1 on name so badges stay next to it */}
+                                                <span style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, fontWeight: 600, fontSize: 14 }}>{group.name}</span>
+                                                {group.is_channel
+                                                    ? <span title={lang === 'en' ? 'Channel' : 'Канал'} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: isOled ? 'rgba(99,102,241,0.18)' : dm ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.12)', flexShrink: 0 }}>
+                                                        <svg width="9" height="9" viewBox="0 0 20 20" fill={isOled ? '#a78bfa' : '#6366f1'}><path fillRule="evenodd" d="M18 3a1 1 0 00-1.447-.894L8.763 6H5a3 3 0 000 6h.28l1.771 5.316A1 1 0 008 18h1a1 1 0 001-1v-4.382l6.553 3.276A1 1 0 0018 15V3z" clipRule="evenodd"/></svg>
+                                                    </span>
+                                                    : <span title={lang === 'en' ? 'Group' : 'Группа'} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: isOled ? 'rgba(124,58,237,0.12)' : dm ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.08)', flexShrink: 0 }}>
+                                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={isOled ? '#a78bfa' : dm ? '#818cf8' : '#6366f1'} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                                                    </span>
+                                                }
                                                 {!!group.is_channel && group.channel_tag === 'auroramessenger' && (
-                                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', flexShrink: 0 }}>
+                                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 15, height: 15, borderRadius: '50%', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', flexShrink: 0 }}>
                                                         <svg width="8" height="8" viewBox="0 0 12 12" fill="none"><path d="M2 6.5L4.5 9L10 3" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
                                                     </span>
                                                 )}
                                             </div>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
-                                                {group.last_msg_time && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', whiteSpace: 'nowrap' }}>{formatSidebarTime(group.last_msg_time)}</div>}
+                                            <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', minWidth: 0, height: 18 }}>
+                                                {(() => {
+                                                    const isGroupActive = activeChat?.type === 'group' && activeChat.id === group.id;
+                                                    const draftText = !isGroupActive ? draftsState[`group-${group.id}`] : undefined;
+                                                    if (draftText) return (
+                                                        <span style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isOled ? '#f87171' : '#ef4444' }}>
+                                                            <span style={{ fontWeight: 600 }}>{lang === 'en' ? 'Draft: ' : 'Черновик: '}</span>
+                                                            <span style={{ color: dm ? '#7c7caa' : '#6b7280', fontWeight: 400 }}>{draftText}</span>
+                                                        </span>
+                                                    );
+                                                    const typing = !group.is_channel ? typingChats[`group-${group.id}`] : undefined;
+                                                    const isSystemMsg = group.last_msg_text === 'Группа создана' || group.last_msg_text === 'Канал создан' || group.last_msg_text === 'Group created' || group.last_msg_text === 'Channel created';
+                                                    const senderLabel = (group.is_channel || isSystemMsg) ? '' : (group.last_msg_sender_id === currentUserId ? 'Вы: ' : group.last_msg_sender_name ? `${group.last_msg_sender_name}: ` : '');
+                                                    if (isSystemMsg && group.last_msg_text) {
+                                                        return <span style={{ fontSize: 13, color: isOled ? '#7c7caa' : dm ? '#5a5a8a' : '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, fontStyle: 'italic' }}>{group.last_msg_text}</span>;
+                                                    }
+                                                    return renderSidebarSub(
+                                                        typing ? `✍️ ${typing} ${t('is typing...')}` : undefined,
+                                                        group.last_msg_text, group.last_msg_file, group.last_msg_filename,
+                                                        group.last_msg_time ? '' : (group.member_count ? formatMembers(group.member_count, group.is_channel ? 'subscriber' : 'member', lang) : ''),
+                                                        group.last_msg_time ? senderLabel : undefined
+                                                    );
+                                                })()}
                                             </div>
                                         </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', minWidth: 0, height: 18 }}>
-                                            {(() => {
-                                                const isGroupActive = activeChat?.type === 'group' && activeChat.id === group.id;
-                                                const draftText = !isGroupActive ? draftsState[`group-${group.id}`] : undefined;
-                                                if (draftText) return (
-                                                    <span style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isOled ? '#f87171' : '#ef4444' }}>
-                                                        <span style={{ fontWeight: 600 }}>{lang === 'en' ? 'Draft: ' : 'Черновик: '}</span>
-                                                        <span style={{ color: dm ? '#7c7caa' : '#6b7280', fontWeight: 400 }}>{draftText}</span>
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'space-between', flexShrink: 0, minHeight: 38, paddingBottom: 1 }}>
+                                            <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', whiteSpace: 'nowrap' }}>
+                                                {group.last_msg_sender_id === currentUserId && group.last_msg_time && (
+                                                    <span style={{ marginRight: 2, display: 'inline-flex', alignItems: 'center' }}>
+                                                        {group.last_msg_is_read ? (
+                                                            <svg width="18" height="11" viewBox="0 0 18 11" fill="none"><path d="M1 5.5L4.5 9L11 2" stroke={isOled ? '#7c6aaa' : (dm ? '#5a5a8a' : '#9ca3af')} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/><path d="M6 5.5L9.5 9L16 2" stroke={isOled ? '#a78bfa' : '#93c5fd'} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                                        ) : (
+                                                            <svg width="12" height="10" viewBox="0 0 12 10" fill="none"><path d="M1 5L4.5 8.5L11 1.5" stroke={isOled ? '#6b5a8a' : (dm ? '#5a5a8a' : '#a5b4fc')} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                                        )}
                                                     </span>
-                                                );
-                                                const typing = !group.is_channel ? typingChats[`group-${group.id}`] : undefined;
-                                                const isSystemMsg = group.last_msg_text === 'Группа создана' || group.last_msg_text === 'Канал создан' || group.last_msg_text === 'Group created' || group.last_msg_text === 'Channel created';
-                                                const senderLabel = (group.is_channel || isSystemMsg) ? '' : (group.last_msg_sender_id === currentUserId ? 'Вы: ' : group.last_msg_sender_name ? `${group.last_msg_sender_name}: ` : '');
-                                                if (isSystemMsg && group.last_msg_text) {
-                                                    return <span style={{ fontSize: 13, color: isOled ? '#7c7caa' : dm ? '#5a5a8a' : '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, fontStyle: 'italic' }}>{group.last_msg_text}</span>;
-                                                }
-                                                return renderSidebarSub(
-                                                    typing ? `✍️ ${typing} ${t('is typing...')}` : undefined,
-                                                    group.last_msg_text, group.last_msg_file, group.last_msg_filename,
-                                                    group.last_msg_time ? '' : (group.member_count ? formatMembers(group.member_count, group.is_channel ? 'subscriber' : 'member', lang) : ''),
-                                                    group.last_msg_time ? senderLabel : undefined
-                                                );
-                                            })()}
+                                                )}
+                                                {group.last_msg_time && formatSidebarTime(group.last_msg_time)}
+                                            </div>
+                                            {unreadCounts[`group-${group.id}`] > 0
+                                                ? <div className="badge-pop" style={{ minWidth: 20, height: 20, borderRadius: 10, backgroundColor: mutedChats.has(`group-${group.id}`) ? (dm ? '#3a3a5a' : '#a0a0b0') : (isOled ? '#7c3aed' : '#6366f1'), color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px' }}>{unreadCounts[`group-${group.id}`] > 99 ? '99+' : unreadCounts[`group-${group.id}`]}</div>
+                                                : mutedChats.has(`group-${group.id}`)
+                                                    ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={dm ? '#5a5a8a' : '#9ca3af'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                                                    : <div style={{ height: 20 }} />
+                                            }
                                         </div>
-                                    </div>}
-                                    {!sidebarCompact && unreadCounts[`group-${group.id}`] > 0 && <div className="badge-pop" style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0, boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[`group-${group.id}`] > 99 ? '99+' : unreadCounts[`group-${group.id}`]}</div>}
-                                    {sidebarCompact && unreadCounts[`group-${group.id}`] > 0 && <div className="badge-pop" style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[`group-${group.id}`] > 99 ? '99+' : unreadCounts[`group-${group.id}`]}</div>}
+                                    </>}
+                                    {(sidebarCompact || sidebarMinimal) && unreadCounts[`group-${group.id}`] > 0 && <div className="badge-pop" style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[`group-${group.id}`] > 99 ? '99+' : unreadCounts[`group-${group.id}`]}</div>}
                                 </div>
                             ); } else { const user = entry.data as User; return (
                                 <div
@@ -3138,7 +3740,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     onClick={() => selectPrivateChat(user)}
                                     onContextMenu={e => { e.preventDefault(); setPinMenu({ x: e.clientX, y: e.clientY, key: `private-${user.id}` }); }}
                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}
-                                    style={{ ...darkStyles.chatItem, ...(activeChat?.type === 'private' && activeChat.id === user.id ? darkStyles.activeChatItem : {}), ...(sidebarCompact ? { justifyContent: 'center', padding: '6px 0' } : {}), position: 'relative' }}
+                                    style={{ ...darkStyles.chatItem, ...(activeChat?.type === 'private' && activeChat.id === user.id ? darkStyles.activeChatItem : {}), ...((sidebarCompact || sidebarMinimal) ? { justifyContent: 'center', padding: '6px 0' } : {}), position: 'relative' }}
                                 >
                                     {(() => {
                                         const isBlockedByMe = blockedUserIds.has(user.id);
@@ -3159,14 +3761,35 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         </div>
                                         );
                                     })()}
-                                    {!sidebarCompact && <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
-                                            <div style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, display: 'flex', alignItems: 'center', gap: 3 }}>
-                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.username}</span>
-                                                {user.is_developer && <span title={t('developer of Aurora')} style={{ flexShrink: 0, cursor: 'default', display: 'inline-flex', color: '#f59e0b' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
+                                    {!sidebarCompact && !sidebarMinimal && <>
+                                        <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 3, overflow: 'hidden', flex: 1, minWidth: 0 }}>
+                                                <span style={{ ...darkStyles.chatName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{user.username}</span>
+                                                {user.is_developer && <DevBadge />}{(user as any).is_tester && <TesterBadge />}
                                             </div>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
-                                                {user.last_msg_sender_id === currentUserId && (
+                                            <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', minWidth: 0, height: 18 }}>
+                                                {(() => {
+                                                    const isUserActive = activeChat?.type === 'private' && activeChat.id === user.id;
+                                                    const draftText = !isUserActive ? draftsState[`private-${user.id}`] : undefined;
+                                                    if (draftText) return (
+                                                        <span style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isOled ? '#f87171' : '#ef4444' }}>
+                                                            <span style={{ fontWeight: 600 }}>{lang === 'en' ? 'Draft: ' : 'Черновик: '}</span>
+                                                            <span style={{ color: dm ? '#7c7caa' : '#6b7280', fontWeight: 400 }}>{draftText}</span>
+                                                        </span>
+                                                    );
+                                                    return renderSidebarSub(
+                                                        (typingChats[`private-${user.id}`] && user.id !== currentUserId) ? `✍️ ${t('is typing...')}` : undefined,
+                                                        user.last_msg_text, user.last_msg_file, user.last_msg_filename,
+                                                        user.last_msg_time ? '' : blockedUserIds.has(user.id) ? (lang === 'en' ? '🚫 Blocked' : '🚫 Заблокирован') : user.last_seen === 'blocked_you' ? (lang === 'en' ? 'last seen a long time ago' : 'был(а) давно') : (user.is_online ? `🟢 ${t('Online')}` : user.last_seen === 'hidden' ? t('last seen recently') : user.last_seen ? `${t('last seen')} ${formatLastSeen(user.last_seen)}` : user.status || t('private chat')),
+                                                        undefined,
+                                                        user.id
+                                                    );
+                                                })()}
+                                            </div>
+                                        </div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'space-between', flexShrink: 0, minHeight: 38, paddingBottom: 1 }}>
+                                            <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 2 }}>
+                                                {user.last_msg_sender_id === currentUserId && user.last_msg_time && (
                                                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                                                         {(lastReadByOther[user.id] || user.last_msg_is_read) ? (
                                                             <svg width="18" height="11" viewBox="0 0 18 11" fill="none"><path d="M1 5.5L4.5 9L11 2" stroke={isOled ? '#7c6aaa' : (dm ? '#5a5a8a' : '#9ca3af')} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/><path d="M6 5.5L9.5 9L16 2" stroke={isOled ? '#a78bfa' : '#93c5fd'} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -3175,31 +3798,17 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                         )}
                                                     </span>
                                                 )}
-                                                {user.last_msg_time && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', whiteSpace: 'nowrap' }}>{formatSidebarTime(user.last_msg_time)}</div>}
+                                                {user.last_msg_time && formatSidebarTime(user.last_msg_time)}
                                             </div>
+                                            {unreadCounts[`private-${user.id}`] > 0
+                                                ? <div className="badge-pop" style={{ minWidth: 20, height: 20, borderRadius: 10, backgroundColor: mutedChats.has(`private-${user.id}`) ? (dm ? '#3a3a5a' : '#a0a0b0') : (isOled ? '#7c3aed' : '#6366f1'), color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px' }}>{unreadCounts[`private-${user.id}`] > 99 ? '99+' : unreadCounts[`private-${user.id}`]}</div>
+                                                : mutedChats.has(`private-${user.id}`)
+                                                    ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={dm ? '#5a5a8a' : '#9ca3af'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                                                    : <div style={{ height: 20 }} />
+                                            }
                                         </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', minWidth: 0, height: 18 }}>
-                                            {(() => {
-                                                const isUserActive = activeChat?.type === 'private' && activeChat.id === user.id;
-                                                const draftText = !isUserActive ? draftsState[`private-${user.id}`] : undefined;
-                                                if (draftText) return (
-                                                    <span style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isOled ? '#f87171' : '#ef4444' }}>
-                                                        <span style={{ fontWeight: 600 }}>{lang === 'en' ? 'Draft: ' : 'Черновик: '}</span>
-                                                        <span style={{ color: dm ? '#7c7caa' : '#6b7280', fontWeight: 400 }}>{draftText}</span>
-                                                    </span>
-                                                );
-                                                return renderSidebarSub(
-                                                    (typingChats[`private-${user.id}`] && user.id !== currentUserId) ? `✍️ ${t('is typing...')}` : undefined,
-                                                    user.last_msg_text, user.last_msg_file, user.last_msg_filename,
-                                                    user.last_msg_time ? '' : blockedUserIds.has(user.id) ? (lang === 'en' ? '🚫 Blocked' : '🚫 Заблокирован') : user.last_seen === 'blocked_you' ? (lang === 'en' ? 'last seen a long time ago' : 'был(а) давно') : (user.is_online ? `🟢 ${t('Online')}` : user.last_seen === 'hidden' ? t('last seen recently') : user.last_seen ? `${t('last seen')} ${formatLastSeen(user.last_seen)}` : user.status || t('private chat')),
-                                                    undefined,
-                                                    user.id
-                                                );
-                                            })()}
-                                        </div>
-                                    </div>}
-                                    {!sidebarCompact && unreadCounts[`private-${user.id}`] > 0 && <div className="badge-pop" style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0, boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[`private-${user.id}`] > 99 ? '99+' : unreadCounts[`private-${user.id}`]}</div>}
-                                    {sidebarCompact && unreadCounts[`private-${user.id}`] > 0 && <div className="badge-pop" style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[`private-${user.id}`] > 99 ? '99+' : unreadCounts[`private-${user.id}`]}</div>}
+                                    </>}
+                                    {(sidebarCompact || sidebarMinimal) && unreadCounts[`private-${user.id}`] > 0 && <div className="badge-pop" style={{ position: 'absolute', top: 4, right: 6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', boxShadow: isOled ? '0 0 6px rgba(167,139,250,0.4)' : 'none' }}>{unreadCounts[`private-${user.id}`] > 99 ? '99+' : unreadCounts[`private-${user.id}`]}</div>}
                                 </div>
                             ); } })}
                         </div>
@@ -3234,35 +3843,59 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 )}
 
                 {/* Profile card */}
-                <div className="sidebar-profile-card" style={{ ...darkStyles.profileCard, ...(sidebarCompact ? { justifyContent: 'center', padding: '8px 0' } : {}) }}>
-                    <div style={{ ...styles.profileAvatar, backgroundColor: currentUserAvatar ? (dm ? C.bg1 : '#f7f8fc') : avatarBg }} onClick={() => setShowSettings(true)}>
-                        {currentUserAvatar
-                            ? <img src={config.fileUrl(currentUserAvatar) ?? undefined} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
-                            : <span style={{ color: 'white', fontWeight: 700, fontSize: 16 }}>{currentUsername[0]?.toUpperCase()}</span>
-                        }
-                    </div>
-                    {!sidebarCompact && <>
-                        <div style={styles.profileInfo}>
-                            <div style={{ ...darkStyles.profileName, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                {currentUsername}
-                                {(currentUserTag === 'kayano' || currentUserTag === 'durov') && <span title={t('developer of Aurora')} style={{ cursor: 'default', display: 'inline-flex', color: '#f59e0b', flexShrink: 0 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
+                {(() => {
+                    const totalUnreadProfile = Object.values(unreadCounts).reduce((s, n) => s + n, 0);
+                    const isOnline = wsConnState === 'connected';
+                    const statusText = currentUserStatus?.trim();
+                    return (
+                    <div className="sidebar-profile-card" style={{ ...darkStyles.profileCard, ...((sidebarCompact || sidebarMinimal) ? { justifyContent: 'center', padding: '8px 0' } : {}), ...(sidebarMinimal ? { display: 'none' } : {}) }}>
+                        <div style={{ position: 'relative', flexShrink: 0 }}>
+                            <div style={{ ...styles.profileAvatar, backgroundColor: currentUserAvatar ? (dm ? C.bg1 : '#f7f8fc') : avatarBg, cursor: 'pointer' }} onClick={() => setShowSettings(true)}>
+                                {currentUserAvatar
+                                    ? <img src={config.fileUrl(currentUserAvatar) ?? undefined} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+                                    : <span style={{ color: 'white', fontWeight: 700, fontSize: 16 }}>{currentUsername[0]?.toUpperCase()}</span>
+                                }
                             </div>
-                            {currentUserTag && <div style={styles.profileStatus}>@{currentUserTag}</div>}
+                            <div style={{ position: 'absolute', bottom: 0, right: 0, width: 11, height: 11, borderRadius: '50%', background: isOnline ? '#22c55e' : (isOled ? '#4a3a6a' : dm ? '#3a3a5a' : '#c0c0d0'), border: `2px solid ${isOled ? '#000' : dm ? '#161625' : '#f0f1f8'}` }} />
                         </div>
-                        <button onClick={() => setShowSettings(true)} style={{
-                            background: 'none', border: 'none', cursor: 'pointer',
-                            width: 30, height: 30, padding: 0, flexShrink: 0,
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            borderRadius: 8,
-                            color: isOled ? '#6b5fa0' : dm ? '#5a5a7a' : '#b0b0c8',
-                            transition: 'color 0.15s',
-                        }} title={t('Settings')}>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-                            </svg>
-                        </button>
-                    </>}
-                </div>
+                        {!sidebarCompact && <>
+                            <div style={{ ...styles.profileInfo, minWidth: 0, flex: 1 }} onClick={() => setShowSettings(true)}>
+                                <div style={{ ...darkStyles.profileName, display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden' }}>
+                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUsername}</span>
+                                    {DEV_TAGS.includes(currentUserTag || '') && <DevBadge />}{TESTER_TAGS.includes(currentUserTag || '') && <TesterBadge />}
+                                </div>
+                                <div style={{ fontSize: 11, color: isOled ? '#6b5fa0' : dm ? '#5a5a7a' : '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>
+                                    {statusText
+                                        ? <span style={{ color: isOled ? '#a78bfa' : dm ? '#818cf8' : '#6366f1' }}>{statusText}</span>
+                                        : currentUserTag ? `@${currentUserTag}` : (lang === 'en' ? 'Online' : 'В сети')}
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                                {totalUnreadProfile > 0 && (
+                                    <div style={{ minWidth: 18, height: 18, borderRadius: 9, background: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>
+                                        {totalUnreadProfile > 99 ? '99+' : totalUnreadProfile}
+                                    </div>
+                                )}
+                                <button onClick={() => setShowSettings(true)} style={{
+                                    background: 'none', border: 'none', cursor: 'pointer',
+                                    width: 28, height: 28, padding: 0, flexShrink: 0,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    borderRadius: 8,
+                                    color: isOled ? '#6b5fa0' : dm ? '#5a5a7a' : '#b0b0c8',
+                                    transition: 'color 0.15s',
+                                }} title={t('Settings')}
+                                    onMouseEnter={e => (e.currentTarget.style.color = isOled ? '#a78bfa' : dm ? '#818cf8' : '#6366f1')}
+                                    onMouseLeave={e => (e.currentTarget.style.color = isOled ? '#6b5fa0' : dm ? '#5a5a7a' : '#b0b0c8')}
+                                >
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </>}
+                    </div>
+                    );
+                })()}
             </div>
 
             {/* Область чата */}
@@ -3454,7 +4087,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         <div style={{ minWidth: 0, overflow: 'hidden' }}>
                                             <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: dm ? '#e2e8f0' : '#1e1b4b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
                                                 {activeChat.name.replace(/^⭐\s*/, '')}
-                                                {activeChat.type === 'private' && usersById.get(activeChat.id)?.is_developer && <span title={t('developer of Aurora')} style={{ flexShrink: 0, cursor: 'default', display: 'inline-flex', color: '#f59e0b' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
+                                                {activeChat.type === 'private' && usersById.get(activeChat.id)?.is_developer && <DevBadge size={15} />}{activeChat.type === 'private' && (usersById.get(activeChat.id) as any)?.is_tester && <TesterBadge size={15} />}
                                                 {!!isChannelChat && activeGroup?.channel_tag === 'auroramessenger' && (
                                                     <span title={t('Official Aurora channel')} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', flexShrink: 0 }}>
                                                         <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6.5L4.5 9L10 3" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -3482,7 +4115,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         </div>
                                         {typingUser && !isChannelChat && (
                                             <span style={styles.typing}>
-                                                <span style={{ fontWeight: 600, fontStyle: 'normal' }}>{typingUser}</span> {t('is typing...')}
+                                                {typingUser}
                                             </span>
                                         )}
                                     </>
@@ -3519,18 +4152,6 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     </button>
                                 )}
                                 <button onClick={() => { setChatSearchOpen(p => !p); setChatSearchQuery(''); setChatSearchIdx(0); }} style={{ ...darkStyles.iconBtn, ...(chatSearchOpen ? { background: dm ? 'rgba(99,102,241,0.2)' : '#ede9fe', color: '#6366f1' } : {}) }} title={t('Search in chat...')}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
-                                {!chatSearchOpen && !isMobile && (
-                                    <button
-                                        onClick={() => api.exportChat(token, activeChat.type, activeChat.id, 'json')}
-                                        style={darkStyles.iconBtn}
-                                        title={lang === 'en' ? 'Export chat' : 'Экспорт чата'}
-                                    >
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                                    </button>
-                                )}
-                                {!chatSearchOpen && (activeChat.type === 'private' || isGroupAdmin) && (
-                                    <button onClick={handleClearChat} style={darkStyles.iconBtn} title={t('Clear')}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
-                                )}
                                 {!chatSearchOpen && activeChat.type === 'group' && isGroupAdmin && !isChannelChat && (
                                     <button onClick={() => { setSelectedGroupId(activeChat.id); setShowInviteModal(true); }} style={darkStyles.iconBtn} title={t('Invite')}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></button>
                                 )}
@@ -3539,20 +4160,52 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
 
 
-                        {/* Закреплённое сообщение */}
+                        {/* Disappearing messages banner */}
+                        {(() => {
+                            const dKey = `${activeChat.type}-${activeChat.id}`;
+                            const dSec = disappearSettings[dKey];
+                            if (!dSec) return null;
+                            const dLabel = dSec >= 604800 ? (lang === 'en' ? '1 week' : '1 неделя') : dSec >= 86400 ? (lang === 'en' ? '1 day' : '1 день') : dSec >= 3600 ? (lang === 'en' ? '1 hour' : '1 час') : dSec >= 300 ? (lang === 'en' ? '5 minutes' : '5 минут') : (lang === 'en' ? '30 seconds' : '30 секунд');
+                            return (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 14px', background: isOled ? 'rgba(245,158,11,0.1)' : dm ? 'rgba(245,158,11,0.12)' : 'rgba(245,158,11,0.08)', borderBottom: `1px solid ${isOled ? 'rgba(245,158,11,0.2)' : dm ? 'rgba(245,158,11,0.2)' : 'rgba(245,158,11,0.15)'}`, flexShrink: 0 }}>
+                                    <span style={{ fontSize: 13, color: dm ? '#fbbf24' : '#b45309', flex: 1 }}>⏳ {lang === 'en' ? `Messages disappear after ${dLabel}` : `Сообщения исчезают через ${dLabel}`}</span>
+                                    <button onClick={async () => {
+                                        const chatType = activeChat.type as 'private' | 'group';
+                                        await api.setDisappearSetting(token, chatType, activeChat.id, null);
+                                        setDisappearSettings(prev => ({ ...prev, [dKey]: null }));
+                                    }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#fbbf24' : '#b45309', padding: '0 2px', display: 'flex', alignItems: 'center', fontSize: 16, lineHeight: 1 }}>×</button>
+                                </div>
+                            );
+                        })()}
+
+                        {/* Закреплённые сообщения */}
                         {(() => {
                             const chatKey = `${activeChat.type}-${activeChat.id}`;
-                            const pinned = pinnedMessages[chatKey];
-                            if (!pinned) return null;
+                            const pins = pinnedMessages[chatKey];
+                            if (!pins || pins.length === 0) return null;
+                            const idx = Math.min(pinnedMsgIdx[chatKey] || 0, pins.length - 1);
+                            const pinned = pins[idx];
+                            const goNext = () => setPinnedMsgIdx(prev => ({ ...prev, [chatKey]: (idx + 1) % pins.length }));
+                            const scrollTo = () => { const el = document.getElementById(`msg-${pinned.id}`); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.style.transition = 'background 0.3s'; el.style.background = 'rgba(99,102,241,0.18)'; setTimeout(() => { el.style.background = ''; }, 1500); } };
                             return (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 14px', background: isOled ? '#000000' : (dm ? '#181828' : '#f5f3ff'), borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.15)' : (dm ? 'rgba(99,102,241,0.18)' : '#ede9fe')}`, cursor: 'pointer', flexShrink: 0 }}
-                                    onClick={() => { const el = document.getElementById(`msg-${pinned.id}`); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.style.transition = 'background 0.3s'; el.style.background = 'rgba(99,102,241,0.18)'; setTimeout(() => { el.style.background = ''; }, 1500); } }}>
-                                    <div style={{ width: 3, height: 32, borderRadius: 2, background: '#6366f1', flexShrink: 0 }} />
+                                    onClick={() => { scrollTo(); if (pins.length > 1) goNext(); }}>
+                                    {/* Progress bars for multiple pins */}
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flexShrink: 0 }}>
+                                        {pins.map((_, i) => (
+                                            <div key={i} style={{ width: 3, height: pins.length === 1 ? 32 : Math.max(6, 32 / pins.length - 2), borderRadius: 2, background: i === idx ? '#6366f1' : (dm ? '#3a3a5a' : '#c4b5fd'), transition: 'background 0.2s' }} />
+                                        ))}
+                                    </div>
                                     <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ fontSize: 11, fontWeight: 600, color: '#6366f1', display: 'flex', alignItems: 'center', gap: 4 }}><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.5 5H19l-4.5 3.3 1.7 5.2L12 12.3l-4.2 3.2 1.7-5.2L5 7h5.5z"/><line x1="12" y1="17" x2="12" y2="22" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg> {t('Pinned message')}</div>
+                                        <div style={{ fontSize: 11, fontWeight: 600, color: '#6366f1', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+                                            {t('Pinned message')}{pins.length > 1 && <span style={{ opacity: 0.7, fontWeight: 400 }}> {idx + 1}/{pins.length}</span>}
+                                        </div>
                                         <div style={{ fontSize: 12, color: dm ? '#9090b0' : '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pinned.text}</div>
                                     </div>
-                                    <button onClick={e => { e.stopPropagation(); togglePinMessage(`${activeChat.type}-${activeChat.id}`, { id: pinned.id, message_text: pinned.text }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#aaa', padding: '0 2px', display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                                    <button onClick={e => { e.stopPropagation(); togglePinMessage(chatKey, { id: pinned.id, message_text: pinned.text }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#aaa', padding: '0 2px', display: 'flex', alignItems: 'center' }}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                    </button>
                                 </div>
                             );
                         })()}
@@ -3705,6 +4358,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                         ? <img src={specialUrl(msg.message_text)} alt="GIF" style={{ maxWidth: 240, borderRadius: 10, display: 'block' }} />
                                                         : isPoll(msg.message_text)
                                                         ? (() => { const pid = getPollId(msg.message_text); return pid ? <PollMessage key={`poll-${pid}`} pollId={pid} token={token} isDark={dm} isOled={isOled} isOwn={false} /> : null; })()
+                                                        : isGeo(msg.message_text)
+                                                        ? (() => { const geo = getGeo(msg.message_text); if (!geo) return null; const mapsUrl = `https://www.openstreetmap.org/?mlat=${geo.lat}&mlon=${geo.lon}#map=15/${geo.lat}/${geo.lon}`; const mapSrc = `https://static-maps.yandex.ru/1.x/?lang=ru_RU&ll=${geo.lon},${geo.lat}&z=15&l=map&size=560,220&pt=${geo.lon},${geo.lat},pm2rdl`; return (<a href={mapsUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'block', textDecoration: 'none', borderRadius: 14, overflow: 'hidden', margin: '-11px -15px 0', width: 'calc(100% + 30px)', maxWidth: isMobile ? '100%' : 300 }}><div style={{ position: 'relative', height: 148 }}><img src={mapSrc} alt="map" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} /><div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-60%)', width: 22, height: 22, borderRadius: '50%', background: '#ef4444', border: '3px solid white', boxShadow: '0 2px 8px rgba(0,0,0,0.5)' }} /></div><div style={{ padding: '9px 13px 24px', background: dm ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)' }}><div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={dm ? '#a5b4fc' : '#6366f1'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><span style={{ fontSize: 13, fontWeight: 700, color: dm ? '#e2e8f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{geo.name}</span></div>{geo.address && geo.address !== geo.name && <div style={{ fontSize: 11, color: dm ? '#7c7caa' : '#6b7280', marginTop: 3, marginLeft: 18, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{geo.address}</div>}</div></a>); })()
+                                                        : isContact(msg.message_text)
+                                                        ? (() => { const ct = getContact(msg.message_text); if (!ct) return null; const avatarSrc = ct.avatar ? config.fileUrl(ct.avatar) : null; return (<div onClick={() => { const u = users.find((u: any) => u.id === ct.id); if (u) setSelectedUserForProfile(u); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0', cursor: 'pointer' }}><div style={{ width: 40, height: 40, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: ct.avatar_color || '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{avatarSrc ? <img src={avatarSrc} alt={ct.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ color: 'white', fontWeight: 700, fontSize: 17 }}>{ct.username[0]?.toUpperCase()}</span>}</div><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 700, color: dm ? '#e2e8f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ct.username}</div><div style={{ fontSize: 11, color: dm ? '#7c7caa' : '#6b7280', marginTop: 1 }}>{lang === 'en' ? 'Contact' : 'Контакт'}</div></div><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={dm ? '#5a5a8a' : '#9ca3af'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></div>); })()
                                                         : <div style={{ fontSize: 14, color: dm ? '#d0d0e8' : '#374151', lineHeight: 1.55, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{msg.message_text}</div>
                                                     )}
                                                 </div>
@@ -3785,7 +4442,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                                                     })}
                                                                                     <button onClick={() => setShowPostFullPicker(true)}
                                                                                         style={{ background: 'none', border: '1.5px solid transparent', borderRadius: 10, cursor: 'pointer', fontSize: 18, padding: '3px 5px', color: dm ? '#a5b4fc' : '#6366f1', marginLeft: 2 }}
-                                                                                        title="Все эмодзи">
+                                                                                        title={lang === 'en' ? 'All emoji' : 'Все эмодзи'}>
                                                                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
                                                                                     </button>
                                                                                 </div>
@@ -3816,6 +4473,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     <div
                                         key={msg.id}
                                         id={`msg-${msg.id}`}
+                                        {...(!isOwn ? { 'data-group-msg-id': msg.id } : {})}
                                         className={deletingMsgIds.has(msg.id) ? 'msg-delete' : (isOwn ? 'msg-in-own' : 'msg-in-other')}
                                         onMouseEnter={() => !selectionMode && setHoveredMsgId(msg.id)}
                                         onMouseLeave={() => { setHoveredMsgId(null); setReactionPickerMsgId(null); }}
@@ -3870,7 +4528,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             </div>
                                         )}
 
-                                        <div style={{ position: 'relative', display: 'inline-block', maxWidth: isMediaOnlyMsg(msg) ? (isMobile ? '88%' : '72%') : hasMediaWithCaption(msg) ? (isMobile ? 320 : 380) : (isMobile ? '82%' : '62%') }}>
+                                        <div style={{ position: 'relative', display: 'inline-block', maxWidth: isMediaOnlyMsg(msg) ? (isMobile ? '88%' : '72%') : hasMediaWithCaption(msg) ? (isMobile ? 'min(300px, 78vw)' : 380) : (isMobile ? '82%' : '62%') }}>
                                         {/* Media pre-bubble: фото/видео отдельным пузырём когда есть и не-медиа файлы */}
                                         {(() => {
                                             const filesRaw = (msg as any).files;
@@ -3918,6 +4576,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     position: 'relative' as const, // keep absolute timestamp inside the image, not the outer container
                                                 };
                                                 const mediaCap = hasMediaWithCaption(msg);
+                                                const geoMsg = isGeo(msg.message_text);
                                                 const ownInsetShadow = isOled
                                                     ? ', inset 0 1px 0 rgba(255,255,255,0.08)'
                                                     : dm ? ', inset 0 1px 0 rgba(255,255,255,0.1)' : '';
@@ -3925,7 +4584,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     maxWidth: '100%',
                                                     padding: '10px 14px',
                                                     borderRadius: isOwn ? '18px 4px 18px 18px' : '4px 18px 18px 18px',
-                                                    overflow: mediaCap ? ('hidden' as const) : undefined,
+                                                    overflow: geoMsg ? ('hidden' as const) : undefined,
                                                     wordBreak: 'break-word' as const,
                                                     fontSize: theme.fontSize,
                                                     boxShadow: isOwn
@@ -3960,7 +4619,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 const nameColor = isBgDark(bubbleBg) ? '#c4b5fd' : '#6366f1';
                                                 return <div style={{ ...styles.senderName, color: nameColor, display: 'flex', alignItems: 'center', gap: 4 }}>
                                                     {msg.sender_name}
-                                                    {((msg as any).sender_is_developer || usersById.get((msg as any).sender_id)?.is_developer) && <span title={t('developer of Aurora')} style={{ flexShrink: 0, cursor: 'default', display: 'inline-flex', color: '#f59e0b' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
+                                                    {((msg as any).sender_is_developer || usersById.get((msg as any).sender_id)?.is_developer) && <DevBadge size={14} />}{(usersById.get((msg as any).sender_id) as any)?.is_tester && <TesterBadge size={14} />}
                                                 </div>;
                                             })()}
 
@@ -4017,7 +4676,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     </div>
                                                 );
                                             })()}
-                                            {'file_path' in msg && msg.file_path && (
+                                            {(() => {
+                                                // true when there's sender name / reply / forward banner rendered above the media
+                                                const hasSenderName = !isOwn && 'sender_name' in msg && !!(msg as any).sender_name;
+                                                const hasAboveContent = hasSenderName || !!msg.reply_to_id || !!msg.message_text?.startsWith('↪️ ');
+                                                if (!('file_path' in msg) || !msg.file_path) return null;
+                                                return (
                                                 <FileMessage
                                                     filePath={msg.file_path}
                                                     filename={msg.filename || 'file'}
@@ -4028,6 +4692,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     isDark={dm}
                                                     inBubble={!isMediaOnlyMsg(msg)}
                                                     hasCaption={!isMediaOnlyMsg(msg) && !!msg.message_text?.trim()}
+                                                    hasAboveContent={hasAboveContent}
                                                     onPlay={playGlobalAudio}
                                                     onPlayVideo={(src, fn) => { setNowPlayingVideo({ src, filename: fn }); setTimeout(() => { if (floatingVideoRef.current) { floatingVideoRef.current.src = src; floatingVideoRef.current.play().catch(() => {}); } }, 100); }}
                                                     nowPlayingSrc={nowPlaying?.src}
@@ -4038,7 +4703,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     onGlobalToggle={toggleGlobalPlay}
                                                     onDurationKnown={handleDurationKnown}
                                                 />
-                                            )}
+                                                );
+                                            })()}
                                             {(() => {
                                                 const filesRaw = (msg as any).files;
                                                 if (!filesRaw) return null;
@@ -4057,6 +4723,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 const isMixed = mediaFiles.length > 0 && (audioFiles.length > 0 || docFiles.length > 0);
                                                 const showMediaHere = !isMixed && mediaFiles.length > 0;
                                                 const hasMedia = showMediaHere;
+                                                const hasSenderNameFiles = !isOwn && 'sender_name' in msg && !!(msg as any).sender_name;
+                                                const hasAboveContentFiles = hasSenderNameFiles || !!msg.reply_to_id || !!msg.message_text?.startsWith('↪️ ');
                                                 return (
                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: hasMedia ? 0 : 4 }}>
                                                         {/* Media grid only when NOT mixed (mixed = rendered in pre-bubble) */}
@@ -4067,6 +4735,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                                 fileSize={mediaFiles[0].file_size}
                                                                 isOwn={isOwn} isGroup={activeChat.type === 'group'} isDark={dm}
                                                                 inBubble={!isMediaOnlyMsg(msg)} hasCaption={!isMediaOnlyMsg(msg) && !!msg.message_text?.trim()}
+                                                                hasAboveContent={hasAboveContentFiles}
                                                                 onPlay={playGlobalAudio} onPlayVideo={playVideo}
                                                                 nowPlayingSrc={nowPlaying?.src} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} globalDuration={globalDuration} onGlobalSeek={seekGlobal} onGlobalToggle={toggleGlobalPlay} onDurationKnown={handleDurationKnown}
                                                             />
@@ -4097,8 +4766,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 );
                                             })()}
 
-                                            {editingMessageId !== msg.id && msg.message_text && (() => {
+                                            {msg.message_text && (() => {
                                                 const isRead = (msg as any).is_read;
+                                                const isSearchMatch = chatSearchOpen && chatSearchQuery.length > 0 && chatSearchMatches.includes(msg.id);
+                                                const isActiveSearchMatch = isSearchMatch && chatSearchMatches[chatSearchIdx] === msg.id;
                                                 // Shared time+tick overlay for stickers/GIFs
                                                 const timeOverlay = (
                                                     <div style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 8, padding: '2px 7px', pointerEvents: 'none' }}>
@@ -4112,7 +4783,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 );
 
                                                 const isPrivate = activeChat?.type === 'private';
-                                                const displayText = isPrivate ? getDisplayText(msg, activeChat!.id) : (msg.message_text || '');
+                                                const isBeingEdited = editingMessageId === msg.id;
+                                                const rawText = isBeingEdited ? (editingText || msg.message_text || '') : (msg.message_text || '');
+                                                const displayText = isBeingEdited ? rawText : (isPrivate ? getDisplayText(msg, activeChat!.id) : rawText);
                                                 const encLocked = isEncryptedMessage(msg.message_text) && displayText === '🔒';
 
                                                 const playlistData = !encLocked ? parsePlaylistMsg(displayText) : null;
@@ -4149,6 +4822,71 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     const pid = getPollId(msg.message_text);
                                                     if (pid) return <PollMessage key={`poll-${pid}`} pollId={pid} token={token} isDark={dm} isOled={isOled} isOwn={isOwn} />;
                                                 }
+                                                if (!encLocked && isGeo(msg.message_text)) {
+                                                    const geo = getGeo(msg.message_text);
+                                                    if (geo) {
+                                                        const mapSrc = `https://static-maps.yandex.ru/1.x/?lang=ru_RU&ll=${geo.lon},${geo.lat}&z=15&l=map&size=560,220&pt=${geo.lon},${geo.lat},pm2rdl`;
+                                                        const mapsUrl = `https://www.openstreetmap.org/?mlat=${geo.lat}&mlon=${geo.lon}#map=15/${geo.lat}/${geo.lon}`;
+                                                        const geoIsRead = !!(msg as any).is_read;
+                                                        const geoHasAbove = (!isOwn && 'sender_name' in msg && !!(msg as any).sender_name) || !!msg.reply_to_id;
+                                                        return (
+                                                            <a href={mapsUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'block', textDecoration: 'none', margin: `${geoHasAbove ? '0' : '-10px'} -14px -10px`, minWidth: isMobile ? 220 : 260 }}>
+                                                                <div style={{ position: 'relative', height: isMobile ? 130 : 160, background: dm ? '#1a1a2e' : '#e5e7eb' }}>
+                                                                    <img src={mapSrc} alt="map" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                                                                    <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-60%)' }}>
+                                                                        <svg width="28" height="36" viewBox="0 0 28 36" fill="none">
+                                                                            <path d="M14 0C6.27 0 0 6.27 0 14c0 9.94 14 22 14 22S28 23.94 28 14C28 6.27 21.73 0 14 0z" fill="#ef4444"/>
+                                                                            <circle cx="14" cy="14" r="6" fill="white"/>
+                                                                        </svg>
+                                                                    </div>
+                                                                </div>
+                                                                <div style={{ padding: '8px 10px 9px', background: isOwn ? 'rgba(0,0,0,0.18)' : (dm ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)') }}>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
+                                                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={isOwn ? 'rgba(255,255,255,0.85)' : (dm ? '#a5b4fc' : '#6366f1')} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                                                                        <span style={{ fontSize: 12, fontWeight: 700, color: isOwn ? 'white' : (dm ? '#e2e8f0' : '#1e1b4b'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{geo.name}</span>
+                                                                    </div>
+                                                                    <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 8 }}>
+                                                                        <div style={{ fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.6)' : (dm ? '#7c7caa' : '#6b7280'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                                                            {geo.address && geo.address !== geo.name ? geo.address : `${Number(geo.lat).toFixed(5)}, ${Number(geo.lon).toFixed(5)}`}
+                                                                        </div>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0, fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.7)' : (dm ? '#7c7caa' : '#9ca3af') }}>
+                                                                            {formatTime(msg.timestamp)}
+                                                                            {isOwn && (geoIsRead
+                                                                                ? <svg width="16" height="10" viewBox="0 0 18 11" fill="none"><path d="M1 5.5L4.5 9L11 2" stroke="rgba(255,255,255,0.55)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/><path d="M6 5.5L9.5 9L16 2" stroke="#93c5fd" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                                                                : <svg width="11" height="10" viewBox="0 0 12 10" fill="none"><path d="M1 5L4.5 8.5L11 1.5" stroke="rgba(255,255,255,0.65)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </a>
+                                                        );
+                                                    }
+                                                }
+                                                if (!encLocked && isContact(msg.message_text)) {
+                                                    const ct = getContact(msg.message_text);
+                                                    if (ct) {
+                                                        const avatarSrc = ct.avatar ? config.fileUrl(ct.avatar) : null;
+                                                        const ctIsRead = !!(msg as any).is_read;
+                                                        return (
+                                                            <div onClick={() => { const u = users.find(u => u.id === ct.id); if (u) setSelectedUserForProfile(u); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 4px 6px', cursor: 'pointer', margin: '-4px 0' }}>
+                                                                <div style={{ width: 42, height: 42, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: ct.avatar_color || '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                                    {avatarSrc ? <img src={avatarSrc} alt={ct.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ color: 'white', fontWeight: 700, fontSize: 17 }}>{ct.username[0]?.toUpperCase()}</span>}
+                                                                </div>
+                                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                                    <div style={{ fontSize: 14, fontWeight: 700, color: isOwn ? 'white' : (dm ? '#e2e8f0' : '#1e1b4b'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ct.username}</div>
+                                                                    <div style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.6)' : (dm ? '#7c7caa' : '#6b7280'), marginTop: 1 }}>{lang === 'en' ? 'Contact' : 'Контакт'}</div>
+                                                                </div>
+                                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                                                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={isOwn ? 'rgba(255,255,255,0.6)' : (dm ? '#5a5a8a' : '#9ca3af')} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.6)' : (dm ? '#7c7caa' : '#9ca3af') }}>
+                                                                        {formatTime(msg.timestamp)}
+                                                                        {isOwn && (ctIsRead ? <svg width="16" height="10" viewBox="0 0 18 11" fill="none"><path d="M1 5.5L4.5 9L11 2" stroke="rgba(255,255,255,0.55)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/><path d="M6 5.5L9.5 9L16 2" stroke="#93c5fd" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg> : <svg width="11" height="10" viewBox="0 0 12 10" fill="none"><path d="M1 5L4.5 8.5L11 1.5" stroke="rgba(255,255,255,0.65)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>)}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    }
+                                                }
                                                 if (!encLocked && isCallEnded(msg.message_text)) {
                                                     const dur = getCallDuration(msg.message_text);
                                                     const mins = Math.floor(dur / 60), secs = dur % 60;
@@ -4179,23 +4917,41 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                         {encLocked ? (
                                                             <span style={{ opacity: 0.7, fontStyle: 'italic', display: 'inline-flex', alignItems: 'center', gap: 4 }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Зашифровано</span>
                                                         ) : fwdMatch ? (
-                                                            renderTextWithLinks(fwdBody, (uname => { const u = users.find(x => x.tag === uname || x.username === uname) || (groupMembersCache[activeChat!.id]?.find(x => (x as any).tag === uname || x.username === uname) as any); if (u) setSelectedUserForProfile(u as any); }), isOwn ? 'rgba(255,255,255,0.9)' : (isOled ? '#c4b5fd' : (dm ? '#a78bfa' : '#6366f1')))
-                                                        ) : (
-                                                            renderTextWithLinks(displayText, (uname => { const u = users.find(x => x.tag === uname || x.username === uname) || (groupMembersCache[activeChat!.id]?.find(x => (x as any).tag === uname || x.username === uname) as any); if (u) setSelectedUserForProfile(u as any); }), isOwn ? 'rgba(255,255,255,0.9)' : (isOled ? '#c4b5fd' : (dm ? '#a78bfa' : '#6366f1')))
+                                                            isPoll(fwdBody)
+                                                                ? (() => { const pid = getPollId(fwdBody); return pid ? <PollMessage key={`fwd-poll-${pid}`} pollId={pid} token={token} isDark={dm} isOled={isOled} isOwn={isOwn} /> : null; })()
+                                                            : isSticker(fwdBody) || isGif(fwdBody)
+                                                                ? <img src={fwdBody.replace(/^__(sticker|gif)__:/, '')} alt={isGif(fwdBody) ? 'GIF' : 'Sticker'} style={{ maxWidth: 220, maxHeight: 220, borderRadius: 8, display: 'block' }} />
+                                                            : isGeo(fwdBody)
+                                                                ? (() => { const geo = getGeo(fwdBody); if (!geo) return null; const mapSrc = `https://static-maps.yandex.ru/1.x/?lang=ru_RU&ll=${geo.lon},${geo.lat}&z=15&l=map&size=560,220&pt=${geo.lon},${geo.lat},pm2rdl`; const mapsUrl = `https://www.openstreetmap.org/?mlat=${geo.lat}&mlon=${geo.lon}#map=15/${geo.lat}/${geo.lon}`; return <a href={mapsUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'block', textDecoration: 'none', margin: '-10px -14px -10px', minWidth: isMobile ? 220 : 260 }}><div style={{ position: 'relative', height: isMobile ? 130 : 160 }}><img src={mapSrc} alt="map" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} /><div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-60%)', width: 20, height: 20, borderRadius: '50%', background: '#ef4444', border: '3px solid white', boxShadow: '0 2px 8px rgba(0,0,0,0.5)' }} /></div><div style={{ padding: '9px 12px 10px', background: isOwn ? 'rgba(0,0,0,0.15)' : (dm ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)') }}><span style={{ fontSize: 13, fontWeight: 700, color: isOwn ? 'white' : (dm ? '#e2e8f0' : '#1e1b4b') }}>{geo.name}</span></div></a>; })()
+                                                            : isContact(fwdBody)
+                                                                ? (() => { const ct = getContact(fwdBody); if (!ct) return null; const avatarSrc = ct.avatar ? config.fileUrl(ct.avatar) : null; return <div onClick={() => { const u = users.find(u => u.id === ct.id); if (u) setSelectedUserForProfile(u); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 4px 6px', cursor: 'pointer', margin: '-4px 0' }}><div style={{ width: 42, height: 42, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: ct.avatar_color || '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{avatarSrc ? <img src={avatarSrc} alt={ct.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ color: 'white', fontWeight: 700, fontSize: 17 }}>{ct.username[0]?.toUpperCase()}</span>}</div><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 700, color: isOwn ? 'white' : (dm ? '#e2e8f0' : '#1e1b4b') }}>{ct.username}</div><div style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.6)' : (dm ? '#7c7caa' : '#6b7280'), marginTop: 1 }}>{lang === 'en' ? 'Contact' : 'Контакт'}</div></div></div>; })()
+                                                            : isSearchMatch
+                                                                ? highlightSearchText(fwdBody, chatSearchQuery, isActiveSearchMatch)
+                                                                : renderMarkdown(fwdBody, (uname => { const u = users.find(x => x.tag === uname || x.username === uname) || (groupMembersCache[activeChat!.id]?.find(x => (x as any).tag === uname || x.username === uname) as any); if (u) setSelectedUserForProfile(u as any); }), isOwn ? 'rgba(255,255,255,0.9)' : (isOled ? '#c4b5fd' : (dm ? '#a78bfa' : '#6366f1')), dm)
+                                                        ) : isSearchMatch ? highlightSearchText(displayText, chatSearchQuery, isActiveSearchMatch) : (
+                                                            renderMarkdown(displayText, (uname => { const u = users.find(x => x.tag === uname || x.username === uname) || (groupMembersCache[activeChat!.id]?.find(x => (x as any).tag === uname || x.username === uname) as any); if (u) setSelectedUserForProfile(u as any); }), isOwn ? 'rgba(255,255,255,0.9)' : (isOled ? '#c4b5fd' : (dm ? '#a78bfa' : '#6366f1')), dm)
                                                         )}
                                                         {previewUrl && <LinkPreviewCard key={previewUrl} url={previewUrl} token={token} isDark={dm} isOled={isOled} isOwn={isOwn} />}
                                                     </div>
                                                 );
                                             })()}
 
-                                            {!isSpecialMsg(msg.message_text) && (
+                                            {!isSpecialMsg(msg.message_text) && !isGeo(msg.message_text) && !isContact(msg.message_text) && (
                                             <div style={{ ...styles.timestamp, display: 'flex', alignItems: 'center', gap: 4, justifyContent: isOwn ? 'flex-end' : 'flex-start', ...(isMediaOnlyMsg(msg) ? { position: 'absolute' as const, bottom: 6, right: 10, backgroundColor: 'rgba(0,0,0,0.45)', color: 'rgba(255,255,255,0.92)', borderRadius: 8, padding: '2px 7px', opacity: 1 } : {}) }}>
                                                 {msg.edited_at && <span style={{ opacity: 0.6, marginRight: 4 }}>{t('edited')}</span>}
+                                                {(msg as any).disappear_after && (() => {
+                                                    const elapsed = (Date.now() - new Date((msg as any).timestamp).getTime()) / 1000;
+                                                    const remaining = Math.max(0, (msg as any).disappear_after - elapsed);
+                                                    const label = remaining > 3600 ? `${Math.floor(remaining/3600)}h` : remaining > 60 ? `${Math.floor(remaining/60)}m` : `${Math.floor(remaining)}s`;
+                                                    return <span title={lang === 'en' ? 'Disappears in' : 'Исчезнет через'} style={{ fontSize: 10, opacity: 0.7 }}>⏳ {label}</span>;
+                                                })()}
                                                 {formatTime(msg.timestamp)}
                                                 {isOwn && (() => {
                                                     const isGroup = activeChat?.type === 'group';
                                                     const rc = isGroup ? (groupReadCounts[msg.id] ?? (msg as any).read_count ?? 0) : 0;
                                                     const isRead = isGroup ? rc > 0 : !!(msg as any).is_read;
+                                                    const receipts = isGroup ? (groupReadReceipts[msg.id] || []) : [];
+                                                    const receiptsCount = receipts.length;
                                                     return (
                                                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
                                                             <span title={isRead ? (lang === 'en' ? 'Read' : 'Прочитано') : (lang === 'en' ? 'Delivered' : 'Доставлено')} style={{ display: 'inline-flex', alignItems: 'center' }}>
@@ -4207,6 +4963,25 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                             </span>
                                                             {isGroup && rc > 0 && (
                                                                 <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)', fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>{rc}</span>
+                                                            )}
+                                                            {isGroup && receiptsCount > 0 && (
+                                                                <span
+                                                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 2, cursor: 'pointer', position: 'relative' as const }}
+                                                                    onClick={e => { e.stopPropagation(); setReadersPopoverMsgId(readersPopoverMsgId === msg.id ? null : msg.id); }}
+                                                                >
+                                                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                                                                    </svg>
+                                                                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.7)' }}>{receiptsCount}</span>
+                                                                    {readersPopoverMsgId === msg.id && (
+                                                                        <div style={{ position: 'absolute' as const, bottom: '100%', right: 0, marginBottom: 4, background: dm ? '#2d2b5a' : 'white', border: `1px solid ${dm ? 'rgba(99,102,241,0.3)' : '#e0e0f0'}`, borderRadius: 10, padding: '6px 10px', minWidth: 120, maxWidth: 220, boxShadow: '0 4px 16px rgba(0,0,0,0.2)', zIndex: 50 }}>
+                                                                            <div style={{ fontSize: 11, fontWeight: 600, color: dm ? '#a5b4fc' : '#6366f1', marginBottom: 4 }}>{lang === 'en' ? 'Read by' : 'Прочитали'}</div>
+                                                                            {receipts.map(r => (
+                                                                                <div key={r.id} style={{ fontSize: 12, color: dm ? '#d1d5db' : '#374151', padding: '2px 0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</div>
+                                                                            ))}
+                                                                        </div>
+                                                                    )}
+                                                                </span>
                                                             )}
                                                         </span>
                                                     );
@@ -4284,7 +5059,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 14 }}>{sm.message_text}</div>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end', marginTop: 4 }}>
                                                         <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.7)' }}>
-                                                            {new Date(sm.scheduled_at).toLocaleString(lang === 'en' ? 'en-US' : 'ru-RU', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                            {sm.send_when_online
+                                                                ? (lang === 'en' ? '⚡ When online' : '⚡ Когда онлайн')
+                                                                : new Date(sm.scheduled_at).toLocaleString(lang === 'en' ? 'en-US' : 'ru-RU', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                                                         </span>
                                                         {/* Animated clock icon */}
                                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.8)" strokeWidth="2" strokeLinecap="round">
@@ -4535,8 +5312,17 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         })()}
 
                         {/* Edit indicator above input */}
+                        {/* Slow mode cooldown bar */}
+                        {activeChat?.type === 'group' && slowModeCooldowns[activeChat.id] > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 14px', background: isOled ? '#000' : dm ? C.bg2 : '#fff8ec', borderTop: `1px solid ${isOled ? 'rgba(251,191,36,0.15)' : dm ? 'rgba(251,191,36,0.2)' : '#fde68a'}`, borderLeft: '3px solid #f59e0b' }}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                <span style={{ fontSize: 12, color: dm ? '#fbbf24' : '#92400e', fontWeight: 600 }}>
+                                    {lang === 'en' ? `Slow mode: wait ${slowModeCooldowns[activeChat.id]}s` : `Медленный режим: подождите ${slowModeCooldowns[activeChat.id]}с`}
+                                </span>
+                            </div>
+                        )}
                         {editingMessageId && (
-                            <div className="bar-enter" style={{ padding: '8px 16px', backgroundColor: dm ? C.bg2 : '#f0efff', borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.2)' : '#d9d6fe'}`, borderLeft: `3px solid ${isOled ? '#a78bfa' : '#6366f1'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                            <div className="bar-enter" style={{ padding: '8px 14px', backgroundColor: isOled ? '#000000' : dm ? C.bg2 : '#f0efff', borderTop: `1px solid ${isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.15)' : '#e0d9ff'}`, borderLeft: `3px solid ${isOled ? '#a78bfa' : '#6366f1'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isOled ? '#a78bfa' : '#6366f1'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                                     <div style={{ minWidth: 0 }}>
@@ -4788,7 +5574,27 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 🗑 {lang === 'en' ? 'This account has been deleted' : 'Этот аккаунт был удалён'}
                             </div>
                         )}
-                        {!selectionMode && !isDeletedUser && (!isChannelChat || isGroupAdmin) && <div className="chat-input-area" style={{ ...darkStyles.inputArea, position: 'relative' }}>
+                        {!selectionMode && !isDeletedUser && isBlockedByMeInput && (
+                            <div style={{ padding: '12px 18px', borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}`, background: dm ? C.bg1 : '#f7f8fc', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13 }}>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+                                    {lang === 'en'
+                                        ? `You blocked ${usersById.get(activeChat!.id)?.username || 'this user'}`
+                                        : `Вы заблокировали ${usersById.get(activeChat!.id)?.username || 'пользователя'}`}
+                                </div>
+                                <button
+                                    onClick={() => handleUnblockUser(activeChat!.id)}
+                                    style={{ padding: '6px 14px', borderRadius: 20, border: '1.5px solid rgba(99,102,241,0.4)', background: 'none', color: dm ? '#a5b4fc' : '#6366f1', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                    {lang === 'en' ? 'Unblock' : 'Разблокировать'}
+                                </button>
+                            </div>
+                        )}
+                        {!selectionMode && !isDeletedUser && !isBlockedByMeInput && isBlockedByThemInput && (
+                            <div style={{ padding: '14px 18px', textAlign: 'center', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13, borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}`, background: dm ? C.bg1 : '#f7f8fc' }}>
+                                🚫 {lang === 'en' ? 'You can\'t send messages to this user' : 'Вы не можете отправлять сообщения этому пользователю'}
+                            </div>
+                        )}
+                        {!selectionMode && !isDeletedUser && !isBlockedByMeInput && !isBlockedByThemInput && (!isChannelChat || isGroupAdmin) && <div className="chat-input-area" style={{ ...darkStyles.inputArea, position: 'relative' }}>
                             {showEmojiPicker && (
                                 <MediaPicker
                                     onSelectEmoji={emoji => { if (inputRef.current) { inputRef.current.value += emoji; autoResize(inputRef.current); inputRef.current.focus(); } }}
@@ -4801,22 +5607,46 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             )}
                             {/* Schedule picker */}
                             {showSchedulePicker && (
-                                <div className="floating-enter" style={{ position: 'absolute', bottom: '100%', left: 0, right: 0, zIndex: 200, background: dm ? C.bg2 : 'white', border: `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 12, boxShadow: '0 -4px 24px rgba(0,0,0,0.18)', padding: '12px 16px', marginBottom: 4 }}>
-                                    <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#a5b4fc' : '#6366f1', marginBottom: 10 }}>
-                                        {lang === 'en' ? 'Schedule message' : 'Отложить сообщение'}
+                                <div className="floating-enter" style={{ position: 'absolute', bottom: '100%', left: 0, right: isMobile ? 0 : 'auto', maxWidth: isMobile ? '100%' : 340, zIndex: 200, background: isOled ? '#000000' : dm ? C.bg2 : 'white', border: `1px solid ${isOled ? 'rgba(167,139,250,0.22)' : dm ? C.bdr2 : '#ede9fe'}`, borderRadius: isMobile ? '16px 16px 0 0' : 16, boxShadow: isOled ? '0 -12px 60px rgba(124,58,237,0.25), 0 -4px 20px rgba(0,0,0,0.95), 0 0 0 1px rgba(167,139,250,0.12)' : dm ? '0 -8px 32px rgba(0,0,0,0.5)' : '0 -4px 24px rgba(99,102,241,0.12)', padding: '16px 16px 12px', marginBottom: isMobile ? 0 : 4 }}>
+                                    {/* Header */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                                        <div style={{ width: 30, height: 30, borderRadius: '50%', background: isOled ? 'rgba(167,139,250,0.12)' : dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isOled ? '#c4b5fd' : '#6366f1'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                                        </div>
+                                        <span style={{ fontSize: 14, fontWeight: 700, color: isOled ? '#c4b5fd' : dm ? '#a5b4fc' : '#6366f1' }}>
+                                            {lang === 'en' ? 'Schedule message' : 'Отложить сообщение'}
+                                        </span>
+                                        <button onClick={() => { setShowSchedulePicker(false); setScheduleDateTime(''); setSendWhenOnline(false); }} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', padding: 2, display: 'flex' }}>
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                        </button>
                                     </div>
-                                    <input
-                                        type="datetime-local"
-                                        value={scheduleDateTime}
-                                        min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
-                                        onChange={e => setScheduleDateTime(e.target.value)}
-                                        style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: `1px solid ${dm ? C.bdr2 : '#d1d5db'}`, background: dm ? C.bg1 : '#f9f9ff', color: dm ? '#e0e0f0' : '#1e1b4b', fontSize: 13, boxSizing: 'border-box' as const, marginBottom: 10 }}
-                                    />
-                                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                                        <button onClick={() => { setShowSchedulePicker(false); setScheduleDateTime(''); }} style={{ padding: '6px 14px', borderRadius: 8, border: `1px solid ${dm ? C.bdr2 : '#e0e0f0'}`, background: 'transparent', color: dm ? '#9ca3af' : '#6b7280', cursor: 'pointer', fontSize: 13 }}>
+                                    {/* Send when online toggle */}
+                                    {activeChat?.type === 'private' && (
+                                        <div onClick={() => setSendWhenOnline(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, cursor: 'pointer', userSelect: 'none' as const, padding: '8px 10px', borderRadius: 10, background: sendWhenOnline ? (isOled ? 'rgba(99,102,241,0.15)' : dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.07)') : 'transparent', border: `1px solid ${sendWhenOnline ? (isOled ? 'rgba(167,139,250,0.2)' : 'rgba(99,102,241,0.2)') : (dm ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)')}`, transition: 'background 0.2s' }}>
+                                            <div style={{ width: 36, height: 20, borderRadius: 10, background: sendWhenOnline ? '#6366f1' : (dm ? '#3a3a5a' : '#d1d5db'), position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}>
+                                                <div style={{ width: 16, height: 16, borderRadius: '50%', background: 'white', position: 'absolute', top: 2, left: sendWhenOnline ? 18 : 2, transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }} />
+                                            </div>
+                                            <div>
+                                                <div style={{ fontSize: 13, fontWeight: 600, color: sendWhenOnline ? (isOled ? '#c4b5fd' : dm ? '#a5b4fc' : '#6366f1') : (dm ? '#9090b0' : '#6b7280') }}>
+                                                    ⚡ {lang === 'en' ? 'Send when online' : 'Когда собеседник онлайн'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {!sendWhenOnline && (
+                                        <input
+                                            type="datetime-local"
+                                            value={scheduleDateTime}
+                                            min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                                            onChange={e => setScheduleDateTime(e.target.value)}
+                                            style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: `1.5px solid ${isOled ? 'rgba(167,139,250,0.2)' : dm ? C.bdr2 : '#e0d9ff'}`, background: isOled ? '#080812' : dm ? C.bg1 : '#f5f3ff', color: dm ? '#e0e0f0' : '#1e1b4b', fontSize: 14, boxSizing: 'border-box' as const, marginBottom: 12, outline: 'none', colorScheme: dm ? 'dark' : 'light' as any }}
+                                        />
+                                    )}
+                                    <div style={{ display: 'flex', gap: 8 }}>
+                                        <button onClick={() => { setShowSchedulePicker(false); setScheduleDateTime(''); setSendWhenOnline(false); }} style={{ flex: 1, padding: '10px', borderRadius: 10, border: `1.5px solid ${isOled ? 'rgba(167,139,250,0.15)' : dm ? C.bdr2 : '#e0e0f0'}`, background: 'transparent', color: dm ? '#9ca3af' : '#6b7280', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
                                             {lang === 'en' ? 'Cancel' : 'Отмена'}
                                         </button>
-                                        <button onClick={sendScheduled} disabled={!scheduleDateTime} style={{ padding: '6px 14px', borderRadius: 8, border: 'none', background: scheduleDateTime ? '#6366f1' : (dm ? '#2a2a4a' : '#e0e0f0'), color: scheduleDateTime ? 'white' : (dm ? '#5a5a8a' : '#9ca3af'), cursor: scheduleDateTime ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 600 }}>
+                                        <button onClick={sendScheduled} disabled={!sendWhenOnline && !scheduleDateTime} style={{ flex: 2, padding: '10px', borderRadius: 10, border: 'none', background: (sendWhenOnline || scheduleDateTime) ? 'linear-gradient(135deg,#6366f1,#8b5cf6)' : (isOled ? '#1a1a2e' : dm ? '#2a2a4a' : '#f0eeff'), color: (sendWhenOnline || scheduleDateTime) ? 'white' : (dm ? '#5a5a8a' : '#9ca3af'), cursor: (sendWhenOnline || scheduleDateTime) ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 700, boxShadow: (sendWhenOnline || scheduleDateTime) ? '0 4px 14px rgba(99,102,241,0.35)' : 'none', transition: 'all 0.15s' }}>
                                             {lang === 'en' ? 'Schedule' : 'Запланировать'}
                                         </button>
                                     </div>
@@ -4861,7 +5691,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 };
 
                                 return (
-                                    <div style={{ position: 'absolute', bottom: '100%', left: 0, right: 0, zIndex: 100, background: dm ? C.bg2 : 'white', border: `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 12, boxShadow: '0 -4px 24px rgba(0,0,0,0.18)', overflow: 'hidden', marginBottom: 4 }}>
+                                    <div className="floating-enter" style={{ position: 'absolute', bottom: '100%', left: 0, right: 0, zIndex: 100, background: isOled ? '#000000' : dm ? C.bg2 : 'white', border: `1px solid ${isOled ? 'rgba(167,139,250,0.18)' : dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 12, boxShadow: isOled ? '0 8px 40px rgba(0,0,0,0.95), 0 0 0 1px rgba(167,139,250,0.12)' : '0 -4px 24px rgba(0,0,0,0.18)', overflow: 'hidden', marginBottom: 4 }}>
                                         {specials.map((s, i) => (
                                             <div key={s.id}
                                                 onMouseDown={e => { e.preventDefault(); insertMention(s.handle); }}
@@ -4899,7 +5729,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             })()}
                             {/* Input pill */}
                             <div style={darkStyles.inputPill}>
-                                <button onClick={() => setShowEmojiPicker(p => !p)} style={{ ...darkStyles.pillBtn, color: showEmojiPicker ? (dm ? '#a5b4fc' : '#6366f1') : (dm ? (isOled ? '#a78bfa' : '#7c7caa') : '#9ca3af') }} title="Эмодзи"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
+                                <button onClick={() => setShowEmojiPicker(p => !p)} style={{ ...darkStyles.pillBtn, color: showEmojiPicker ? (dm ? '#a5b4fc' : '#6366f1') : (dm ? (isOled ? '#a78bfa' : '#7c7caa') : '#9ca3af') }} title={lang === 'en' ? 'Emoji' : 'Эмодзи'}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
                                 <textarea
                                     ref={inputRef}
                                     rows={1}
@@ -4981,54 +5811,101 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             const menuW = 180;
                                             const x = Math.max(8, Math.min(r.left, window.innerWidth - menuW - 8));
                                             // bottom = расстояние от низа viewport до верха кнопки + зазор
-                                            const bottom = window.innerHeight - r.top + 8;
+                                            const vvHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+                                            const bottom = vvHeight - r.top + 8;
                                             setAttachMenuPos({ x, bottom });
                                         }
                                         setShowAttachMenu(p => !p);
                                     }} style={{ ...darkStyles.pillBtn, color: showAttachMenu ? (dm ? '#a5b4fc' : '#6366f1') : (dm ? (isOled ? '#a78bfa' : '#7c7caa') : '#9ca3af') }}>
                                         {uploading ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>}
                                     </button>
-                                {showAttachMenu && (
-                                    <>
-                                    <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => setShowAttachMenu(false)} />
-                                    <div className="floating-enter" style={{ position: 'fixed', bottom: attachMenuPos.bottom, left: attachMenuPos.x, zIndex: 300, background: isOled ? '#0a0a14' : (dm ? '#1a1a2e' : 'white'), border: `1px solid ${isOled ? 'rgba(167,139,250,0.2)' : (dm ? 'rgba(99,102,241,0.25)' : '#e5e7eb')}`, borderRadius: 14, boxShadow: isOled ? '0 8px 40px rgba(0,0,0,0.95), 0 0 0 1px rgba(167,139,250,0.12)' : dm ? '0 8px 32px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.2)' : '0 8px 28px rgba(99,102,241,0.15), 0 2px 8px rgba(0,0,0,0.08)', overflow: 'hidden', minWidth: 170, padding: '4px 0' }}>
-                                        <button onClick={() => { setShowAttachMenu(false); fileInputRef.current?.click(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '11px 16px', background: 'none', border: 'none', cursor: 'pointer', color: isOled ? '#c4b5fd' : (dm ? '#e2e8f0' : '#1e1b4b'), fontSize: 14, textAlign: 'left', WebkitTapHighlightColor: 'transparent' }}>
-                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg> {lang === 'en' ? 'File' : 'Файл'}
-                                        </button>
-                                        {activeChat?.type === 'group' && (
-                                        <button onClick={() => { setShowAttachMenu(false); setShowPollCreator(true); }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '11px 16px', background: 'none', border: 'none', cursor: 'pointer', color: isOled ? '#c4b5fd' : (dm ? '#e2e8f0' : '#1e1b4b'), fontSize: 14, textAlign: 'left', WebkitTapHighlightColor: 'transparent' }}>
-                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> {lang === 'en' ? 'Poll' : 'Опрос'}
-                                        </button>
-                                        )}
-                                        {serverInfo?.storage === 'cloudinary' && (
-                                            <div style={{ padding: '6px 16px 10px', fontSize: 11, color: isOled ? 'rgba(167,139,250,0.5)' : (dm ? '#6060a0' : '#9ca3af'), borderTop: `1px solid ${isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.12)' : '#f0eeff')}` }}>
-                                                ☁️ {lang === 'en'
-                                                    ? `Image ≤${serverInfo.max_image_mb} MB · Video ≤${serverInfo.max_video_mb} MB`
-                                                    : `Фото ≤${serverInfo.max_image_mb} МБ · Видео ≤${serverInfo.max_video_mb} МБ`}
+                                {showAttachMenu && (() => {
+                                    const attachItems = [
+                                        { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>, label: lang === 'en' ? 'File' : 'Файл', color: '#6366f1', action: () => { setShowAttachMenu(false); setTimeout(() => fileInputRef.current?.click(), 80); } },
+                                        ...(activeChat?.type === 'group' ? [{ icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>, label: lang === 'en' ? 'Poll' : 'Опрос', color: '#8b5cf6', action: () => { setShowAttachMenu(false); setShowPollCreator(true); } }] : []),
+                                        { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>, label: lang === 'en' ? 'Location' : 'Геопозиция', color: '#10b981', action: () => { setShowAttachMenu(false); setShowLocationPicker(true); } },
+                                        { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>, label: lang === 'en' ? 'Contact' : 'Контакт', color: '#f97316', action: () => { setShowAttachMenu(false); setShowContactPicker(true); } },
+                                    ];
+                                    if (isMobile) {
+                                        // Bottom sheet on mobile — avoids ghost-click and keyboard-shift issues
+                                        return (
+                                            <div style={{ position: 'fixed', inset: 0, zIndex: 400, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }} onClick={() => setShowAttachMenu(false)}>
+                                                <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)' }} />
+                                                <div className="modal-enter mobile-bottom-sheet" style={{ position: 'relative', background: isOled ? '#0a0a14' : (dm ? '#1a1a2e' : 'white'), borderRadius: '20px 20px 0 0', padding: '8px 0 env(safe-area-inset-bottom,12px)', zIndex: 1 }} onClick={e => e.stopPropagation()}>
+                                                    <div style={{ width: 36, height: 4, borderRadius: 2, background: dm ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)', margin: '6px auto 12px' }} />
+                                                    {attachItems.map((item, i) => (
+                                                        <button key={i} onPointerUp={() => item.action()} style={{ display: 'flex', alignItems: 'center', gap: 14, width: '100%', padding: '14px 22px', background: 'none', border: 'none', cursor: 'pointer', color: isOled ? '#c4b5fd' : (dm ? '#e2e8f0' : '#1e1b4b'), fontSize: 16, textAlign: 'left', WebkitTapHighlightColor: 'transparent' }}>
+                                                            <div style={{ width: 42, height: 42, borderRadius: '50%', background: `${item.color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: item.color, flexShrink: 0 }}>
+                                                                {item.icon}
+                                                            </div>
+                                                            <span style={{ fontWeight: 500 }}>{item.label}</span>
+                                                        </button>
+                                                    ))}
+                                                    {serverInfo?.storage === 'cloudinary' && (
+                                                        <div style={{ padding: '6px 22px 10px', fontSize: 12, color: dm ? '#6060a0' : '#9ca3af' }}>
+                                                            ☁️ {lang === 'en' ? `Image ≤${serverInfo.max_image_mb} MB · Video ≤${serverInfo.max_video_mb} MB` : `Фото ≤${serverInfo.max_image_mb} МБ · Видео ≤${serverInfo.max_video_mb} МБ`}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
-                                        )}
-                                    </div>
-                                    </>
-                                )}
+                                        );
+                                    }
+                                    // Desktop: floating popup above the button
+                                    return (
+                                        <>
+                                        <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => setShowAttachMenu(false)} />
+                                        <div className="floating-enter" style={{ position: 'fixed', bottom: attachMenuPos.bottom, left: attachMenuPos.x, zIndex: 300, background: isOled ? '#0a0a14' : (dm ? '#1a1a2e' : 'white'), border: `1px solid ${isOled ? 'rgba(167,139,250,0.2)' : (dm ? 'rgba(99,102,241,0.25)' : '#e5e7eb')}`, borderRadius: 14, boxShadow: isOled ? '0 8px 40px rgba(0,0,0,0.95), 0 0 0 1px rgba(167,139,250,0.12)' : dm ? '0 8px 32px rgba(0,0,0,0.45)' : '0 8px 28px rgba(99,102,241,0.15)', overflow: 'hidden', minWidth: 180, padding: '4px 0' }}>
+                                            {attachItems.map((item, i) => (
+                                                <button key={i} onClick={() => item.action()} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '11px 16px', background: 'none', border: 'none', cursor: 'pointer', color: isOled ? '#c4b5fd' : (dm ? '#e2e8f0' : '#1e1b4b'), fontSize: 14, textAlign: 'left', WebkitTapHighlightColor: 'transparent' }}
+                                                    onMouseEnter={e => { e.currentTarget.style.background = isOled ? 'rgba(167,139,250,0.07)' : dm ? 'rgba(99,102,241,0.08)' : '#f5f3ff'; }}
+                                                    onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}>
+                                                    <span style={{ color: item.color, display: 'inline-flex' }}>{item.icon}</span>
+                                                    {item.label}
+                                                </button>
+                                            ))}
+                                            {serverInfo?.storage === 'cloudinary' && (
+                                                <div style={{ padding: '6px 16px 10px', fontSize: 11, color: isOled ? 'rgba(167,139,250,0.5)' : (dm ? '#6060a0' : '#9ca3af'), borderTop: `1px solid ${isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.12)' : '#f0eeff')}` }}>
+                                                    ☁️ {lang === 'en' ? `Image ≤${serverInfo.max_image_mb} MB · Video ≤${serverInfo.max_video_mb} MB` : `Фото ≤${serverInfo.max_image_mb} МБ · Видео ≤${serverInfo.max_video_mb} МБ`}
+                                                </div>
+                                            )}
+                                        </div>
+                                        </>
+                                    );
+                                })()}
                             </div>
-                            <button
-                                onClick={isRecording ? stopRecording : startRecording}
-                                style={{ ...darkStyles.pillBtn, ...(isRecording ? { color: '#ef4444' } : {}) }}
-                                title={isRecording ? 'Остановить запись' : 'Записать голосовое'}
-                            >
-                                {isRecording ? (
-                                    <span style={{ fontWeight: 600, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg> {recordingTime}s</span>
-                                ) : (
+                            {isRecording ? (
+                                <>
+                                    {/* Cancel */}
+                                    <button onClick={cancelRecording} style={{ ...darkStyles.pillBtn, color: dm ? '#5a5a8a' : '#9ca3af' }} title={lang === 'en' ? 'Cancel' : 'Отмена'}>
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                    </button>
+                                    {/* Timer */}
+                                    <span style={{ fontWeight: 600, color: isPaused ? (dm ? '#7c7caa' : '#9ca3af') : '#ef4444', fontSize: 13, display: 'flex', alignItems: 'center', gap: 4, minWidth: 36 }}>
+                                        {!isPaused && <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#ef4444', animation: 'pulse 1s infinite', display: 'inline-block' }} />}
+                                        {recordingTime}s
+                                    </span>
+                                    {/* Pause/Resume */}
+                                    <button onClick={pauseRecording} style={{ ...darkStyles.pillBtn, color: isPaused ? '#6366f1' : '#ef4444' }} title={isPaused ? (lang === 'en' ? 'Resume' : 'Продолжить') : (lang === 'en' ? 'Pause' : 'Пауза')}>
+                                        {isPaused
+                                            ? <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                                            : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                                        }
+                                    </button>
+                                    {/* Send */}
+                                    <button onClick={stopRecording} style={{ ...darkStyles.pillBtn, color: '#ef4444' }} title={lang === 'en' ? 'Send voice' : 'Отправить'}>
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                                    </button>
+                                </>
+                            ) : (
+                                <button onClick={startRecording} style={darkStyles.pillBtn} title={lang === 'en' ? 'Record voice' : 'Записать голосовое'}>
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-                                )}
-                            </button>
-                            {!isMobile && (
-                                <button onClick={() => setShowSchedulePicker(p => !p)} title={lang === 'en' ? 'Schedule' : 'Запланировать'}
-                                    style={{ ...darkStyles.pillBtn, position: 'relative', color: showSchedulePicker ? (isOled ? '#c4b5fd' : '#6366f1') : scheduledMessages.length > 0 ? (isOled ? '#a78bfa' : '#6366f1') : (dm ? (isOled ? '#8b7dc8' : '#6b6b9a') : '#7c7caa') }}>
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                                    {scheduledMessages.length > 0 && <span style={{ position: 'absolute', top: 1, right: 1, minWidth: 14, height: 14, borderRadius: 7, background: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', boxShadow: '0 0 4px rgba(99,102,241,0.5)' }}>{scheduledMessages.length}</span>}
                                 </button>
                             )}
+                            <button onClick={() => setShowSchedulePicker(p => !p)} title={lang === 'en' ? 'Schedule' : 'Запланировать'}
+                                style={{ ...darkStyles.pillBtn, position: 'relative', color: showSchedulePicker ? (isOled ? '#c4b5fd' : '#6366f1') : scheduledMessages.length > 0 ? (isOled ? '#a78bfa' : '#6366f1') : (dm ? (isOled ? '#8b7dc8' : '#6b6b9a') : '#7c7caa') }}>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                {scheduledMessages.length > 0 && <span style={{ position: 'absolute', top: 1, right: 1, minWidth: 14, height: 14, borderRadius: 7, background: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', boxShadow: '0 0 4px rgba(99,102,241,0.5)' }}>{scheduledMessages.length}</span>}
+                            </button>
                             </div>{/* end inputPill */}
                             <button onClick={sendMessage} className={isMobile ? 'chat-send-btn-mobile' : ''} style={isMobile ? undefined : darkStyles.sendBtn2}>
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -5088,26 +5965,28 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             const d = data as any;
                                             const name = d.username || d.name || '';
                                             const avatarSrc = d.avatar ? config.fileUrl(d.avatar) : null;
-                                            const avatarBg = d.avatar_color || '#6366f1';
-                                            const lastText = getMsgPreview({
-                                                message_text: d.last_msg_text,
-                                                file_path: d.last_msg_file,
-                                                filename: d.last_msg_filename,
-                                                files: null,
-                                            });
+                                            const avatarBgColor = d.avatar_color || '#6366f1';
                                             const unread = unreadCounts[`${kind === 'user' ? 'private' : 'group'}-${d.id}`] || 0;
+                                            const isOwnMsg = d.last_msg_sender_id === currentUserId;
+                                            const prefix = kind === 'group' && !d.is_channel && d.last_msg_time
+                                                ? (isOwnMsg ? (lang === 'en' ? 'You: ' : 'Вы: ') : (d.last_msg_sender_name ? `${d.last_msg_sender_name}: ` : undefined))
+                                                : undefined;
                                             return (
                                                 <div key={`${kind}-${d.id}`} onClick={() => kind === 'user' ? selectPrivateChat(d) : selectGroupChat(d)}
                                                     style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 14, background: cardBg, border: `1px solid ${cardBorder}`, cursor: 'pointer', transition: 'all 0.15s' }}
                                                     onMouseEnter={e => { e.currentTarget.style.borderColor = isOled ? 'rgba(167,139,250,0.3)' : '#6366f1'; e.currentTarget.style.background = isOled ? '#0a0614' : dm ? '#16113a' : '#f8f5ff'; }}
                                                     onMouseLeave={e => { e.currentTarget.style.borderColor = cardBorder; e.currentTarget.style.background = cardBg; }}
                                                 >
-                                                    <div style={{ width: 42, height: 42, borderRadius: '50%', background: avatarSrc ? 'transparent' : avatarBg, flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 17 }}>
+                                                    <div style={{ width: 42, height: 42, borderRadius: '50%', background: avatarSrc ? 'transparent' : avatarBgColor, flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 17 }}>
                                                         {avatarSrc ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : name[0]?.toUpperCase()}
                                                     </div>
                                                     <div style={{ flex: 1, minWidth: 0 }}>
                                                         <div style={{ fontSize: 14, fontWeight: 600, color: dm ? '#e2e8f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
-                                                        {lastText && <div style={{ fontSize: 12, color: dm ? '#5a5a8a' : '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{lastText}</div>}
+                                                        {(d.last_msg_text || d.last_msg_file) && (
+                                                            <div style={{ fontSize: 12, marginTop: 1, display: 'flex', alignItems: 'center', overflow: 'hidden', minWidth: 0 }}>
+                                                                {renderSidebarSub(undefined, d.last_msg_text, d.last_msg_file, d.last_msg_filename, '', prefix, kind === 'user' ? d.id : undefined)}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                     {unread > 0 && <div style={{ minWidth: 20, height: 20, borderRadius: 10, background: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', flexShrink: 0 }}>{unread > 99 ? '99+' : unread}</div>}
                                                     {d.last_msg_time && <span style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af', flexShrink: 0, marginLeft: unread ? 0 : 4 }}>{formatSidebarTime(d.last_msg_time)}</span>}
@@ -5135,8 +6014,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         borderRadius: '20px 20px 0 0', overflow: 'hidden',
                     } : {
                         position: 'fixed',
-                        top: menuClampedPos.y || menuPosition.y,
-                        left: menuClampedPos.x || menuPosition.x,
+                        top: menuClampedPos.y ?? menuPosition.y,
+                        left: menuClampedPos.x ?? menuPosition.x,
                         zIndex: 9999,
                     }}
                     onClick={(e) => e.stopPropagation()}
@@ -5150,12 +6029,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 setMenuMessageId(null);
                                 setShowFullReactionPicker(false);
                             };
-                            const menuBorderCol = dm ? '#3a3a4a' : '#ede9fe';
+                            const menuGlow = isOled ? '0 0 30px rgba(124,58,237,0.3), 0 16px 40px rgba(0,0,0,0.95)' : dm ? '0 0 24px rgba(99,102,241,0.2), 0 12px 36px rgba(0,0,0,0.5)' : '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)';
+                            const menuBg = isOled ? '#080810' : dm ? C.bg3 : 'white';
                             if (showFullReactionPicker) {
                                 return (
-                                    <div style={{ backgroundColor: dm ? C.bg3 : 'white', border: `1px solid ${menuBorderCol}`, overflow: 'hidden', borderRadius: isMobile ? '20px 20px 0 0' : 14, width: isMobile ? undefined : 320 }}>
+                                    <div style={{ backgroundColor: menuBg, boxShadow: menuGlow, overflow: 'hidden', borderRadius: isMobile ? '20px 20px 0 0' : 14, width: isMobile ? undefined : 320 }}>
                                         {/* Back header */}
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderBottom: `1px solid ${dm ? C.bg6 : '#f0eeff'}` }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px' }}>
                                             <button onClick={() => setShowFullReactionPicker(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: '2px 6px', borderRadius: 8, display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
                                             <span style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e2e8f0' : '#1e1b4b' }}>{lang === 'en' ? 'React' : 'Реакция'}</span>
                                         </div>
@@ -5164,9 +6044,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 );
                             }
                             return (
-                    <div style={{ ...styles.menu, backgroundColor: dm ? C.bg3 : 'white', border: `1px solid ${menuBorderCol}`, padding: 0, overflow: 'hidden', maxHeight: isMobile ? '75vh' : '80vh', overflowY: 'auto', borderRadius: isMobile ? '20px 20px 0 0' : 14 }}>
+                    <div style={{ ...styles.menu, backgroundColor: menuBg, boxShadow: menuGlow, padding: 0, overflow: 'hidden', maxHeight: isMobile ? '75vh' : '80vh', overflowY: 'auto', borderRadius: isMobile ? '20px 20px 0 0' : 14 }}>
                         {/* Quick reactions row */}
-                        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 8px 6px', borderBottom: `1px solid ${dm ? C.bg6 : '#f0eeff'}`, gap: 2 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 8px 6px', gap: 2 }}>
                             {quickReactions.slice(0, 7).map((emoji: string) => {
                                 const hasMyReaction = msgReactions.some(r => r.user_id === currentUserId && r.emoji === emoji);
                                 return (
@@ -5180,14 +6060,14 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             })}
                             <button onClick={() => setShowFullReactionPicker(true)}
                                 style={{ background: 'none', border: '1.5px solid transparent', borderRadius: 10, cursor: 'pointer', fontSize: 18, padding: '3px 6px', lineHeight: 1, color: dm ? '#a5b4fc' : '#6366f1', marginLeft: 'auto', transition: 'all 0.12s' }}
-                                title="Все эмодзи">
+                                title={lang === 'en' ? 'All emoji' : 'Все эмодзи'}>
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
                             </button>
                         </div>
                         <div style={{ padding: '4px 0' }}>
                         {activeChat && (() => {
                             const chatKey = `${activeChat.type}-${activeChat.id}`;
-                            const isPinned = pinnedMessages[chatKey]?.id === menuMessage.id;
+                            const isPinned = (pinnedMessages[chatKey] || []).some(p => p.id === menuMessage.id);
                             return (
                                 <button onClick={() => togglePinMessage(chatKey, menuMessage)} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
@@ -5199,6 +6079,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
                             {t('Select message')}
                         </button>
+                        {menuMessage.sender_id !== currentUserId && (
+                            <button onClick={() => { setReportTarget({ type: 'message', id: menuMessage.id, name: lang === 'en' ? 'this message' : 'это сообщение' }); setReportReason(''); setReportComment(''); setReportSent(false); setMenuMessageId(null); }} style={{ ...styles.menuItem, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+                                {lang === 'en' ? 'Report' : 'Пожаловаться'}
+                            </button>
+                        )}
                         <button onClick={() => { setReplyTo(menuMessage); setMenuMessageId(null); }} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
                             {t('Reply')}
@@ -5304,10 +6190,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         )}
                         {menuMessage.sender_id === currentUserId && (
                             <>
-                                <button onClick={() => handleEdit(menuMessage.id, menuMessage.message_text ?? '')} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                                    {t('Edit message')}
-                                </button>
+                                {!isPoll(menuMessage.message_text) && !isGeo(menuMessage.message_text) && !isContact(menuMessage.message_text) && (
+                                    <button onClick={() => handleEdit(menuMessage.id, menuMessage.message_text ?? '')} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                        {t('Edit message')}
+                                    </button>
+                                )}
                                 <button onClick={() => handleDelete(menuMessage.id)} style={{ ...styles.menuItem, color: '#f44336', display: 'flex', alignItems: 'center', gap: 10 }}>
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
                                     {t('Delete message')}
@@ -5356,6 +6244,75 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     onCreate={handleCreatePoll}
                 />
             )}
+            {showLocationPicker && (
+                <Suspense fallback={null}>
+                    <LocationPicker
+                        isDark={theme.darkMode}
+                        onSend={sendGeoMessage}
+                        onClose={() => setShowLocationPicker(false)}
+                    />
+                </Suspense>
+            )}
+            {showContactPicker && (
+                <Suspense fallback={null}>
+                    <ContactPicker
+                        users={users}
+                        currentUserId={currentUserId}
+                        isDark={theme.darkMode}
+                        onSend={sendContactMessage}
+                        onClose={() => setShowContactPicker(false)}
+                    />
+                </Suspense>
+            )}
+            {/* Global message search */}
+            {globalMsgSearch && (
+                <div className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 4500, background: isOled ? 'rgba(0,0,0,0.88)' : dm ? 'rgba(15,10,40,0.8)' : 'rgba(15,10,40,0.45)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: isMobile ? 'flex-start' : 'flex-start', justifyContent: 'center', paddingTop: isMobile ? 0 : 80 }}
+                    onClick={() => { setGlobalMsgSearch(false); setGlobalMsgQuery(''); setGlobalMsgResults([]); }}>
+                    <div className="modal-enter" style={{ background: isOled ? '#000' : dm ? '#13131f' : 'white', borderRadius: isMobile ? 0 : 20, width: isMobile ? '100%' : 560, maxWidth: '96vw', maxHeight: isMobile ? '100svh' : '72vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.18), 0 24px 80px rgba(0,0,0,0.95)' : dm ? '0 24px 80px rgba(0,0,0,0.6)' : '0 24px 80px rgba(99,102,241,0.15)' }}
+                        onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}` }}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={isOled ? '#c4b5fd' : '#6366f1'} strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            <input autoFocus value={globalMsgQuery} onChange={e => setGlobalMsgQuery(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Escape') { setGlobalMsgSearch(false); setGlobalMsgQuery(''); setGlobalMsgResults([]); } }}
+                                placeholder={lang === 'en' ? 'Search in all chats...' : 'Поиск по всем чатам...'}
+                                style={{ flex: 1, background: 'none', border: 'none', outline: 'none', fontSize: 16, color: dm ? '#e2e8f0' : '#1e1b4b', fontFamily: 'inherit' }} />
+                            {globalMsgLoading && <div style={{ width: 16, height: 16, border: `2px solid ${isOled ? 'rgba(167,139,250,0.3)' : 'rgba(99,102,241,0.3)'}`, borderTopColor: isOled ? '#a78bfa' : '#6366f1', borderRadius: '50%', animation: 'spin 0.7s linear infinite', flexShrink: 0 }} />}
+                            {globalMsgQuery && !globalMsgLoading && <button onClick={() => { setGlobalMsgQuery(''); setGlobalMsgResults([]); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', padding: 2, display: 'flex' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+                            <button onClick={() => { setGlobalMsgSearch(false); setGlobalMsgQuery(''); setGlobalMsgResults([]); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', padding: 2, display: 'flex' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                        </div>
+                        <div style={{ flex: 1, overflowY: 'auto' }}>
+                            {globalMsgResults.length === 0 && globalMsgQuery.trim().length >= 2 && !globalMsgLoading && (
+                                <div style={{ padding: 40, textAlign: 'center', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13 }}>{lang === 'en' ? 'No messages found' : 'Ничего не найдено'}</div>
+                            )}
+                            {globalMsgQuery.trim().length < 2 && !globalMsgLoading && (
+                                <div style={{ padding: 40, textAlign: 'center', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13 }}>{lang === 'en' ? 'Enter at least 2 characters' : 'Введите минимум 2 символа'}</div>
+                            )}
+                            {globalMsgResults.map((r, i) => (
+                                <div key={i} onClick={() => {
+                                    const chat = r.chat_type === 'group' ? groups.find(g => g.id === r.chat_id) : users.find(u => u.id === r.chat_id);
+                                    if (chat) {
+                                        if (r.chat_type === 'group') selectGroupChat(chat as any);
+                                        else selectPrivateChat(chat as any);
+                                        setTimeout(() => goToMessage(r.message_id), 300);
+                                    }
+                                    setGlobalMsgSearch(false); setGlobalMsgQuery(''); setGlobalMsgResults([]);
+                                }}
+                                    style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '11px 18px', cursor: 'pointer', borderBottom: `1px solid ${isOled ? 'rgba(255,255,255,0.03)' : dm ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'}` }}
+                                    onMouseEnter={e => (e.currentTarget.style.background = isOled ? 'rgba(167,139,250,0.06)' : dm ? 'rgba(99,102,241,0.06)' : 'rgba(99,102,241,0.04)')}
+                                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                                >
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 11, fontWeight: 700, color: isOled ? '#c4b5fd' : '#6366f1', marginBottom: 3 }}>{r.chat_name}</div>
+                                        <div style={{ fontSize: 13, color: dm ? '#e2e8f0' : '#1e1b4b', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any, lineHeight: 1.5 }}>{r.message_text}</div>
+                                        <div style={{ fontSize: 10, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 3 }}>{r.sender_name} · {new Date(r.timestamp).toLocaleString(lang === 'en' ? 'en-US' : 'ru-RU', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {showInviteModal && selectedGroupId && activeChat?.type === 'group' && (
                 <InviteToGroupModal
                     token={token}
@@ -5388,6 +6345,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         setShowGroupInfo(false);
                     }}
                     onGoToMessage={id => { setShowGroupInfo(false); setTimeout(() => goToMessage(id), 50); }}
+                    onReport={(type, id, name) => { setShowGroupInfo(false); setReportTarget({ type, id, name }); setReportReason(''); setReportComment(''); setReportSent(false); }}
                 />
                 </Suspense>
             )}
@@ -5430,6 +6388,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     onOpenArchive={() => setShowArchive(true)}
                     onOpenSupport={() => setShowSupportChat(true)}
                     onOpenAdmin={() => setShowAdminPanel(true)}
+                    onShowOnboarding={onShowOnboarding ? () => { setShowSettings(false); setTimeout(() => onShowOnboarding(), 200); } : undefined}
+                    accounts={accounts}
+                    currentUserId={currentUserId}
+                    onSwitchAccount={onSwitchAccount}
                     onClose={() => setShowSettings(false)}
                 />
                 </Suspense>
@@ -5476,6 +6438,64 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 />
                 </Suspense>
             )}
+            {/* Report modal */}
+            {reportTarget && (
+                <div className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 5000, backgroundColor: isOled ? 'rgba(0,0,0,0.88)' : (dm ? 'rgba(15,10,40,0.8)' : 'rgba(15,10,40,0.45)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setReportTarget(null)}>
+                    <div className="modal-enter" style={{ background: isOled ? '#000' : (dm ? '#13132a' : '#fff'), borderRadius: 20, width: 360, maxWidth: '92vw', padding: '24px 24px 20px', boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)', border: dm ? '1px solid rgba(99,102,241,0.2)' : '1px solid #ede9fe' }} onClick={e => e.stopPropagation()}>
+                        {reportSent ? (
+                            <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                                <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+                                <div style={{ fontSize: 16, fontWeight: 700, color: dm ? '#e2e8f0' : '#1e1b4b', marginBottom: 8 }}>{lang === 'en' ? 'Report sent' : 'Жалоба отправлена'}</div>
+                                <div style={{ fontSize: 13, color: dm ? '#7c7caa' : '#6b7280', marginBottom: 20 }}>{lang === 'en' ? 'Our moderators will review it.' : 'Наши модераторы рассмотрят её.'}</div>
+                                <button onClick={() => setReportTarget(null)} style={{ padding: '10px 24px', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>OK</button>
+                            </div>
+                        ) : (
+                            <>
+                                <div style={{ fontSize: 16, fontWeight: 700, color: dm ? '#e2e8f0' : '#1e1b4b', marginBottom: 4 }}>{lang === 'en' ? 'Report' : 'Пожаловаться'}</div>
+                                <div style={{ fontSize: 13, color: dm ? '#7c7caa' : '#6b7280', marginBottom: 16 }}>{lang === 'en' ? `Select the reason for reporting ${reportTarget.name}` : `Выберите причину жалобы`}</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+                                    {[
+                                        { id: 'spam', ru: 'Спам', en: 'Spam' },
+                                        { id: 'violence', ru: 'Насилие или угрозы', en: 'Violence or threats' },
+                                        { id: 'scam', ru: 'Мошенничество', en: 'Scam or fraud' },
+                                        { id: 'nsfw', ru: 'Неприемлемый контент', en: 'Inappropriate content' },
+                                        { id: 'harassment', ru: 'Оскорбления / харассмент', en: 'Harassment' },
+                                        { id: 'other', ru: 'Другое', en: 'Other' },
+                                    ].map(r => (
+                                        <button key={r.id} onClick={() => setReportReason(r.id)}
+                                            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, border: reportReason === r.id ? '2px solid #6366f1' : `1.5px solid ${dm ? 'rgba(99,102,241,0.2)' : '#ede9fe'}`, background: reportReason === r.id ? (dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.06)') : 'transparent', cursor: 'pointer', color: reportReason === r.id ? '#6366f1' : (dm ? '#e2e8f0' : '#374151'), fontSize: 14, textAlign: 'left' as const, transition: 'all 0.15s' }}>
+                                            <div style={{ width: 16, height: 16, borderRadius: '50%', border: `2px solid ${reportReason === r.id ? '#6366f1' : (dm ? '#4a4a6a' : '#d1d5db')}`, background: reportReason === r.id ? '#6366f1' : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                {reportReason === r.id && <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'white' }} />}
+                                            </div>
+                                            {lang === 'en' ? r.en : r.ru}
+                                        </button>
+                                    ))}
+                                </div>
+                                {reportReason === 'other' && (
+                                    <textarea value={reportComment} onChange={e => setReportComment(e.target.value)} placeholder={lang === 'en' ? 'Describe the problem...' : 'Опишите проблему...'} maxLength={500} rows={3}
+                                        style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: `1.5px solid ${dm ? 'rgba(99,102,241,0.2)' : '#ede9fe'}`, background: dm ? 'rgba(255,255,255,0.04)' : '#f5f3ff', color: dm ? '#e2e8f0' : '#1e1b4b', fontSize: 13, resize: 'none' as const, outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' as const, marginBottom: 10 }} />
+                                )}
+                                <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                                    <button onClick={() => setReportTarget(null)} style={{ flex: 1, padding: '11px', borderRadius: 12, border: `1.5px solid ${dm ? 'rgba(99,102,241,0.2)' : '#ede9fe'}`, background: 'transparent', color: dm ? '#9090b0' : '#6b7280', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
+                                        {t('Cancel')}
+                                    </button>
+                                    <button disabled={!reportReason || reportLoading} onClick={async () => {
+                                        if (!reportReason || reportLoading) return;
+                                        setReportLoading(true);
+                                        try {
+                                            await fetch(`${config.API_URL}/reports?token=${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_type: reportTarget.type, target_id: reportTarget.id, reason: reportReason, comment: reportComment }) });
+                                            setReportSent(true);
+                                        } catch {} finally { setReportLoading(false); }
+                                    }} style={{ flex: 1, padding: '11px', borderRadius: 12, border: 'none', background: reportReason ? 'linear-gradient(135deg,#ef4444,#dc2626)' : (dm ? 'rgba(255,255,255,0.08)' : '#f3f4f6'), color: reportReason ? 'white' : (dm ? '#5a5a8a' : '#9ca3af'), fontSize: 14, fontWeight: 700, cursor: reportReason ? 'pointer' : 'default', transition: 'all 0.15s' }}>
+                                        {reportLoading ? '...' : (lang === 'en' ? 'Send report' : 'Отправить')}
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* Bulk delete confirmation modal */}
             {bulkDeleteConfirm && (
                 <div className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 5000, backgroundColor: dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setBulkDeleteConfirm(false)}>
@@ -5506,7 +6526,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             <div onClick={() => {
                                 forwardingMessages!.forEach(msg => {
                                     const senderName = (msg as any).sender_name || users.find((u: any) => u.id === msg.sender_id)?.username || (lang === 'en' ? 'Unknown' : 'Неизвестно');
-                                    wsService.sendMessage(currentUserId, `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${senderName}\n${(msg as any).message_text || ''}`);
+                                    const fwdPrefix = `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${senderName}\n`;
+                                    const fwdText = (msg as any).message_text ? fwdPrefix + (msg as any).message_text : fwdPrefix + ((msg as any).filename ? `📎 ${(msg as any).filename}` : '');
+                                    const filesRaw = (msg as any).files;
+                                    const filesArr = filesRaw ? (typeof filesRaw === 'string' ? (() => { try { return JSON.parse(filesRaw); } catch { return []; } })() : filesRaw) : null;
+                                    if (filesArr?.length) wsService.sendMessage(currentUserId, fwdText, undefined, undefined, undefined, undefined, undefined, undefined, filesArr);
+                                    else wsService.sendMessage(currentUserId, fwdText, (msg as any).file_path, (msg as any).filename, (msg as any).file_size);
                                 });
                                 setForwardingMessages(null);
                             }} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px', cursor: 'pointer', borderBottom: `1px solid ${dm ? C.bg3 : '#f3f3f8'}` }}>
@@ -5517,7 +6542,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 <div key={`fg-${g.id}`} onClick={() => {
                                     forwardingMessages!.forEach(msg => {
                                         const senderName = (msg as any).sender_name || users.find((u: any) => u.id === msg.sender_id)?.username || (lang === 'en' ? 'Unknown' : 'Неизвестно');
-                                        wsService.sendGroupMessage(g.id, `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${senderName}\n${(msg as any).message_text || ''}`);
+                                        const fwdPrefix = `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${senderName}\n`;
+                                        const fwdText = (msg as any).message_text ? fwdPrefix + (msg as any).message_text : fwdPrefix + ((msg as any).filename ? `📎 ${(msg as any).filename}` : '');
+                                        const filesRaw = (msg as any).files;
+                                        const filesArr = filesRaw ? (typeof filesRaw === 'string' ? (() => { try { return JSON.parse(filesRaw); } catch { return []; } })() : filesRaw) : null;
+                                        if (filesArr?.length) wsService.sendGroupMessage(g.id, fwdText, undefined, undefined, undefined, undefined, undefined, undefined, filesArr);
+                                        else wsService.sendGroupMessage(g.id, fwdText, (msg as any).file_path, (msg as any).filename, (msg as any).file_size);
                                     });
                                     setForwardingMessages(null);
                                 }} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px', cursor: 'pointer', borderBottom: `1px solid ${dm ? C.bg3 : '#f3f3f8'}` }}>
@@ -5529,7 +6559,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 <div key={`fu-${u.id}`} onClick={() => {
                                     forwardingMessages.forEach(msg => {
                                         const senderName = (msg as any).sender_name || users.find((uu: any) => uu.id === msg.sender_id)?.username || (lang === 'en' ? 'Unknown' : 'Неизвестно');
-                                        wsService.sendMessage(u.id, `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${senderName}\n${(msg as any).message_text || ''}`);
+                                        const fwdPrefix = `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${senderName}\n`;
+                                        const fwdText = (msg as any).message_text ? fwdPrefix + (msg as any).message_text : fwdPrefix + ((msg as any).filename ? `📎 ${(msg as any).filename}` : '');
+                                        const filesRaw = (msg as any).files;
+                                        const filesArr = filesRaw ? (typeof filesRaw === 'string' ? (() => { try { return JSON.parse(filesRaw); } catch { return []; } })() : filesRaw) : null;
+                                        if (filesArr?.length) wsService.sendMessage(u.id, fwdText, undefined, undefined, undefined, undefined, undefined, undefined, filesArr);
+                                        else wsService.sendMessage(u.id, fwdText, (msg as any).file_path, (msg as any).filename, (msg as any).file_size);
                                     });
                                     setForwardingMessages(null);
                                 }} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px', cursor: 'pointer', borderBottom: `1px solid ${dm ? C.bg3 : '#f3f3f8'}` }}>
@@ -5648,6 +6683,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         setSelectedUserForProfile(null);
                     }}
                     onGoToMessage={id => { setSelectedUserForProfile(null); setTimeout(() => goToMessage(id), 50); }}
+                    onReport={(type, id, name) => { setSelectedUserForProfile(null); setReportTarget({ type, id, name }); setReportReason(''); setReportComment(''); setReportSent(false); }}
+                    onClearChat={selectedUserForProfile.id !== currentUserId ? () => { setSelectedUserForProfile(null); handleClearChat(); } : undefined}
+                    onExportChat={selectedUserForProfile.id !== currentUserId ? () => { api.exportChat(token, 'private', selectedUserForProfile.id, 'json'); } : undefined}
                 />
                 </Suspense>
             )}
@@ -5741,7 +6779,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
             {/* Chat context menu (right-click on sidebar item) */}
             {pinMenu && (
-                <div className="floating-enter" style={{ position: 'fixed', top: Math.min(pinMenu.y, window.innerHeight - 260), left: Math.min(pinMenu.x, window.innerWidth - 210), zIndex: 9999, background: dm ? C.bg3 : 'white', border: `1px solid ${dm ? '#3a3a4a' : '#ede9fe'}`, borderRadius: 12, padding: 4, boxShadow: '0 4px 24px rgba(0,0,0,0.22)', minWidth: 192, maxHeight: '80vh', overflowY: 'auto' }}
+                <div className="floating-enter" style={{ position: 'fixed', top: Math.min(pinMenu.y, window.innerHeight - 260), left: Math.min(pinMenu.x, window.innerWidth - 210), zIndex: 9999, background: isOled ? '#080810' : dm ? C.bg3 : 'white', borderRadius: 12, padding: 4, boxShadow: isOled ? '0 0 30px rgba(124,58,237,0.3), 0 16px 40px rgba(0,0,0,0.95)' : dm ? '0 0 24px rgba(99,102,241,0.2), 0 12px 36px rgba(0,0,0,0.5)' : '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)', minWidth: 192, maxHeight: '80vh', overflowY: 'auto' }}
                     onClick={e => e.stopPropagation()}>
                     {(() => {
                         const btnStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#e0e0e0' : '#1e1b4b', fontSize: 13, borderRadius: 8, textAlign: 'left' as const };
@@ -5791,12 +6829,31 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
             {/* Folder context menu */}
             {folderCtxMenu && (
-                <div className="floating-enter" style={{ position: 'fixed', top: folderCtxMenu.y, left: folderCtxMenu.x, zIndex: 9999, background: dm ? C.bg3 : 'white', border: `1px solid ${dm ? '#3a3a4a' : '#ede9fe'}`, borderRadius: 12, padding: 4, boxShadow: '0 4px 24px rgba(0,0,0,0.22)', minWidth: 180 }}
+                <div className="floating-enter" style={{ position: 'fixed', top: folderCtxMenu.y, left: folderCtxMenu.x, zIndex: 9999, background: isOled ? '#080810' : dm ? C.bg3 : 'white', borderRadius: 12, padding: 4, boxShadow: isOled ? '0 0 30px rgba(124,58,237,0.3), 0 16px 40px rgba(0,0,0,0.95)' : dm ? '0 0 24px rgba(99,102,241,0.2), 0 12px 36px rgba(0,0,0,0.5)' : '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)', minWidth: 180 }}
                     onClick={e => e.stopPropagation()}>
                     {(() => {
                         const btnStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#e0e0e0' : '#1e1b4b', fontSize: 13, borderRadius: 8, textAlign: 'left' as const };
+                        const ctxFolder = folders.find(f => f.id === folderCtxMenu.folderId);
+                        const ctxUnread = ctxFolder ? (folderUnreadMap[ctxFolder.id] || 0) : 0;
                         return (
                             <>
+                                {ctxUnread > 0 && ctxFolder && (
+                                    <button onClick={() => {
+                                        setUnreadCounts(prev => {
+                                            const next = { ...prev };
+                                            ctxFolder.chats.forEach(c => { delete next[`${c.chat_type}-${c.chat_id}`]; });
+                                            return next;
+                                        });
+                                        ctxFolder.chats.forEach(c => {
+                                            if (c.chat_type === 'private') wsService.markRead(c.chat_id);
+                                            else wsService.send({ type: 'group_mark_read', group_id: c.chat_id });
+                                        });
+                                        setFolderCtxMenu(null);
+                                    }} style={btnStyle}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M20 6L9 17l-5-5"/></svg>
+                                        {lang === 'en' ? 'Mark all as read' : 'Пометить всё как прочитанное'}
+                                    </button>
+                                )}
                                 <button onClick={() => { setShowFolderManager(true); setFolderCtxMenu(null); }} style={btnStyle}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> {t('Settings')}</button>
                                 <button onClick={async () => {
                                     try { await api.deleteFolder(token, folderCtxMenu.folderId); } catch {}
@@ -5812,14 +6869,48 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             )}
             {folderCtxMenu && <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setFolderCtxMenu(null)} />}
 
+            {/* All chats context menu */}
+            {allChatsCtxMenu && (() => {
+                const totalUnread = Object.values(unreadCounts).reduce((s, n) => s + n, 0);
+                const btnStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#e0e0e0' : '#1e1b4b', fontSize: 13, borderRadius: 8, textAlign: 'left' as const };
+                return (
+                    <>
+                        <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setAllChatsCtxMenu(null)} />
+                        <div className="floating-enter" style={{ position: 'fixed', top: allChatsCtxMenu.y, left: allChatsCtxMenu.x, zIndex: 9999, background: isOled ? '#080810' : dm ? C.bg3 : 'white', borderRadius: 12, padding: 4, boxShadow: isOled ? '0 0 30px rgba(124,58,237,0.3), 0 16px 40px rgba(0,0,0,0.95)' : dm ? '0 0 24px rgba(99,102,241,0.2), 0 12px 36px rgba(0,0,0,0.5)' : '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)', minWidth: 210 }}
+                            onClick={e => e.stopPropagation()}>
+                            {totalUnread > 0 && (
+                                <button onClick={() => {
+                                    setUnreadCounts({});
+                                    users.forEach(u => wsService.markRead(u.id));
+                                    groups.forEach(g => wsService.send({ type: 'group_mark_read', group_id: g.id }));
+                                    setAllChatsCtxMenu(null);
+                                }} style={btnStyle}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M20 6L9 17l-5-5"/></svg>
+                                    {lang === 'en' ? 'Mark all as read' : 'Пометить всё как прочитанное'}
+                                </button>
+                            )}
+                            <button onClick={() => { setShowFolderManager(true); setAllChatsCtxMenu(null); }} style={btnStyle}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                {lang === 'en' ? 'Manage folders' : 'Управление папками'}
+                            </button>
+                        </div>
+                    </>
+                );
+            })()}
+
             {/* In-app toast notifications */}
             {toasts.length > 0 && (
-                <div style={{ position: 'fixed', ...(isMobile ? { top: 0, left: 0, right: 0, padding: '12px 12px 0', paddingTop: 'max(12px, env(safe-area-inset-top, 12px))' } : { bottom: 24, right: 24 }), zIndex: 99999, display: 'flex', flexDirection: 'column', gap: 8, width: isMobile ? undefined : 320 }}>
+                <div style={{ position: 'fixed', ...(isMobile ? { top: 0, left: 0, right: 0, padding: '8px 10px 0', paddingTop: 'max(8px, env(safe-area-inset-top, 8px))' } : { bottom: 24, right: 24 }), zIndex: 99999, display: 'flex', flexDirection: 'column', gap: 10, width: isMobile ? undefined : 320 }}>
                     {toasts.map(toast => {
                         const tSwipeX = isMobile ? 0 : (toastSwipeOffsets[toast.id] || 0);
                         const tSwipeY = isMobile ? (toastSwipeOffsets[toast.id] || 0) : 0;
                         const tSwiping = !!toastSwipeOffsets[toast.id];
                         const tOpacity = tSwiping ? Math.max(0.1, 1 - Math.abs(tSwipeX || tSwipeY) / 120) : 1;
+                        // Always use live user data so avatar updates are reflected immediately
+                        const liveToastUser = toast.senderId ? usersRef.current.find((u: User) => u.id === toast.senderId) : null;
+                        const liveAvatarSrc = liveToastUser?.avatar ?? toast.avatarSrc;
+                        const liveAvatarColor = liveToastUser?.avatar_color ?? toast.avatarColor;
+                        const liveAvatarLetter = liveToastUser ? (liveToastUser.username[0]?.toUpperCase() ?? toast.avatarLetter) : toast.avatarLetter;
                         const openChat = () => {
                             if (toast.chatType === 'private') { const user = usersRef.current.find(u => u.id === toast.chatId); if (user) selectPrivateChat(user); }
                             else { const group = groupsRef.current.find(g => g.id === toast.chatId); if (group) selectGroupChat(group); }
@@ -5851,8 +6942,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 // ── Mobile compact toast ──────────────────────────────
                                 <>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', cursor: 'pointer' }} onClick={openChat}>
-                                        <div style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: toast.avatarSrc ? 'transparent' : toast.avatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 16, color: 'white', fontWeight: 700, boxShadow: `0 2px 8px ${toast.avatarColor}66` }}>
-                                            {toast.avatarSrc ? <img src={config.fileUrl(toast.avatarSrc) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : toast.avatarLetter}
+                                        <div style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: liveAvatarSrc ? 'transparent' : liveAvatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 16, color: 'white', fontWeight: 700, boxShadow: `0 2px 8px ${liveAvatarColor}66` }}>
+                                            {liveAvatarSrc ? <img src={config.fileUrl(liveAvatarSrc) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : liveAvatarLetter}
                                         </div>
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                             <div style={{ fontWeight: 700, fontSize: 14, color: dm ? '#e2e8f0' : '#1e1b4b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3 }}>{toast.title}</div>
@@ -5889,8 +6980,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 // ── Desktop toast (unchanged) ─────────────────────────
                                 <>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 12px 8px', cursor: 'pointer' }} onClick={openChat}>
-                                        <div style={{ width: 36, height: 36, borderRadius: '50%', backgroundColor: toast.avatarSrc ? (dm ? C.bg2 : 'white') : toast.avatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 15, color: 'white', fontWeight: 700 }}>
-                                            {toast.avatarSrc ? <img src={config.fileUrl(toast.avatarSrc) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : toast.avatarLetter}
+                                        <div style={{ width: 36, height: 36, borderRadius: '50%', backgroundColor: liveAvatarSrc ? (dm ? C.bg2 : 'white') : liveAvatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 15, color: 'white', fontWeight: 700 }}>
+                                            {liveAvatarSrc ? <img src={config.fileUrl(liveAvatarSrc) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : liveAvatarLetter}
                                         </div>
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                             <div style={{ fontWeight: 700, fontSize: 13, color: dm ? '#e2e8f0' : '#1e1b4b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{toast.title}</div>
@@ -6125,13 +7216,13 @@ const styles: { [key: string]: React.CSSProperties } = {
     profileStatus: { fontSize: 11, color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 },
     settingsBtn: { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', padding: '6px', borderRadius: 10, color: '#9ca3af', flexShrink: 0 },
     sectionTitle: { padding: '14px 20px 6px', fontSize: 10, fontWeight: 700 as const, color: '#a5b4fc', textTransform: 'uppercase' as const, letterSpacing: 1.5 },
-    chatItem: { display: 'flex', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', gap: 10, transition: 'background 0.15s', borderRadius: 12, margin: '1px 8px' },
+    chatItem: { display: 'flex', alignItems: 'center', padding: '8px 12px', cursor: 'pointer', gap: 10, transition: 'background 0.15s', borderRadius: 12, margin: '1px 8px' },
     activeChatItem: { background: 'linear-gradient(90deg, rgba(99,102,241,0.22) 0%, rgba(139,92,246,0.10) 55%, transparent 100%)', boxShadow: 'inset 3px 0 0 #6366f1, 0 1px 10px rgba(99,102,241,0.18)' },
     avatar: { width: 40, height: 40, borderRadius: '50%', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 'bold' as const, flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' },
     chatName: { fontSize: 14, fontWeight: 600 as const, color: '#1e1b4b', textAlign: 'left' as const },
     chatSub: { fontSize: 11, color: '#9ca3af', marginTop: 2, textAlign: 'left' as const },
     chatArea: { flex: 1, display: 'flex', flexDirection: 'column' as const, backgroundColor: '#f2f4f8', minWidth: 0 },
-    chatHeader: { padding: '0 20px', borderBottom: '1px solid #e8e8ef', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f7f8fc', boxShadow: '0 1px 6px rgba(0,0,0,0.05)', height: 68, minHeight: 68, maxHeight: 68, flexShrink: 0, boxSizing: 'border-box' as const },
+    chatHeader: { padding: '0 20px', borderBottom: '1px solid #e8e8ef', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f7f8fc', height: 68, minHeight: 68, maxHeight: 68, flexShrink: 0, boxSizing: 'border-box' as const },
     typing: { fontSize: 12, color: '#a5b4fc', fontStyle: 'italic' },
     iconBtn: { background: 'none', border: '1px solid #ede9fe', fontSize: 18, cursor: 'pointer', padding: '6px 10px', borderRadius: 10, color: '#6366f1', transition: 'all 0.15s' },
     messagesArea: { flex: 1, overflowY: 'auto' as const, paddingTop: 20, paddingBottom: 20, paddingLeft: 24, paddingRight: 24, backgroundColor: '#f2f4f8' },
@@ -6148,7 +7239,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fileBtn: { padding: '10px 13px', backgroundColor: '#eef0f8', border: '1.5px solid #dddde8', borderRadius: 12, cursor: 'pointer', fontSize: 16, color: '#6366f1', transition: 'all 0.15s' },
     sendBtn: { padding: '10px 20px', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white', border: 'none', borderRadius: 24, cursor: 'pointer', fontSize: 14, fontWeight: 600 as const, boxShadow: '0 2px 10px rgba(99,102,241,0.35)', transition: 'all 0.15s' },
     noChat: { flex: 1, display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', color: '#c4b5fd', fontSize: 16, gap: 12 },
-    menu: { backgroundColor: 'white', borderRadius: 14, boxShadow: '0 8px 30px rgba(99,102,241,0.15)', padding: '6px 0', minWidth: 170, border: '1px solid #ede9fe' },
+    menu: { backgroundColor: 'white', borderRadius: 14, boxShadow: '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)', padding: '6px 0', minWidth: 170 },
     menuItem: { display: 'block', width: '100%', padding: '10px 18px', textAlign: 'left' as const, border: 'none', background: 'none', cursor: 'pointer', fontSize: 14 },
     findOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(15,10,40,0.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000 },
     findModal: { borderRadius: 20, padding: 28, width: 340, border: '1px solid rgba(99,102,241,0.25)' },
@@ -6302,11 +7393,8 @@ const StickerPackPreviewModal: React.FC<{
     const { t: tl, lang: language } = useLang();
     const dm = isDark;
     const isOled = dm && document.body.classList.contains('oled-theme');
-    const bg = dm ? (isOled ? '#050508' : '#1a1a2e') : '#ffffff';
-    const border = dm ? '#2e2e4a' : '#e8e8f0';
     const text = dm ? '#e2e8f0' : '#1e1b4b';
     const subtext = dm ? '#888' : '#9ca3af';
-    const accent = '#6366f1';
     const ref = useRef<HTMLDivElement>(null);
 
     const isAlreadyAdded = () => {

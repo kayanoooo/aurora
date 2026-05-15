@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../services/api';
 import { config } from '../config';
 import { useLang } from '../i18n';
+import { wsService } from '../services/websocket';
 
 interface PollVoter {
     id: number;
@@ -50,9 +51,13 @@ const PollMessage: React.FC<PollMessageProps> = ({ pollId, token, isDark = false
 
     useEffect(() => {
         load();
-        const interval = setInterval(() => load(), 8000);
-        return () => clearInterval(interval);
-    }, [load]);
+        // Fallback polling — WS push (poll_updated) handles real-time, this catches missed events
+        const interval = setInterval(() => load(), 60000);
+        const unsub = wsService.onMessage((data) => {
+            if (data.type === 'poll_updated' && data.data.poll_id === pollId) load();
+        });
+        return () => { clearInterval(interval); unsub(); };
+    }, [load, pollId]);
 
     if (loading) return <div style={{ padding: '8px 0', opacity: 0.5, fontSize: 13 }}>📊 {lang === 'en' ? 'Loading poll...' : 'Загрузка опроса...'}</div>;
     if (!poll) return <div style={{ padding: '8px 0', opacity: 0.5, fontSize: 13 }}>📊 {lang === 'en' ? 'Poll unavailable' : 'Опрос недоступен'}</div>;

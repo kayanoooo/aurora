@@ -233,7 +233,8 @@ const HelpModal: React.FC<HelpModalProps> = ({ isDark = false, initialTab = 'fea
     const isOled = dm && document.body.classList.contains('oled-theme');
     const bg = isOled ? '#000000' : (dm ? '#1a1a2e' : '#ffffff');
     const cardBg = isOled ? '#050508' : (dm ? '#12122a' : '#f8f7ff');
-    const border = isOled ? 'rgba(167,139,250,0.2)' : (dm ? 'rgba(99,102,241,0.25)' : '#ede9fe');
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _border = isOled ? 'rgba(167,139,250,0.2)' : (dm ? 'rgba(99,102,241,0.25)' : '#ede9fe');
     const cardBorder = isOled ? 'rgba(167,139,250,0.12)' : (dm ? 'rgba(99,102,241,0.15)' : '#ede9fe');
     const tabBarBg = isOled ? '#050508' : (dm ? '#12122a' : '#f3f4f6');
     const tabActiveBg = isOled ? '#0a0a14' : (dm ? '#1e1e3a' : 'white');

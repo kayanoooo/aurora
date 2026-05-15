@@ -43,6 +43,7 @@ from .websocket_manager import manager
 class RegisterRequest(BaseModel):
     email: str
     password: str
+    reg_code: Optional[str] = None  # required when SMTP is configured
 
 class SetupRequest(BaseModel):
     tag: str
@@ -67,9 +68,16 @@ class ConfirmResetRequest(BaseModel):
     code: str
     new_password: str
 
+class SendRegisterCodeRequest(BaseModel):
+    email: str
+
 # In-memory reset code store: email → {code, expires_at}
 _reset_codes: dict = {}
 _RESET_CODE_TTL = 900  # 15 минут
+
+# In-memory registration verification store: email → {code, expires_at}
+_reg_codes: dict = {}
+_REG_CODE_TTL = 600  # 10 минут
 
 def _send_email(to: str, subject: str, body: str) -> bool:
     """Отправить письмо через SMTP. Возвращает True если успешно."""
@@ -157,9 +165,10 @@ class VotePollRequest(BaseModel):
 
 class ScheduleMessageRequest(BaseModel):
     message_text: str
-    scheduled_at: str   # ISO datetime string
+    scheduled_at: Optional[str] = None   # ISO datetime string
     receiver_id: Optional[int] = None
     group_id: Optional[int] = None
+    send_when_online: Optional[bool] = False
 
 app = FastAPI(title="Messenger API", version="2.0.0")
 
@@ -177,7 +186,7 @@ ALLOWED_ORIGINS = [
     "https://aurora-messenger.vercel.app",
 ]
 # Regex pattern for ngrok and other tunnel services
-ALLOWED_ORIGIN_REGEX = r"https://.+\.(ngrok-free\.dev|ngrok-free\.app|ngrok\.io|ngrok\.app|loca\.lt|localhost\.run)"
+ALLOWED_ORIGIN_REGEX = r"https?://(.+\.(ngrok-free\.dev|ngrok-free\.app|ngrok\.io|ngrok\.app|loca\.lt|localhost\.run|lhr\.life|trycloudflare\.com|pinggy-free\.link)|bore\.pub:\d+)"
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
@@ -198,7 +207,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -257,6 +266,31 @@ async def startup():
                 "ALTER TABLE `groups` ADD COLUMN `channel_type` VARCHAR(10) NOT NULL DEFAULT 'public'",
                 "ALTER TABLE `groups` ADD COLUMN `channel_tag` VARCHAR(64) NULL DEFAULT NULL",
                 "ALTER TABLE `groups` ADD COLUMN `invite_link` VARCHAR(64) NULL DEFAULT NULL",
+                "ALTER TABLE `groups` ADD COLUMN `slow_mode` INT NOT NULL DEFAULT 0",
+                """CREATE TABLE IF NOT EXISTS username_history (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    old_username VARCHAR(100) NOT NULL,
+                    changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_uh_user (user_id)
+                )""",
+                """CREATE TABLE IF NOT EXISTS user_sessions (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    token_hash VARCHAR(64) NOT NULL,
+                    device_name VARCHAR(200) NOT NULL DEFAULT 'Unknown device',
+                    ip VARCHAR(64),
+                    last_active DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY idx_token_hash (token_hash),
+                    INDEX idx_user_sessions (user_id)
+                )""",
+                """CREATE TABLE IF NOT EXISTS group_slow_mode_timestamps (
+                    group_id INT NOT NULL,
+                    user_id INT NOT NULL,
+                    last_message_at DATETIME NOT NULL,
+                    PRIMARY KEY (group_id, user_id)
+                )""",
                 """CREATE TABLE IF NOT EXISTS post_views (
                     message_id INT NOT NULL,
                     user_id INT NOT NULL,
@@ -295,7 +329,9 @@ async def startup():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_scheduled (scheduled_at, sent)
                 )""",
+                "ALTER TABLE `groups` ADD COLUMN `welcome_message` TEXT NULL DEFAULT NULL",
                 "ALTER TABLE `group_members` ADD COLUMN `custom_title` VARCHAR(64) NULL DEFAULT NULL",
+                "ALTER TABLE scheduled_messages ADD COLUMN send_when_online TINYINT(1) NOT NULL DEFAULT 0",
                 """CREATE TABLE IF NOT EXISTS polls (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     creator_id INT NOT NULL,
@@ -315,7 +351,19 @@ async def startup():
                     UNIQUE KEY unique_vote (poll_id, user_id),
                     INDEX idx_poll_votes_poll (poll_id)
                 )""",
+                "ALTER TABLE messages ADD COLUMN disappear_after INT NULL DEFAULT NULL",
+                "ALTER TABLE group_messages ADD COLUMN disappear_after INT NULL DEFAULT NULL",
+                """CREATE TABLE IF NOT EXISTS chat_disappear_settings (
+                    user_id INT NOT NULL,
+                    other_id INT NOT NULL,
+                    chat_type VARCHAR(10) NOT NULL,
+                    seconds INT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, other_id, chat_type)
+                )""",
                 "ALTER TABLE users ADD COLUMN is_deleted TINYINT(1) NOT NULL DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN is_banned TINYINT(1) NOT NULL DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN ban_reason VARCHAR(255) NULL DEFAULT NULL",
                 """CREATE TABLE IF NOT EXISTS playlists (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     user_id INT NOT NULL,
@@ -339,13 +387,37 @@ async def startup():
                 )""",
                 "ALTER TABLE users ADD COLUMN now_playing TEXT NULL",
                 "ALTER TABLE playlists ADD COLUMN cover VARCHAR(512) NULL",
+                """CREATE TABLE IF NOT EXISTS reports (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    reporter_id INT NOT NULL,
+                    target_type ENUM('user','group','message') NOT NULL,
+                    target_id INT NOT NULL,
+                    reason VARCHAR(64) NOT NULL,
+                    comment TEXT NULL,
+                    status ENUM('pending','reviewed','dismissed') NOT NULL DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_reports_status (status),
+                    INDEX idx_reports_reporter (reporter_id),
+                    INDEX idx_reports_target (target_type, target_id)
+                )""",
+                """CREATE TABLE IF NOT EXISTS username_history (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    old_username VARCHAR(100) NOT NULL,
+                    changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_uh_user (user_id)
+                )""",
+                "ALTER TABLE users ADD COLUMN ban_expires_at DATETIME NULL DEFAULT NULL",
             ]:
                 try:
                     await cur.execute(sql)
-                except Exception:
-                    pass
+                except Exception as _mig_e:
+                    # Ignore duplicate column/index errors (1060, 1061, 1091) — expected on re-run
+                    if hasattr(_mig_e, 'args') and _mig_e.args and _mig_e.args[0] not in (1060, 1061, 1091):
+                        print(f"⚠️ Migration warning: {_mig_e}")
             await conn.commit()
     asyncio.create_task(scheduled_message_worker())
+    asyncio.create_task(disappear_message_worker())
     print("✅ Database pool initialized")
 
 @app.on_event("shutdown")
@@ -367,15 +439,71 @@ async def root():
 
 # ========== Аутентификация ==========
 
-@app.post("/api/register")
-async def register(request: RegisterRequest):
-    """Регистрация — шаг 1: email + пароль"""
+@app.post("/api/auth/send-register-code")
+async def send_register_code(request: SendRegisterCodeRequest):
+    """Отправить код подтверждения email для регистрации"""
     pool = await DatabasePool.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute("SELECT id FROM users WHERE email = %s", (request.email,))
             if await cur.fetchone():
                 raise HTTPException(status_code=400, detail="Этот email уже зарегистрирован")
+
+    code = str(random.randint(100000, 999999))
+    _reg_codes[request.email] = {"code": code, "expires_at": time.time() + _REG_CODE_TTL}
+
+    # Очищаем просроченные коды
+    expired = [e for e, v in _reg_codes.items() if v["expires_at"] < time.time()]
+    for e in expired:
+        del _reg_codes[e]
+
+    smtp_configured = bool(os.getenv("SMTP_USER") and os.getenv("SMTP_PASS"))
+    if smtp_configured:
+        body = f"""
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f9fafb;border-radius:12px">
+            <div style="text-align:center;margin-bottom:24px">
+                <img src="https://aurora-messenger.vercel.app/logo192.png" alt="Aurora" width="64" height="64" style="border-radius:16px;display:inline-block;box-shadow:0 4px 12px rgba(255,107,0,0.3)" />
+                <h2 style="color:#1e1b4b;margin:8px 0 4px">Aurora Messenger</h2>
+                <p style="color:#6b7280;margin:0">Подтверждение email</p>
+            </div>
+            <div style="background:white;border-radius:10px;padding:24px;border:1px solid #e5e7eb;text-align:center">
+                <p style="color:#374151;margin:0 0 16px">Ваш код для регистрации:</p>
+                <div style="font-size:40px;font-weight:800;letter-spacing:8px;color:#6366f1;font-family:monospace">{code}</div>
+                <p style="color:#9ca3af;font-size:13px;margin:16px 0 0">Код действителен 10 минут. Не передавайте его никому.</p>
+            </div>
+            <p style="color:#9ca3af;font-size:12px;text-align:center;margin-top:16px">Если вы не регистрировались в Aurora — проигнорируйте это письмо.</p>
+        </div>
+        """
+        sent = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _send_email(request.email, "Подтверждение email — Aurora", body)
+        )
+        return {"success": True, "email_sent": sent, "smtp_configured": True}
+    else:
+        print(f"⚠️  SMTP not configured. Register code for {request.email}: {code}")
+        return {"success": True, "email_sent": False, "smtp_configured": False, "dev_code": code}
+
+
+@app.post("/api/register")
+async def register(request: RegisterRequest):
+    """Регистрация — шаг 1: email + пароль (+ код верификации если SMTP настроен)"""
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT id FROM users WHERE email = %s", (request.email,))
+            if await cur.fetchone():
+                raise HTTPException(status_code=400, detail="Этот email уже зарегистрирован")
+
+    smtp_configured = bool(os.getenv("SMTP_USER") and os.getenv("SMTP_PASS"))
+    if smtp_configured:
+        entry = _reg_codes.get(request.email)
+        if not entry:
+            raise HTTPException(status_code=400, detail="Сначала подтвердите email — запросите код.")
+        if time.time() > entry["expires_at"]:
+            del _reg_codes[request.email]
+            raise HTTPException(status_code=400, detail="Код устарел. Запросите новый.")
+        if not request.reg_code or entry["code"] != request.reg_code.strip():
+            raise HTTPException(status_code=400, detail="Неверный код подтверждения.")
+        del _reg_codes[request.email]
 
     password_hash = hash_password(request.password)
     temp_username = f"user_{uuid.uuid4().hex[:8]}"
@@ -431,17 +559,46 @@ async def login(request: LoginRequest):
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                "SELECT id, username, password_hash, setup_complete FROM users WHERE email = %s",
+                "SELECT id, username, password_hash, setup_complete, is_deleted, is_banned, ban_reason, ban_expires_at FROM users WHERE email = %s",
                 (request.email,)
             )
             user = await cur.fetchone()
 
     if not user:
         raise HTTPException(status_code=401, detail="Пользователь не найден")
+    if user.get('is_deleted'):
+        raise HTTPException(status_code=403, detail="Аккаунт удалён")
+    if user.get('is_banned'):
+        expires_at = user.get('ban_expires_at')
+        if expires_at and datetime.now(timezone.utc) > expires_at.replace(tzinfo=timezone.utc):
+            # Temporary ban expired — auto-unban
+            _pool_unban = await DatabasePool.get_pool()
+            async with _pool_unban.acquire() as _conn_unban:
+                async with _conn_unban.cursor() as _cur_unban:
+                    await _cur_unban.execute("UPDATE users SET is_banned=0, ban_reason=NULL, ban_expires_at=NULL WHERE id=%s", (user['id'],))
+                    await _conn_unban.commit()
+        else:
+            reason = user.get('ban_reason') or ''
+            expires_str = expires_at.replace(tzinfo=timezone.utc).isoformat() if expires_at else None
+            raise HTTPException(status_code=403, detail={"code": "banned", "reason": reason, "expires_at": expires_str})
     if not verify_password(request.password, user['password_hash']):
         raise HTTPException(status_code=401, detail="Неверный пароль")
 
     token = create_jwt_token(user['id'], user['username'])
+    # Record session
+    import hashlib as _hashlib
+    token_hash = _hashlib.sha256(token.encode()).hexdigest()[:64]
+    device_name = getattr(request, 'device_name', None) or 'Aurora Web'
+    try:
+        pool2 = await DatabasePool.get_pool()
+        async with pool2.acquire() as conn2:
+            async with conn2.cursor() as cur2:
+                await cur2.execute(
+                    "INSERT INTO user_sessions (user_id, token_hash, device_name) VALUES (%s,%s,%s) ON DUPLICATE KEY UPDATE last_active=UTC_TIMESTAMP()",
+                    (user['id'], token_hash, device_name)
+                )
+                await conn2.commit()
+    except Exception: pass
     return {
         "success": True,
         "user_id": user['id'],
@@ -449,6 +606,58 @@ async def login(request: LoginRequest):
         "token": token,
         "setup_required": not bool(user['setup_complete'])
     }
+
+@app.get("/api/sessions")
+async def get_sessions(token: str):
+    payload = decode_jwt_token(token)
+    if not payload: raise HTTPException(401, "Invalid token")
+    import hashlib as _hl
+    current_hash = _hl.sha256(token.encode()).hexdigest()[:64]
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT id, device_name, ip, last_active, created_at, (token_hash=%s) AS is_current FROM user_sessions WHERE user_id=%s ORDER BY last_active DESC",
+                (current_hash, payload['user_id'])
+            )
+            rows = await cur.fetchall()
+            for r in rows:
+                for k in ('last_active', 'created_at'):
+                    if r.get(k) and hasattr(r[k], 'isoformat'):
+                        r[k] = r[k].replace(tzinfo=__import__('datetime').timezone.utc).isoformat()
+    return {"sessions": rows}
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: int, token: str):
+    payload = decode_jwt_token(token)
+    if not payload: raise HTTPException(401, "Invalid token")
+    import hashlib as _hd
+    current_hash = _hd.sha256(token.encode()).hexdigest()[:64]
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as chk:
+            await chk.execute("SELECT token_hash FROM user_sessions WHERE id=%s AND user_id=%s", (session_id, payload['user_id']))
+            sess = await chk.fetchone()
+            if sess and sess['token_hash'] == current_hash:
+                return {"success": False, "error": "Cannot terminate current session"}
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM user_sessions WHERE id=%s AND user_id=%s", (session_id, payload['user_id']))
+            await conn.commit()
+    return {"success": True}
+
+@app.delete("/api/sessions")
+async def delete_other_sessions(token: str):
+    """Завершить все другие сессии кроме текущей"""
+    payload = decode_jwt_token(token)
+    if not payload: raise HTTPException(401, "Invalid token")
+    import hashlib as _hl2
+    current_hash = _hl2.sha256(token.encode()).hexdigest()[:64]
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM user_sessions WHERE user_id=%s AND token_hash!=%s", (payload['user_id'], current_hash))
+            await conn.commit()
+    return {"success": True}
 
 @app.post("/api/password-reset")
 async def password_reset(request: PasswordResetRequest):
@@ -496,7 +705,7 @@ async def send_reset_code(request: SendResetCodeRequest):
         body = f"""
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f9fafb;border-radius:12px">
             <div style="text-align:center;margin-bottom:24px">
-                <div style="font-size:32px">🌅</div>
+                <img src="https://aurora-messenger.vercel.app/logo192.png" alt="Aurora" width="64" height="64" style="border-radius:16px;display:inline-block;box-shadow:0 4px 12px rgba(255,107,0,0.3)" />
                 <h2 style="color:#1e1b4b;margin:8px 0 4px">Aurora Messenger</h2>
                 <p style="color:#6b7280;margin:0">Сброс пароля</p>
             </div>
@@ -718,6 +927,8 @@ async def get_profile(token: str):
     user = await UserModel.get_user_by_id(payload['user_id'])
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if user.get('is_deleted'):
+        raise HTTPException(status_code=403, detail="Аккаунт удалён")
     tags = await UserModel.get_tags(payload['user_id'])
     user_data = dict(user)
     user_data.pop('password_hash', None)
@@ -749,6 +960,19 @@ async def update_profile(request: UpdateProfileRequest, token: str):
                 await cur.execute("SELECT id FROM users WHERE tag = %s AND id != %s", (new_tag, payload['user_id']))
                 if await cur.fetchone():
                     raise HTTPException(status_code=400, detail="Этот тег уже занят")
+    # Track username history before updating
+    if request.username:
+        pool_pre = await DatabasePool.get_pool()
+        async with pool_pre.acquire() as conn_pre:
+            async with conn_pre.cursor(aiomysql.DictCursor) as cur_pre:
+                await cur_pre.execute("SELECT username FROM users WHERE id=%s", (payload['user_id'],))
+                old_row = await cur_pre.fetchone()
+                if old_row and old_row['username'] != request.username:
+                    await cur_pre.execute(
+                        "INSERT INTO username_history (user_id, old_username) VALUES (%s,%s)",
+                        (payload['user_id'], old_row['username'])
+                    )
+                    await conn_pre.commit()
     success = await UserModel.update_profile(
         payload['user_id'],
         username=request.username,
@@ -911,8 +1135,31 @@ async def unblock_user(target_user_id: int, token: str):
     payload = decode_jwt_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
-    await BlockModel.unblock_user(payload['user_id'], target_user_id)
-    await manager.send_message_to_user(target_user_id, {"type": "visibility_update", "data": {"user_id": payload['user_id'], "last_seen": None}})
+    user_id = payload['user_id']
+    await BlockModel.unblock_user(user_id, target_user_id)
+    # Notify the unblocked person that they can see us again (null = reset)
+    await manager.send_message_to_user(target_user_id, {
+        "type": "visibility_update",
+        "data": {"user_id": user_id, "last_seen": "__reset__"}
+    })
+    # Notify the unblocker with the target's real online status
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT last_seen FROM users WHERE id = %s", (target_user_id,))
+            row = await cur.fetchone()
+    target_last_seen = None
+    if row and row.get('last_seen'):
+        ts = row['last_seen']
+        target_last_seen = ts.replace(tzinfo=timezone.utc).isoformat() if hasattr(ts, 'replace') else str(ts)
+    await manager.send_message_to_user(user_id, {
+        "type": "user_status",
+        "data": {
+            "user_id": target_user_id,
+            "is_online": manager.is_user_online(target_user_id),
+            "last_seen": target_last_seen,
+        }
+    })
     return {"success": True}
 
 @app.get("/api/blocked")
@@ -1078,6 +1325,31 @@ async def invite_to_group(group_id: int, request: InviteToGroupRequest, token: s
             is_system=True
         )
 
+    # Welcome message
+    if not group.get('is_channel') and group.get('welcome_message'):
+        welcome_text = group['welcome_message'].replace('{name}', user['username'])
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "INSERT INTO group_messages (group_id, sender_id, message_text, timestamp, is_system) VALUES (%s, %s, %s, UTC_TIMESTAMP(), 1)",
+                    (group_id, user['id'], welcome_text)
+                )
+                new_msg_id = cur.lastrowid
+                await conn.commit()
+        all_members = await GroupModel.get_members(group_id)
+        welcome_event = {
+            "type": "group_message",
+            "data": {
+                "id": new_msg_id, "group_id": group_id, "sender_id": user['id'],
+                "sender_name": user['username'], "message_text": welcome_text,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "is_system": 1, "reactions": []
+            }
+        }
+        for member in all_members:
+            await manager.send_message_to_user(member['id'], welcome_event)
+
     # Отправляем всем существующим участникам группы (кроме нового) уведомление об обновлении
     for member in members:
         await manager.send_message_to_user(member['id'], {
@@ -1115,6 +1387,96 @@ async def get_group_messages(group_id: int, token: str, limit: int = 200, before
     return {"messages": messages, "has_more": has_more}
 
 
+@app.get("/api/groups/{group_id}/stats")
+async def get_channel_stats(group_id: int, token: str):
+    """Channel/group statistics for admins"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    role = await GroupModel.get_member_role(group_id, payload['user_id'])
+    if role not in ('admin', 'owner'):
+        raise HTTPException(status_code=403, detail="Admins only")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            # Subscriber count + 30-day growth chart
+            await cur.execute("SELECT COUNT(*) AS cnt FROM group_members WHERE group_id = %s", (group_id,))
+            total_members = (await cur.fetchone())['cnt']
+
+            await cur.execute("""
+                SELECT DATE(joined_at) AS d, COUNT(*) AS cnt
+                FROM group_members WHERE group_id = %s
+                  AND joined_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+                GROUP BY DATE(joined_at) ORDER BY d
+            """, (group_id,))
+            growth_raw = await cur.fetchall()
+            growth_chart = [{"date": str(r['d']), "count": r['cnt']} for r in growth_raw]
+
+            # Total posts
+            await cur.execute("SELECT COUNT(*) AS cnt FROM group_messages WHERE group_id = %s AND is_system = 0", (group_id,))
+            total_posts = (await cur.fetchone())['cnt']
+
+            # Posts per day last 30 days
+            await cur.execute("""
+                SELECT DATE(timestamp) AS d, COUNT(*) AS cnt
+                FROM group_messages WHERE group_id = %s AND is_system = 0
+                  AND timestamp >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+                GROUP BY DATE(timestamp) ORDER BY d
+            """, (group_id,))
+            posts_chart = [{"date": str(r['d']), "count": r['cnt']} for r in await cur.fetchall()]
+
+            # Top 5 posts by views
+            await cur.execute("""
+                SELECT gm.id, SUBSTRING(gm.message_text, 1, 100) AS text,
+                       gm.timestamp, COUNT(pv.user_id) AS views
+                FROM group_messages gm
+                LEFT JOIN post_views pv ON pv.message_id = gm.id
+                WHERE gm.group_id = %s AND gm.is_system = 0
+                GROUP BY gm.id ORDER BY views DESC LIMIT 5
+            """, (group_id,))
+            top_posts = await cur.fetchall()
+            for p in top_posts:
+                if p.get('timestamp') and hasattr(p['timestamp'], 'isoformat'):
+                    p['timestamp'] = p['timestamp'].isoformat()
+
+            # Avg views per post
+            await cur.execute("""
+                SELECT COALESCE(AVG(vc), 0) AS avg_views FROM (
+                    SELECT COUNT(*) AS vc FROM post_views pv
+                    JOIN group_messages gm ON gm.id = pv.message_id
+                    WHERE gm.group_id = %s GROUP BY pv.message_id
+                ) t
+            """, (group_id,))
+            avg_views = float((await cur.fetchone())['avg_views'] or 0)
+
+            # Total reactions
+            await cur.execute("""
+                SELECT COUNT(*) AS cnt FROM reactions r
+                JOIN group_messages gm ON gm.id = r.message_id AND r.is_group = 1
+                WHERE gm.group_id = %s
+            """, (group_id,))
+            total_reactions = (await cur.fetchone())['cnt']
+
+            # Most active hour
+            await cur.execute("""
+                SELECT HOUR(timestamp) AS h, COUNT(*) AS cnt
+                FROM group_messages WHERE group_id = %s AND is_system = 0
+                GROUP BY h ORDER BY cnt DESC LIMIT 1
+            """, (group_id,))
+            peak_row = await cur.fetchone()
+            peak_hour = peak_row['h'] if peak_row else None
+
+    return {
+        "total_members": total_members,
+        "total_posts": total_posts,
+        "total_reactions": total_reactions,
+        "avg_views": round(avg_views, 1),
+        "peak_hour": peak_hour,
+        "growth_chart": growth_chart,
+        "posts_chart": posts_chart,
+        "top_posts": top_posts,
+    }
+
 @app.post("/api/groups/{group_id}/messages/{message_id}/view")
 async def record_post_view(group_id: int, message_id: int, token: str):
     """Record that the current user viewed a channel post"""
@@ -1123,6 +1485,28 @@ async def record_post_view(group_id: int, message_id: int, token: str):
         raise HTTPException(status_code=401, detail="Invalid token")
     count = await PostViewModel.record_view(message_id, payload['user_id'])
     return {"view_count": count}
+
+@app.get("/api/groups/{group_id}/messages/{message_id}/readers")
+async def get_message_readers(group_id: int, message_id: int, token: str):
+    """Get list of users who have read a group message"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                """SELECT gmr.user_id, u.username, u.avatar, gmr.read_at
+                   FROM group_message_reads gmr
+                   JOIN users u ON u.id = gmr.user_id
+                   WHERE gmr.message_id = %s AND gmr.group_id = %s""",
+                (message_id, group_id)
+            )
+            readers = await cur.fetchall()
+            for r in readers:
+                if r.get('read_at') and hasattr(r['read_at'], 'isoformat'):
+                    r['read_at'] = r['read_at'].replace(tzinfo=timezone.utc).isoformat()
+    return {"readers": readers}
 
 @app.put("/api/groups/{group_id}")
 async def update_group(group_id: int, request: UpdateGroupRequest, token: str):
@@ -1141,7 +1525,15 @@ async def update_group(group_id: int, request: UpdateGroupRequest, token: str):
     for member in members:
         await manager.send_message_to_user(member['id'], {
             "type": "group_info_updated",
-            "data": {"group_id": group_id, "name": group['name'], "description": group.get('description', '')}
+            "data": {
+                "group_id": group_id,
+                "name": group['name'],
+                "description": group.get('description', ''),
+                "channel_type": group.get('channel_type'),
+                "channel_tag": group.get('channel_tag'),
+                "invite_link": group.get('invite_link'),
+                "slow_mode": group.get('slow_mode', 0),
+            }
         })
     return {"success": True, "group": group}
 
@@ -1347,11 +1739,38 @@ async def join_via_invite_link(invite_link: str, token: str):
     })
 
     if not group.get('is_channel'):
+        joining_user = await UserModel.get_user_by_id(payload['user_id'])
+        joining_username = joining_user['username'] if joining_user else 'Новый участник'
         await GroupMessageModel.save_message(
             group_id=group['id'],
-            message_text=f"Новый участник вступил",
+            message_text=f"{joining_username} вступил в группу",
             is_system=True
         )
+
+        # Welcome message
+        if group.get('welcome_message'):
+            welcome_text = group['welcome_message'].replace('{name}', joining_username)
+            _pool = await DatabasePool.get_pool()
+            async with _pool.acquire() as _conn:
+                async with _conn.cursor(aiomysql.DictCursor) as _cur:
+                    await _cur.execute(
+                        "INSERT INTO group_messages (group_id, sender_id, message_text, timestamp, is_system) VALUES (%s, %s, %s, UTC_TIMESTAMP(), 1)",
+                        (group['id'], payload['user_id'], welcome_text)
+                    )
+                    new_msg_id = _cur.lastrowid
+                    await _conn.commit()
+            all_members = await GroupModel.get_members(group['id'])
+            welcome_event = {
+                "type": "group_message",
+                "data": {
+                    "id": new_msg_id, "group_id": group['id'], "sender_id": payload['user_id'],
+                    "sender_name": joining_username, "message_text": welcome_text,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "is_system": 1, "reactions": []
+                }
+            }
+            for _m in all_members:
+                await manager.send_message_to_user(_m['id'], welcome_event)
 
     return {"success": True, "group_id": group['id'], "name": group['name']}
 
@@ -1384,6 +1803,44 @@ async def set_member_title(group_id: int, user_id: int, token: str, title: str =
         raise HTTPException(status_code=400, detail="User not found in group")
     return {"success": True}
 
+@app.patch("/api/groups/{group_id}/slow-mode")
+async def set_slow_mode(group_id: int, token: str, seconds: int = 0):
+    """Set slow mode delay (0 = off). Allowed: 0, 10, 30, 60, 300, 3600"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    role = await GroupModel.get_member_role(group_id, payload['user_id'])
+    if role != 'admin':
+        raise HTTPException(status_code=403, detail="Admins only")
+    if seconds not in (0, 10, 30, 60, 300, 3600):
+        raise HTTPException(status_code=400, detail="Invalid seconds value")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE `groups` SET slow_mode=%s WHERE id=%s", (seconds, group_id))
+            await conn.commit()
+    # Notify all members
+    members = await GroupModel.get_members(group_id)
+    for m in members:
+        await manager.send_message_to_user(m['id'], {
+            "type": "slow_mode_updated",
+            "data": {"group_id": group_id, "slow_mode": seconds}
+        })
+    return {"success": True, "slow_mode": seconds}
+
+@app.patch("/api/groups/{group_id}/welcome-message")
+async def set_welcome_message(group_id: int, token: str, message: Optional[str] = None):
+    payload = decode_jwt_token(token)
+    if not payload: raise HTTPException(401, "Invalid token")
+    role = await GroupModel.get_member_role(group_id, payload['user_id'])
+    if role != 'admin': raise HTTPException(403, "Admins only")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE `groups` SET welcome_message=%s WHERE id=%s", (message, group_id))
+            await conn.commit()
+    return {"success": True}
+
 @app.put("/api/groups/{group_id}/channel-settings")
 async def update_channel_settings_endpoint(group_id: int, request: UpdateChannelSettingsRequest, token: str):
     """Обновить настройки канала"""
@@ -1410,6 +1867,20 @@ async def update_channel_settings_endpoint(group_id: int, request: UpdateChannel
         invite_link=invite_link_val
     )
     group = await GroupModel.get_group(group_id)
+    members = await GroupModel.get_members(group_id)
+    for member in members:
+        await manager.send_message_to_user(member['id'], {
+            "type": "group_info_updated",
+            "data": {
+                "group_id": group_id,
+                "name": group.get('name', ''),
+                "description": group.get('description', ''),
+                "channel_type": group.get('channel_type'),
+                "channel_tag": group.get('channel_tag'),
+                "invite_link": group.get('invite_link'),
+                "slow_mode": group.get('slow_mode', 0),
+            }
+        })
     return {"success": True, "group": group}
 
 @app.delete("/api/conversation/{user_id}")
@@ -1644,6 +2115,148 @@ async def search_messages(
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e), "results": [], "query": query})
 
+@app.get("/api/users/{user_id}/username-history")
+async def get_username_history(user_id: int, token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(401, "Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT old_username, changed_at FROM username_history WHERE user_id=%s ORDER BY changed_at DESC LIMIT 10",
+                (user_id,)
+            )
+            rows = await cur.fetchall()
+            for r in rows:
+                if r.get('changed_at') and hasattr(r['changed_at'], 'isoformat'):
+                    r['changed_at'] = r['changed_at'].isoformat()
+    return {"history": rows}
+
+
+@app.get("/api/search/global")
+async def global_message_search(token: str, query: str, limit: int = 30):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(401, "Invalid token")
+    if not query.strip() or len(query.strip()) < 2:
+        return {"results": []}
+    user_id = payload['user_id']
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            # Search private messages
+            await cur.execute("""
+                SELECT m.id AS message_id, m.message_text, m.timestamp, m.sender_id,
+                       u.username AS sender_name,
+                       CASE WHEN m.sender_id=%s THEN m.receiver_id ELSE m.sender_id END AS chat_id,
+                       CASE WHEN m.sender_id=%s THEN ru.username ELSE su.username END AS chat_name,
+                       'private' AS chat_type
+                FROM messages m
+                JOIN users u ON u.id = m.sender_id
+                JOIN users su ON su.id = m.sender_id
+                JOIN users ru ON ru.id = m.receiver_id
+                WHERE (m.sender_id=%s OR m.receiver_id=%s)
+                  AND m.is_deleted=0 AND m.message_text LIKE %s
+                  AND m.message_text NOT LIKE '__%%__:%%'
+                ORDER BY m.timestamp DESC LIMIT %s
+            """, (user_id, user_id, user_id, user_id, f'%{query}%', limit))
+            private_results = await cur.fetchall()
+
+            # Search group messages
+            await cur.execute("""
+                SELECT gm.id AS message_id, gm.message_text, gm.timestamp, gm.sender_id,
+                       u.username AS sender_name, g.id AS chat_id, g.name AS chat_name,
+                       'group' AS chat_type
+                FROM group_messages gm
+                JOIN groups g ON g.id = gm.group_id
+                JOIN group_members mem ON mem.group_id = g.id AND mem.user_id=%s
+                JOIN users u ON u.id = gm.sender_id
+                WHERE gm.is_deleted=0 AND gm.message_text LIKE %s
+                  AND gm.is_system=0 AND gm.message_text NOT LIKE '__%%__:%%'
+                ORDER BY gm.timestamp DESC LIMIT %s
+            """, (user_id, f'%{query}%', limit))
+            group_results = await cur.fetchall()
+
+            all_results = list(private_results) + list(group_results)
+            all_results.sort(key=lambda x: x['timestamp'] or '', reverse=True)
+            for r in all_results[:limit]:
+                if r.get('timestamp') and hasattr(r['timestamp'], 'isoformat'):
+                    r['timestamp'] = r['timestamp'].isoformat()
+    return {"results": all_results[:limit]}
+
+
+# ========== Репорты ==========
+
+class ReportRequest(BaseModel):
+    target_type: str   # 'user', 'group', 'message'
+    target_id: int
+    reason: str        # 'spam', 'violence', 'scam', 'nsfw', 'harassment', 'other'
+    comment: str = ''
+
+@app.post("/api/reports")
+async def submit_report(request: ReportRequest, token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    if request.target_type not in ('user', 'group', 'message'):
+        raise HTTPException(status_code=400, detail="Invalid target_type")
+    reporter_id = payload['user_id']
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            # Prevent duplicate reports from same user for same target
+            await cur.execute(
+                "SELECT id FROM reports WHERE reporter_id=%s AND target_type=%s AND target_id=%s AND status='pending'",
+                (reporter_id, request.target_type, request.target_id)
+            )
+            if await cur.fetchone():
+                return {"success": True, "already_reported": True}
+            await cur.execute(
+                "INSERT INTO reports (reporter_id, target_type, target_id, reason, comment) VALUES (%s,%s,%s,%s,%s)",
+                (reporter_id, request.target_type, request.target_id, request.reason[:64], request.comment[:500])
+            )
+    return {"success": True}
+
+@app.get("/api/admin/reports")
+async def get_reports(token: str, status: str = 'pending', limit: int = 50, offset: int = 0):
+    await require_admin(token)
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                """SELECT r.*,
+                       u.username AS reporter_name,
+                       CASE
+                           WHEN r.target_type = 'user' THEN (SELECT tu.username FROM users tu WHERE tu.id = r.target_id)
+                           WHEN r.target_type = 'group' THEN (SELECT g.name FROM groups g WHERE g.id = r.target_id)
+                           WHEN r.target_type = 'message' THEN (SELECT SUBSTRING(m.message_text,1,120) FROM messages m WHERE m.id = r.target_id)
+                       END AS target_name,
+                       CASE
+                           WHEN r.target_type = 'user' THEN (SELECT tu.is_deleted FROM users tu WHERE tu.id = r.target_id)
+                           ELSE 0
+                       END AS target_deleted
+                   FROM reports r LEFT JOIN users u ON u.id = r.reporter_id
+                   WHERE r.status = %s ORDER BY r.created_at DESC LIMIT %s OFFSET %s""",
+                (status, limit, offset)
+            )
+            rows = await cur.fetchall()
+            for row in rows:
+                if row.get('created_at') and hasattr(row['created_at'], 'isoformat'):
+                    row['created_at'] = row['created_at'].replace(tzinfo=__import__('datetime').timezone.utc).isoformat()
+            return {"reports": rows}
+
+@app.patch("/api/admin/reports/{report_id}")
+async def update_report(report_id: int, token: str, status: str):
+    await require_admin(token)
+    if status not in ('reviewed', 'dismissed'):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE reports SET status=%s WHERE id=%s", (status, report_id))
+    return {"success": True}
+
 # ========== Экспорт чата ==========
 
 @app.get("/api/export/chat")
@@ -1777,14 +2390,132 @@ async def websocket_endpoint(websocket: WebSocket):
     
     user_id = payload['user_id']
     username = payload['username']
-    
+
+    # Reject banned or deleted users immediately
+    try:
+        _pool_check = await DatabasePool.get_pool()
+        async with _pool_check.acquire() as _cc:
+            async with _cc.cursor(aiomysql.DictCursor) as _ccur:
+                await _ccur.execute("SELECT is_banned, is_deleted, ban_expires_at FROM users WHERE id=%s", (user_id,))
+                _row = await _ccur.fetchone()
+        if _row:
+            if _row.get('is_deleted'):
+                await websocket.close(code=4003, reason="account_deleted")
+                return
+            if _row.get('is_banned'):
+                _ban_expires = _row.get('ban_expires_at')
+                if _ban_expires and datetime.now(timezone.utc) > _ban_expires.replace(tzinfo=timezone.utc):
+                    # Expired temporary ban — auto-unban and let through
+                    async with _pool_check.acquire() as _cc2:
+                        async with _cc2.cursor() as _ccur2:
+                            await _ccur2.execute("UPDATE users SET is_banned=0, ban_reason=NULL, ban_expires_at=NULL WHERE id=%s", (user_id,))
+                            await _cc2.commit()
+                else:
+                    await websocket.close(code=4003, reason="account_banned")
+                    return
+    except Exception:
+        pass
+
     await manager.connect(user_id, websocket)
     await UserModel.update_last_seen(user_id)
+
+    # Record / refresh session
+    try:
+        import hashlib as _hs
+        _token_hash = _hs.sha256(token.encode()).hexdigest()[:64]
+        _client_ip = websocket.headers.get('x-forwarded-for', websocket.client.host if websocket.client else None)
+        _ua = websocket.headers.get('user-agent', 'Aurora Web')
+        def _parse_device(ua: str) -> str:
+            # Browser
+            if 'Edg/' in ua or 'EdgA/' in ua: browser = 'Edge'
+            elif 'OPR/' in ua or 'Opera' in ua: browser = 'Opera'
+            elif 'YaBrowser/' in ua: browser = 'Яндекс'
+            elif 'Chrome/' in ua and 'Safari/' in ua: browser = 'Chrome'
+            elif 'Firefox/' in ua: browser = 'Firefox'
+            elif 'Safari/' in ua and 'Chrome/' not in ua: browser = 'Safari'
+            else: browser = 'Aurora Web'
+            # OS / device
+            if 'iPhone' in ua: os_ = 'iPhone'
+            elif 'iPad' in ua: os_ = 'iPad'
+            elif 'Android' in ua:
+                import re as _re
+                m = _re.search(r'Android [0-9.]+; ([^;)]+)', ua)
+                os_ = m.group(1).strip() if m else 'Android'
+            elif 'Windows' in ua: os_ = 'Windows'
+            elif 'Mac OS' in ua: os_ = 'macOS'
+            elif 'Linux' in ua: os_ = 'Linux'
+            else: os_ = ''
+            return f'{browser} · {os_}' if os_ else browser
+        _device = _parse_device(_ua)
+        _sp = await DatabasePool.get_pool()
+        async with _sp.acquire() as _sc:
+            async with _sc.cursor() as _scur:
+                await _scur.execute(
+                    "INSERT INTO user_sessions (user_id, token_hash, device_name, ip) VALUES (%s,%s,%s,%s) "
+                    "ON DUPLICATE KEY UPDATE last_active=UTC_TIMESTAMP(), ip=%s",
+                    (user_id, _token_hash, _device, _client_ip, _client_ip)
+                )
+                await _sc.commit()
+    except Exception: pass
 
     # Уведомляем всех об онлайн статусе
     for uid in list(manager.active_connections.keys()):
         if uid != user_id:
             await manager.send_message_to_user(uid, {"type": "user_status", "data": {"user_id": user_id, "is_online": True}})
+
+    # Отправляем сообщения "когда онлайн" для этого пользователя как получателя
+    try:
+        _pool = await DatabasePool.get_pool()
+        async with _pool.acquire() as _conn:
+            async with _conn.cursor(aiomysql.DictCursor) as _cur:
+                # Atomic claim: only process rows we successfully mark as sent
+                await _cur.execute(
+                    "UPDATE scheduled_messages SET sent=1 WHERE receiver_id=%s AND send_when_online=1 AND sent=0",
+                    (user_id,)
+                )
+                await _conn.commit()
+                if _cur.rowcount == 0:
+                    _pending_online = []
+                else:
+                    # Re-fetch the rows we just claimed (by matching sent=1 and recent update)
+                    await _cur.execute(
+                        "SELECT * FROM scheduled_messages WHERE receiver_id=%s AND send_when_online=1 AND sent=1 ORDER BY id DESC LIMIT %s",
+                        (user_id, _cur.rowcount)
+                    )
+                    _pending_online = await _cur.fetchall()
+                _now_ts_online = datetime.now(timezone.utc).isoformat()
+                for _m in _pending_online:
+                    _sender = await UserModel.get_user_by_id(_m['sender_id'])
+                    _sender_name = _sender['username'] if _sender else ''
+                    await _cur.execute(
+                        "INSERT INTO messages (sender_id, receiver_id, message_text, timestamp) VALUES (%s, %s, %s, UTC_TIMESTAMP())",
+                        (_m['sender_id'], _m['receiver_id'], _m['message_text'])
+                    )
+                    _msg_id = _cur.lastrowid
+                    await _conn.commit()
+                    await _cur.execute("SELECT username FROM users WHERE id = %s", (_m['receiver_id'],))
+                    _rcv = await _cur.fetchone()
+                    _receiver_name = _rcv['username'] if _rcv else ''
+                    _base = {
+                        "id": _msg_id,
+                        "sender_id": _m['sender_id'],
+                        "receiver_id": _m['receiver_id'],
+                        "message_text": _m['message_text'],
+                        "sender_name": _sender_name,
+                        "receiver_name": _receiver_name,
+                        "timestamp": _now_ts_online,
+                        "is_read": 0,
+                        "reactions": [],
+                        "scheduled_id": _m['id'],
+                    }
+                    await manager.send_message_to_user(_m['sender_id'], {"type": "message", "data": {**_base, "is_own": True}})
+                    await manager.send_message_to_user(_m['receiver_id'], {"type": "message", "data": _base})
+                    await manager.send_message_to_user(_m['sender_id'], {
+                        "type": "scheduled_sent",
+                        "data": {"scheduled_id": _m['id']}
+                    })
+    except Exception as _e:
+        print(f"send_when_online error: {_e}")
 
     # Отправляем недоставленные личные сообщения
     undelivered = await MessageModel.get_undelivered_messages(user_id)
@@ -1914,11 +2645,38 @@ async def websocket_endpoint(websocket: WebSocket):
                 )
                 
                 print(f"💾 Saved message {message_id} with reply_to_text='{reply_to_text}'")
-                        
+
+                # Apply disappear_after if set for this chat
+                _disappear_after_priv = None
+                try:
+                    _da_pool = await DatabasePool.get_pool()
+                    async with _da_pool.acquire() as _da_conn:
+                        async with _da_conn.cursor(aiomysql.DictCursor) as _da_cur:
+                            await _da_cur.execute(
+                                "SELECT seconds FROM chat_disappear_settings WHERE user_id=%s AND other_id=%s AND chat_type='private'",
+                                (user_id, receiver_id)
+                            )
+                            _da_row = await _da_cur.fetchone()
+                            if not _da_row:
+                                await _da_cur.execute(
+                                    "SELECT seconds FROM chat_disappear_settings WHERE user_id=%s AND other_id=%s AND chat_type='private'",
+                                    (receiver_id, user_id)
+                                )
+                                _da_row = await _da_cur.fetchone()
+                            if _da_row and _da_row['seconds']:
+                                _disappear_after_priv = _da_row['seconds']
+                                await _da_cur.execute(
+                                    "UPDATE messages SET disappear_after=%s WHERE id=%s",
+                                    (_disappear_after_priv, message_id)
+                                )
+                                await _da_conn.commit()
+                except Exception as _da_e:
+                    print(f"disappear_after error: {_da_e}")
+
                             # Получаем информацию об отправителе
                 sender = await UserModel.get_user_by_id(user_id)
 
-                
+
                 # Создаем данные сообщения
 # Создаем данные сообщения для отправки
                 message_data = {
@@ -1935,7 +2693,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     "reply_to_text": reply_to_text,
                     "reply_to_sender": reply_to_sender,
                     "reply_to_file_path": reply_to_file_path,
-                    "timestamp": current_timestamp
+                    "timestamp": current_timestamp,
+                    "disappear_after": _disappear_after_priv,
                 }
                 
                 # Отправляем получателю если он онлайн
@@ -1981,6 +2740,56 @@ async def websocket_endpoint(websocket: WebSocket):
                     if grp_info and grp_info.get('is_channel'):
                         if sender_role != 'admin':
                             continue
+
+                # Slow mode check (skip for admins)
+                if sender_role != 'admin':
+                    _pool_sm = await DatabasePool.get_pool()
+                    async with _pool_sm.acquire() as _conn_sm:
+                        async with _conn_sm.cursor(aiomysql.DictCursor) as _cur_sm:
+                            await _cur_sm.execute("SELECT slow_mode FROM `groups` WHERE id=%s", (group_id,))
+                            _grp_sm = await _cur_sm.fetchone()
+                            _slow = (_grp_sm or {}).get('slow_mode', 0) or 0
+                            if _slow > 0:
+                                await _cur_sm.execute(
+                                    "SELECT last_message_at FROM group_slow_mode_timestamps WHERE group_id=%s AND user_id=%s",
+                                    (group_id, user_id)
+                                )
+                                _last = await _cur_sm.fetchone()
+                                if _last:
+                                    _elapsed = (datetime.now(timezone.utc) - _last['last_message_at'].replace(tzinfo=timezone.utc)).total_seconds()
+                                    if _elapsed < _slow:
+                                        _wait = int(_slow - _elapsed)
+                                        await manager.send_message_to_user(user_id, {"type": "slow_mode_wait", "data": {"group_id": group_id, "wait_seconds": _wait}})
+                                        continue
+                            if _slow > 0:
+                                await _cur_sm.execute(
+                                    "INSERT INTO group_slow_mode_timestamps (group_id, user_id, last_message_at) VALUES (%s,%s,UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE last_message_at=UTC_TIMESTAMP()",
+                                    (group_id, user_id)
+                                )
+                # Antispam: block duplicate messages within 10 seconds
+                _asp_pool = await DatabasePool.get_pool()
+                async with _asp_pool.acquire() as _asp_conn:
+                    async with _asp_conn.cursor(aiomysql.DictCursor) as _asp_cur:
+                        if message_text:
+                            await _asp_cur.execute("""
+                                SELECT COUNT(*) as cnt FROM group_messages
+                                WHERE group_id=%s AND sender_id=%s AND message_text=%s
+                                AND timestamp >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 10 SECOND)
+                            """, (group_id, user_id, message_text))
+                            _spam_row = await _asp_cur.fetchone()
+                            if _spam_row and _spam_row['cnt'] > 0:
+                                await manager.send_message_to_user(user_id, {"type": "error", "data": {"message": "Duplicate message — please wait before sending the same message again"}})
+                                continue
+                        await _asp_cur.execute("""
+                            SELECT COUNT(*) as cnt FROM group_messages
+                            WHERE group_id=%s AND sender_id=%s
+                            AND timestamp >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 3 SECOND)
+                        """, (group_id, user_id))
+                        _flood_row = await _asp_cur.fetchone()
+                        if _flood_row and _flood_row['cnt'] >= 5:
+                            await manager.send_message_to_user(user_id, {"type": "error", "data": {"message": "Too many messages — slow down"}})
+                            continue
+
                 # Получаем информацию о сообщении, на которое отвечаем
                 reply_to_text = None
                 reply_to_sender = None
@@ -2022,9 +2831,30 @@ async def websocket_endpoint(websocket: WebSocket):
                     reply_to_file_path=reply_to_file_path
                 )
                 
+                # Apply disappear_after if set for this group (by any member)
+                _disappear_after_grp = None
+                try:
+                    _dag_pool = await DatabasePool.get_pool()
+                    async with _dag_pool.acquire() as _dag_conn:
+                        async with _dag_conn.cursor(aiomysql.DictCursor) as _dag_cur:
+                            await _dag_cur.execute(
+                                "SELECT seconds FROM chat_disappear_settings WHERE other_id=%s AND chat_type='group' AND seconds IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
+                                (group_id,)
+                            )
+                            _dag_row = await _dag_cur.fetchone()
+                            if _dag_row and _dag_row['seconds']:
+                                _disappear_after_grp = _dag_row['seconds']
+                                await _dag_cur.execute(
+                                    "UPDATE group_messages SET disappear_after=%s WHERE id=%s",
+                                    (_disappear_after_grp, message_id)
+                                )
+                                await _dag_conn.commit()
+                except Exception as _dag_e:
+                    print(f"group disappear_after error: {_dag_e}")
+
                 # Получаем отправителя
                 sender = await UserModel.get_user_by_id(user_id)
-                
+
                 # Определяем тип упоминания (@all / @here)
                 mention_type = None
                 if message_text:
@@ -2054,6 +2884,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "timestamp": current_timestamp,
                     "is_read": False,
                     "mention_type": mention_type,
+                    "disappear_after": _disappear_after_grp,
                 }
 
                 # Получаем всех участников группы
@@ -2130,7 +2961,8 @@ async def websocket_endpoint(websocket: WebSocket):
                                             "message_id": message_id,
                                             "new_text": new_text,
                                             "is_group": True,
-                                            "group_id": msg['group_id']
+                                            "group_id": msg['group_id'],
+                                            "sender_id": msg['sender_id']
                                         }
                                     })
                     else:
@@ -2141,22 +2973,18 @@ async def websocket_endpoint(websocket: WebSocket):
                             success = await MessageModel.update_message(message_id, new_text)
                             print(f"✏️ Private edit result: {success}")
                             if success:
-                                await manager.send_message_to_user(msg['sender_id'], {
+                                edit_payload = {
                                     "type": "message_edited",
                                     "data": {
                                         "message_id": message_id,
                                         "new_text": new_text,
-                                        "is_group": False
+                                        "is_group": False,
+                                        "sender_id": msg['sender_id'],
+                                        "receiver_id": msg['receiver_id']
                                     }
-                                })
-                                await manager.send_message_to_user(msg['receiver_id'], {
-                                    "type": "message_edited",
-                                    "data": {
-                                        "message_id": message_id,
-                                        "new_text": new_text,
-                                        "is_group": False
-                                    }
-                                })
+                                }
+                                await manager.send_message_to_user(msg['sender_id'], edit_payload)
+                                await manager.send_message_to_user(msg['receiver_id'], edit_payload)
                 except Exception as e:
                     print(f"❌ Error editing message: {e}")
                     import traceback
@@ -2198,6 +3026,37 @@ async def websocket_endpoint(websocket: WebSocket):
                                         "message_ids": newly_read,
                                         "reader_id": user_id,
                                         "read_counts": read_counts_upd,
+                                    }
+                                })
+
+            elif data.get("type") == "read_group":
+                _rg_group_id = data.get("group_id")
+                _rg_message_id = data.get("message_id")
+                if _rg_group_id and _rg_message_id:
+                    pool = await DatabasePool.get_pool()
+                    async with pool.acquire() as conn:
+                        async with conn.cursor(aiomysql.DictCursor) as cur:
+                            try:
+                                await cur.execute(
+                                    "INSERT IGNORE INTO group_message_reads (message_id, user_id, group_id) VALUES (%s, %s, %s)",
+                                    (_rg_message_id, user_id, _rg_group_id)
+                                )
+                                await conn.commit()
+                            except Exception:
+                                pass
+                            # Notify sender of the message
+                            await cur.execute(
+                                "SELECT sender_id FROM group_messages WHERE id=%s", (_rg_message_id,)
+                            )
+                            _rg_row = await cur.fetchone()
+                            if _rg_row and _rg_row['sender_id'] and _rg_row['sender_id'] != user_id:
+                                await manager.send_message_to_user(_rg_row['sender_id'], {
+                                    "type": "group_read_receipt",
+                                    "data": {
+                                        "message_id": _rg_message_id,
+                                        "group_id": _rg_group_id,
+                                        "reader_id": user_id,
+                                        "reader_name": username,
                                     }
                                 })
 
@@ -2594,12 +3453,60 @@ async def delete_admin_user(user_id: int, token: str):
                 (user_id,)
             )
             await conn.commit()
+    # Kick the deleted user out of all active sessions
+    await manager.force_disconnect(user_id)
+    # Notify contacts that profile changed
     deleted_event = {
         "type": "profile_updated",
         "data": {"user_id": user_id, "username": "Удалённый пользователь", "avatar": None, "status": None, "avatar_color": "#6b7280"}
     }
-    for uid in related_ids | {user_id}:
+    for uid in related_ids:
         await manager.send_message_to_user(uid, deleted_event)
+    return {"success": True}
+
+@app.post("/api/admin/users/{user_id}/ban")
+async def ban_user(user_id: int, token: str, reason: str = '', expires_at: str = ''):
+    """Заблокировать пользователя. expires_at — ISO datetime для временного бана (пустая строка = перманентный)"""
+    payload = await require_admin(token)
+    if payload['user_id'] == user_id:
+        raise HTTPException(status_code=400, detail="Cannot ban yourself")
+    expires_dt = None
+    if expires_at:
+        try:
+            from datetime import datetime as _dt
+            expires_dt = _dt.fromisoformat(expires_at.replace('Z', '+00:00'))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid expires_at format")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE users SET is_banned=1, ban_reason=%s, ban_expires_at=%s WHERE id=%s",
+                (reason or None, expires_dt, user_id)
+            )
+            await conn.commit()
+    expires_iso = expires_dt.isoformat() if expires_dt else None
+    # Kick user from all active sessions with ban message
+    sockets = list(manager.active_connections.get(user_id, []))
+    for ws in sockets:
+        try:
+            await ws.send_json({"type": "account_banned", "data": {"reason": reason, "expires_at": expires_iso}})
+            await ws.close(code=4003)
+        except Exception:
+            pass
+    manager.active_connections.pop(user_id, None)
+    manager.manual_offline.discard(user_id)
+    return {"success": True}
+
+@app.post("/api/admin/users/{user_id}/unban")
+async def unban_user(user_id: int, token: str):
+    """Разблокировать пользователя"""
+    await require_admin(token)
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE users SET is_banned=0, ban_reason=NULL WHERE id=%s", (user_id,))
+            await conn.commit()
     return {"success": True}
 
 @app.patch("/api/admin/users/{user_id}")
@@ -2650,7 +3557,9 @@ async def delete_own_account(token: str):
     }
     for uid in related_ids:
         await manager.send_message_to_user(uid, deleted_event)
+    # Notify the deleted user then close their sessions
     await manager.send_message_to_user(user_id, {"type": "account_deleted", "data": {}})
+    await manager.force_disconnect(user_id)
     return {"success": True}
 
 @app.get("/api/admin/support")
@@ -2704,6 +3613,126 @@ async def get_public_key(user_id: int, token: str):
     if not row: raise HTTPException(404, "User not found")
     return {"public_key": row.get("public_key")}
 
+# ========== Disappearing messages ==========
+
+async def disappear_message_worker():
+    while True:
+        await asyncio.sleep(60)
+        try:
+            pool = await DatabasePool.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor(aiomysql.DictCursor) as cur:
+                    await cur.execute("""
+                        SELECT id, sender_id, receiver_id FROM messages
+                        WHERE disappear_after IS NOT NULL
+                        AND TIMESTAMPDIFF(SECOND, timestamp, UTC_TIMESTAMP()) >= disappear_after
+                        AND is_deleted = 0
+                        LIMIT 100
+                    """)
+                    expired = await cur.fetchall()
+                    for m in expired:
+                        await cur.execute("UPDATE messages SET is_deleted=1, message_text=NULL WHERE id=%s", (m['id'],))
+                        for uid in {m['sender_id'], m['receiver_id']}:
+                            await manager.send_message_to_user(uid, {"type": "message_deleted", "data": {"message_id": m['id'], "is_group": False}})
+                    await cur.execute("""
+                        SELECT gm.id, gm.group_id FROM group_messages gm
+                        WHERE gm.disappear_after IS NOT NULL
+                        AND TIMESTAMPDIFF(SECOND, gm.timestamp, UTC_TIMESTAMP()) >= gm.disappear_after
+                        AND gm.is_deleted = 0
+                        LIMIT 100
+                    """)
+                    expired_grp = await cur.fetchall()
+                    for m in expired_grp:
+                        await cur.execute("UPDATE group_messages SET is_deleted=1, message_text=NULL WHERE id=%s", (m['id'],))
+                        members = await GroupModel.get_members(m['group_id'])
+                        for member in members:
+                            await manager.send_message_to_user(member['id'], {"type": "message_deleted", "data": {"message_id": m['id'], "is_group": True}})
+                    await conn.commit()
+        except Exception as e:
+            print(f"Disappear worker error: {e}")
+
+
+@app.post("/api/messages/disappear-setting")
+async def set_disappear_setting(token: str, receiver_id: Optional[int] = None, group_id: Optional[int] = None, seconds: Optional[int] = None):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    allowed = {None, 30, 300, 3600, 86400, 604800}
+    if seconds not in allowed:
+        raise HTTPException(status_code=400, detail="seconds must be one of: null, 30, 300, 3600, 86400, 604800")
+    user_id = payload['user_id']
+    if not receiver_id and not group_id:
+        raise HTTPException(status_code=400, detail="receiver_id or group_id required")
+    chat_type = 'group' if group_id else 'private'
+    other_id = group_id if group_id else receiver_id
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                INSERT INTO chat_disappear_settings (user_id, other_id, chat_type, seconds)
+                VALUES (%s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE seconds=%s
+            """, (user_id, other_id, chat_type, seconds, seconds))
+            await conn.commit()
+    # Notify the other party
+    if chat_type == 'private' and receiver_id:
+        await manager.send_message_to_user(receiver_id, {
+            "type": "disappear_setting_changed",
+            "data": {"chat_type": chat_type, "other_id": user_id, "seconds": seconds}
+        })
+    elif chat_type == 'group' and group_id:
+        members = await GroupModel.get_members(group_id)
+        for member in members:
+            if member['id'] != user_id:
+                await manager.send_message_to_user(member['id'], {
+                    "type": "disappear_setting_changed",
+                    "data": {"chat_type": chat_type, "other_id": group_id, "seconds": seconds}
+                })
+    return {"success": True, "seconds": seconds}
+
+
+@app.get("/api/messages/disappear-setting")
+async def get_disappear_setting(token: str, receiver_id: Optional[int] = None, group_id: Optional[int] = None):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user_id = payload['user_id']
+    if not receiver_id and not group_id:
+        raise HTTPException(status_code=400, detail="receiver_id or group_id required")
+    chat_type = 'group' if group_id else 'private'
+    other_id = group_id if group_id else receiver_id
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            if chat_type == 'group':
+                # For groups, any member's setting applies (most recently updated)
+                await cur.execute(
+                    "SELECT seconds FROM chat_disappear_settings WHERE other_id=%s AND chat_type='group' AND seconds IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
+                    (other_id,)
+                )
+                row = await cur.fetchone()
+                if not row:
+                    await cur.execute(
+                        "SELECT seconds FROM chat_disappear_settings WHERE other_id=%s AND chat_type='group' ORDER BY updated_at DESC LIMIT 1",
+                        (other_id,)
+                    )
+                    row = await cur.fetchone()
+            else:
+                await cur.execute(
+                    "SELECT seconds FROM chat_disappear_settings WHERE user_id=%s AND other_id=%s AND chat_type=%s",
+                    (user_id, other_id, chat_type)
+                )
+                row = await cur.fetchone()
+                if not row:
+                    # Check if the other party set the setting
+                    await cur.execute(
+                        "SELECT seconds FROM chat_disappear_settings WHERE user_id=%s AND other_id=%s AND chat_type=%s",
+                        (other_id, user_id, chat_type)
+                    )
+                    row = await cur.fetchone()
+    return {"seconds": row['seconds'] if row else None}
+
+
 # ========== Scheduled messages ==========
 
 async def scheduled_message_worker():
@@ -2720,15 +3749,18 @@ async def scheduled_message_worker():
                 async with conn.cursor(aiomysql.DictCursor) as cur:
                     await cur.execute("""
                         SELECT * FROM scheduled_messages
-                        WHERE sent = 0 AND scheduled_at <= UTC_TIMESTAMP()
+                        WHERE sent = 0 AND send_when_online = 0 AND scheduled_at <= UTC_TIMESTAMP()
                         LIMIT 50
                     """)
                     due = await cur.fetchall()
                     for m in due:
+                        # Atomically claim this message to avoid double-delivery on restart
                         await cur.execute(
-                            "UPDATE scheduled_messages SET sent = 1 WHERE id = %s", (m['id'],)
+                            "UPDATE scheduled_messages SET sent = 1 WHERE id = %s AND sent = 0", (m['id'],)
                         )
                         await conn.commit()
+                        if cur.rowcount == 0:
+                            continue  # another worker already claimed it
 
                         now_ts = datetime.now(timezone.utc).isoformat()
                         sender = await UserModel.get_user_by_id(m['sender_id'])
@@ -2761,7 +3793,7 @@ async def scheduled_message_worker():
                                 "reactions": [],
                                 "scheduled_id": m['id'],
                             }
-                            await manager.send_message_to_user(m['sender_id'], {"type": "message", "data": base})
+                            await manager.send_message_to_user(m['sender_id'], {"type": "message", "data": {**base, "is_own": True}})
                             await manager.send_message_to_user(m['receiver_id'], {"type": "message", "data": base})
 
                         elif m['group_id']:
@@ -2808,20 +3840,26 @@ async def schedule_message(request: ScheduleMessageRequest, token: str):
     if not request.message_text.strip(): raise HTTPException(400, "Empty message")
     if not request.receiver_id and not request.group_id:
         raise HTTPException(400, "receiver_id or group_id required")
-    try:
-        scheduled_at = datetime.fromisoformat(request.scheduled_at.replace('Z', '+00:00'))
-    except Exception:
-        raise HTTPException(400, "Invalid scheduled_at datetime")
+    send_when_online = bool(request.send_when_online)
+    scheduled_at = None
+    if not send_when_online:
+        if not request.scheduled_at:
+            raise HTTPException(400, "scheduled_at required when send_when_online is false")
+        try:
+            scheduled_at = datetime.fromisoformat(request.scheduled_at.replace('Z', '+00:00'))
+        except Exception:
+            raise HTTPException(400, "Invalid scheduled_at datetime")
     pool = await DatabasePool.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "INSERT INTO scheduled_messages (sender_id, receiver_id, group_id, message_text, scheduled_at) VALUES (%s, %s, %s, %s, %s)",
-                (payload['user_id'], request.receiver_id, request.group_id, request.message_text.strip(), scheduled_at)
+                "INSERT INTO scheduled_messages (sender_id, receiver_id, group_id, message_text, scheduled_at, send_when_online) VALUES (%s, %s, %s, %s, %s, %s)",
+                (payload['user_id'], request.receiver_id, request.group_id, request.message_text.strip(),
+                 scheduled_at if scheduled_at else datetime.now(timezone.utc), send_when_online)
             )
             new_id = cur.lastrowid
             await conn.commit()
-    return {"success": True, "id": new_id, "scheduled_at": scheduled_at.isoformat()}
+    return {"success": True, "id": new_id, "scheduled_at": scheduled_at.isoformat() if scheduled_at else None, "send_when_online": send_when_online}
 
 @app.get("/api/messages/scheduled")
 async def get_scheduled_messages(token: str, receiver_id: Optional[int] = None, group_id: Optional[int] = None):
@@ -2939,6 +3977,38 @@ async def get_poll(poll_id: int, token: str):
         "voters": voter_names if not poll['is_anonymous'] else [[] for _ in options],
     }
 
+async def _broadcast_poll_update(poll_id: int):
+    """Notify all users in the chat that contains this poll."""
+    try:
+        poll_text = f'__poll__:{poll_id}'
+        pool = await DatabasePool.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT group_id FROM group_messages WHERE message_text = %s AND is_deleted = 0 LIMIT 1",
+                    (poll_text,)
+                )
+                gm = await cur.fetchone()
+                if gm:
+                    await manager.send_to_group_members(gm['group_id'], {
+                        "type": "poll_updated", "data": {"poll_id": poll_id}
+                    })
+                else:
+                    await cur.execute(
+                        "SELECT sender_id, receiver_id FROM messages WHERE message_text = %s AND is_deleted = 0 LIMIT 1",
+                        (poll_text,)
+                    )
+                    pm = await cur.fetchone()
+                    if pm:
+                        await manager.send_message_to_user(pm['sender_id'], {
+                            "type": "poll_updated", "data": {"poll_id": poll_id}
+                        })
+                        await manager.send_message_to_user(pm['receiver_id'], {
+                            "type": "poll_updated", "data": {"poll_id": poll_id}
+                        })
+    except Exception as e:
+        print(f"❌ poll broadcast error: {e}")
+
 @app.delete("/api/polls/{poll_id}/vote")
 async def unvote_poll(poll_id: int, token: str):
     payload = decode_jwt_token(token)
@@ -2952,6 +4022,7 @@ async def unvote_poll(poll_id: int, token: str):
                 (poll_id, payload['user_id'])
             )
             await conn.commit()
+    asyncio.create_task(_broadcast_poll_update(poll_id))
     return {"ok": True}
 
 @app.post("/api/polls/{poll_id}/vote")
@@ -2977,6 +4048,7 @@ async def vote_poll(poll_id: int, request: VotePollRequest, token: str):
                 (poll_id, payload['user_id'], json.dumps(request.option_indices))
             )
             await conn.commit()
+    asyncio.create_task(_broadcast_poll_update(poll_id))
     return {"ok": True}
 
 # ========== Media Player ==========

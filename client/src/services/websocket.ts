@@ -1,15 +1,19 @@
 import { config } from '../config';
 
+export type WsConnectionState = 'connected' | 'connecting' | 'waiting';
+
 class WebSocketService {
     private static instance: WebSocketService;
     private socket: WebSocket | null = null;
     private handlers: Set<(data: any) => void> = new Set();
+    private statusHandlers: Set<(state: WsConnectionState) => void> = new Set();
     private token: string = '';
     private queue: any[] = [];
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private reconnectAttempts: number = 0;
     private readonly MAX_RECONNECT_DELAY = 30000;
     private readonly MAX_QUEUE_SIZE = 100;
+    private _connState: WsConnectionState = 'connecting';
 
     private constructor() {}
 
@@ -53,10 +57,13 @@ class WebSocketService {
         const ws = new WebSocket(url);
         this.socket = ws;
 
+        this._setConnState('connecting');
+
         ws.onopen = () => {
             if (this.socket !== ws) { console.log('⚠️ onopen: stale socket, ignoring'); return; }
             console.log('✅ WS connected, flushing queue:', this.queue.length);
             this.reconnectAttempts = 0;
+            this._setConnState('connected');
             this.queue.forEach(msg => ws.send(JSON.stringify(msg)));
             this.queue = [];
         };
@@ -69,7 +76,11 @@ class WebSocketService {
                 this.reconnectAttempts++;
                 const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), this.MAX_RECONNECT_DELAY);
                 console.log(`🔄 Reconnect attempt ${this.reconnectAttempts} in ${delay}ms`);
-                this.reconnectTimer = setTimeout(() => this.connect(this.token), delay);
+                this._setConnState(delay > 2000 ? 'waiting' : 'connecting');
+                this.reconnectTimer = setTimeout(() => {
+                    this._setConnState('connecting');
+                    this.connect(this.token);
+                }, delay);
             }
         };
 
@@ -205,6 +216,20 @@ class WebSocketService {
             console.log('📋 handler removed, total:', this.handlers.size);
         };
     }
+
+    private _setConnState(state: WsConnectionState) {
+        if (this._connState === state) return;
+        this._connState = state;
+        this.statusHandlers.forEach(h => h(state));
+    }
+
+    onConnectionState(handler: (state: WsConnectionState) => void): () => void {
+        this.statusHandlers.add(handler);
+        handler(this._connState); // emit current state immediately
+        return () => { this.statusHandlers.delete(handler); };
+    }
+
+    getConnectionState(): WsConnectionState { return this._connState; }
 }
 
 export const wsService = WebSocketService.getInstance();

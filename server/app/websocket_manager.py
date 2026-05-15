@@ -53,6 +53,18 @@ class ConnectionManager:
             self.disconnect(user_id, ws)
         return delivered
 
+    async def force_disconnect(self, user_id: int):
+        """Send account_deleted event and close all WS connections for the user."""
+        sockets = list(self.active_connections.get(user_id, []))
+        for ws in sockets:
+            try:
+                await ws.send_json({"type": "account_deleted"})
+                await ws.close(code=1008)
+            except Exception:
+                pass
+        self.active_connections.pop(user_id, None)
+        self.manual_offline.discard(user_id)
+
     async def send_to_group_members(self, group_id: int, message: dict, exclude_user_id: int = None):
         from .models import GroupModel
         members = await GroupModel.get_members(group_id)

@@ -28,7 +28,7 @@ const COLORS = ['#6366f1','#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec
 const FolderManager: React.FC<FolderManagerProps> = ({
     token, folders, users, groups, isDark: dm, baseUrl, onClose, onBack, onFoldersChange,
 }) => {
-    const { t, lang } = useLang();
+    const { t } = useLang();
     const [selectedId, setSelectedId] = useState<number | null>(folders[0]?.id ?? null);
     const [newName, setNewName] = useState('');
     const [newColor, setNewColor] = useState('#6366f1');
@@ -50,11 +50,9 @@ const FolderManager: React.FC<FolderManagerProps> = ({
 
     // Theme — single unified background, OLED = pure black
     const bg        = isOled ? '#000000' : dm ? '#13131f' : '#ffffff';
-    const bgLeft    = bg;
     const text      = isOled ? '#e2e0ff' : dm ? '#e2e8f0' : '#1e1b4b';
-    const sub       = isOled ? '#4a3a6a' : dm ? '#4a4a7a' : '#9ca3af';
+    const sub       = isOled ? '#7c6aaa' : dm ? '#7c7caa' : '#9ca3af';
     const accent    = isOled ? '#a78bfa' : '#6366f1';
-    const divider   = 'transparent'; // no visible dividers anywhere
     const activeRow = isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.06)';
     const hoverRow  = isOled ? 'rgba(167,139,250,0.04)' : dm ? 'rgba(99,102,241,0.05)' : 'rgba(99,102,241,0.03)';
 

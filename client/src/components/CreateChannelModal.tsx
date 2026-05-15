@@ -1,6 +1,5 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../services/api';
-import { config } from '../config';
 import { useLang } from '../i18n';
 import AvatarCropper from './AvatarCropper';
 
@@ -25,6 +24,14 @@ const CreateChannelModal: React.FC<CreateChannelModalProps> = ({ token, isDark =
     const [error, setError] = useState('');
     const [closing, setClosing] = useState(false);
     const fileRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        return () => {
+            if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+            if (cropSrc) URL.revokeObjectURL(cropSrc);
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const close = () => { setClosing(true); setTimeout(onClose, 180); };
 

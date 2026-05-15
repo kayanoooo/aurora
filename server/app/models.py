@@ -125,6 +125,7 @@ class UserModel:
                     if row.get('last_msg_time') and hasattr(row['last_msg_time'], 'isoformat'):
                         row['last_msg_time'] = row['last_msg_time'].replace(tzinfo=__import__('datetime').timezone.utc).isoformat()
                     row['is_developer'] = row.get('tag') in ('kayano', 'durov')
+                    row['is_tester'] = row.get('tag') in ('even', 'revesore', 'kokoko')
                 return rows
 
     @staticmethod

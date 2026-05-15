@@ -20,6 +20,7 @@ export interface User {
     last_msg_sender_id?: number | null;
     last_msg_is_read?: number | null;
     is_developer?: boolean;
+    is_tester?: boolean;
     now_playing?: string | null;
 }
 
@@ -63,6 +64,9 @@ export interface Group {
     channel_tag?: string | null;
     invite_link?: string | null;
     my_role?: 'admin' | 'member';
+    slow_mode?: number;
+    last_msg_is_read?: number;
+    welcome_message?: string | null;
 }
 
 export interface GroupMember {
@@ -125,5 +129,13 @@ export interface ThemeSettings {
     bubbleOtherColor: string;
     chatBg: string;
     darkMode: boolean;
+    avatarColor?: string;
+}
+
+export interface AccountEntry {
+    token: string;
+    userId: number;
+    username: string;
+    avatar?: string;
     avatarColor?: string;
 }

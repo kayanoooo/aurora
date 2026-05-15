@@ -1,13 +1,20 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useSyncExternalStore } from 'react';
 import ReactDOM from 'react-dom';
 import { api } from '../services/api';
-import { ThemeSettings } from '../types';
+import { ThemeSettings, AccountEntry } from '../types';
 import { config } from '../config';
 import EmojiPicker from './EmojiPicker';
 import type { StickerPack } from './MediaPicker';
 import { setLang as setGlobalLang, useLang } from '../i18n';
 import AvatarCropper from './AvatarCropper';
 import PolicyModal from './PolicyModal';
+
+const getIsMobile = () => window.innerWidth < 600;
+const subscribeResize = (cb: () => void) => {
+    window.addEventListener('resize', cb);
+    return () => window.removeEventListener('resize', cb);
+};
+const useIsMobile = () => useSyncExternalStore(subscribeResize, getIsMobile, () => false);
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -64,7 +71,7 @@ const SubModal: React.FC<SubModalProps> = ({ title, onBack, dm, children }) => {
     const col = dm ? '#e2e8f0' : '#1e1b4b';
     const [closing, setClosing] = useState(false);
     const close = () => { setClosing(true); setTimeout(onBack, 180); };
-    const isMobile = window.innerWidth < 600;
+    const isMobile = useIsMobile();
 
     const panelContent = (
         <>
@@ -111,11 +118,11 @@ const SubModal: React.FC<SubModalProps> = ({ title, onBack, dm, children }) => {
 
 // ─── Profile sub-modal ────────────────────────────────────────────────────────
 
-interface ProfileSubProps { token: string; currentUsername: string; currentAvatar?: string; currentStatus?: string; theme: ThemeSettings; onThemeChange: (t: ThemeSettings) => void; onProfileUpdate: (u: string, a?: string, s?: string, tag?: string) => void; onBack: () => void; }
-const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, currentAvatar, currentStatus, theme, onThemeChange, onProfileUpdate, onBack }) => {
+interface ProfileSubProps { token: string; currentUsername: string; currentAvatar?: string; currentStatus?: string; theme: ThemeSettings; onProfileUpdate: (u: string, a?: string, s?: string, tag?: string) => void; onBack: () => void; }
+const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, currentAvatar, currentStatus, theme, onProfileUpdate, onBack }) => {
     const { t } = useLang();
     const dm = theme.darkMode;
-    const isMobile = window.innerWidth < 600;
+    const isMobile = useIsMobile();
     const col = dm ? '#e2e8f0' : '#1e1b4b';
     const subCol = dm ? '#7c7caa' : '#6b7280';
     const inputBg = dmC(dm, '#1e1e30', '#f5f3ff', '#050508');
@@ -128,7 +135,7 @@ const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, cu
     const [phone, setPhone] = useState('');
     const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
-    const [avatarColor, setAvatarColor] = useState(theme.avatarColor || '#6366f1');
+    const avatarColor = theme.avatarColor || '#6366f1';
     const [confirmRemove, setConfirmRemove] = useState(false);
     const [saving, setSaving] = useState(false);
     const [msg, setMsg] = useState('');
@@ -142,7 +149,6 @@ const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, cu
                 setTag(u.tag || '');
                 setBirthday(u.birthday || '');
                 setPhone(u.phone || '');
-                if (u.avatar_color) setAvatarColor(u.avatar_color);
             }
         }).catch(() => {});
     }, [token]);
@@ -191,14 +197,13 @@ const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, cu
                 if (r.success) newAvatar = r.avatar;
                 else { setMsg(t('Upload error')); setSaving(false); return; }
             }
-            const data: any = { status, avatar_color: avatarColor };
+            const data: any = { status };
             if (username !== currentUsername) data.username = username;
             if (tag) data.tag = tag;
             if (birthday) data.birthday = birthday;
             if (phone) data.phone = phone;
             const r = await api.updateProfile(token, data);
             if (!r.success) { setMsg(r.detail || t('Error')); setSaving(false); return; }
-            onThemeChange({ ...theme, avatarColor });
             onProfileUpdate(username, newAvatar || undefined, status || undefined, tag || undefined);
             setMsg(t('Changes saved'));
             setAvatarFile(null);
@@ -254,14 +259,6 @@ const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, cu
             <label style={lbl}>{t('About yourself')}</label>
             <textarea style={{ ...inp, resize: 'vertical', minHeight: 68 }} value={status} onChange={e => setStatus(e.target.value)} placeholder={t('About yourself') + '...'} maxLength={150} />
 
-            <label style={lbl}>{t('Avatar color') || 'Avatar color'}</label>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                {['#6366f1','#8b5cf6','#06b6d4','#22c55e','#f43f5e','#f59e0b','#ec4899','#64748b'].map(c => (
-                    <div key={c} onClick={() => setAvatarColor(c)} style={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: c, cursor: 'pointer', border: avatarColor === c ? '3px solid white' : '3px solid transparent', boxShadow: avatarColor === c ? `0 0 0 2px ${c}` : 'none', transition: 'all 0.15s' }} />
-                ))}
-                <input type="color" value={avatarColor} onChange={e => setAvatarColor(e.target.value)} style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', cursor: 'pointer', padding: 2 }} title="Custom color" />
-            </div>
-
             <label style={lbl}>{t('Birthday')}</label>
             <input type="date" style={inp} value={birthday} onChange={e => setBirthday(e.target.value)} />
 
@@ -293,6 +290,163 @@ const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, cu
             </button>
             {msg && <div style={{ marginTop: 10, fontSize: 13, color: msg.startsWith('✓') ? '#10b981' : '#ef4444', textAlign: 'center', fontWeight: 600 }}>{msg}</div>}
             {cropSrc && <AvatarCropper src={cropSrc} isDark={dm} onApply={handleCropApply} onCancel={handleCropCancel} />}
+        </SubModal>
+    );
+};
+
+// ─── Sessions sub-modal ──────────────────────────────────────────────────────
+
+function getSessionIcon(deviceName: string, isCurrent: boolean, dm: boolean, isOled: boolean) {
+    const d = deviceName.toLowerCase();
+    const stroke = isCurrent ? 'white' : (isOled ? '#a78bfa' : dm ? '#a5b4fc' : '#6366f1');
+    const bg = isCurrent
+        ? 'linear-gradient(135deg,#6366f1,#8b5cf6)'
+        : isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.12)' : '#ede9fe';
+
+    let icon: React.ReactNode;
+    if (d.includes('iphone') || d.includes('android') || d.includes('mobile')) {
+        icon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>;
+    } else if (d.includes('ipad') || d.includes('tablet')) {
+        icon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>;
+    } else if (d.includes('chrome')) {
+        icon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="21.17" y1="8" x2="12" y2="8"/><line x1="3.95" y1="6.06" x2="8.54" y2="14"/><line x1="10.88" y1="21.94" x2="15.46" y2="14"/></svg>;
+    } else if (d.includes('firefox')) {
+        icon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8c-2.5 0-4 2-4 4s1.5 4 4 4 4-2 4-4"/></svg>;
+    } else if (d.includes('safari')) {
+        icon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16.24 7.76l-2.12 6.36-6.36 2.12 2.12-6.36z"/></svg>;
+    } else if (d.includes('edge')) {
+        icon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10l6.34.85A2 2 0 0 1 13 13l-.85 6.34z"/><circle cx="12" cy="12" r="1"/></svg>;
+    } else {
+        icon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>;
+    }
+    return { icon, bg };
+}
+
+interface SessionsSubProps { token: string; theme: ThemeSettings; onBack: () => void; }
+const SessionsSubModal: React.FC<SessionsSubProps> = ({ token, theme, onBack }) => {
+    const { lang } = useLang();
+    const dm = theme.darkMode;
+    const isOled = getIsOled();
+    const col = dm ? '#e2e8f0' : '#1e1b4b';
+    const subCol = dm ? '#7c7caa' : '#6b7280';
+    const border = dmC(dm, 'rgba(99,102,241,0.14)', '#ede9fe', 'rgba(167,139,250,0.1)');
+    const cardBg2 = dmC(dm, '#12122a', '#f8f7ff', '#05050a');
+
+    const [sessions, setSessions] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [terminating, setTerminating] = useState<number | null>(null);
+    const [terminatingAll, setTerminatingAll] = useState(false);
+
+    useEffect(() => {
+        fetch(`${config.API_URL}/sessions?token=${token}`)
+            .then(r => r.json()).then(d => setSessions(d.sessions || [])).catch(() => {})
+            .finally(() => setLoading(false));
+    }, [token]);
+
+    const terminate = async (id: number) => {
+        setTerminating(id);
+        try {
+            await fetch(`${config.API_URL}/sessions/${id}?token=${token}`, { method: 'DELETE' });
+            setSessions(prev => prev.filter(s => s.id !== id));
+        } finally { setTerminating(null); }
+    };
+
+    const terminateAll = async () => {
+        setTerminatingAll(true);
+        try {
+            await fetch(`${config.API_URL}/sessions?token=${token}`, { method: 'DELETE' });
+            setSessions(prev => prev.filter(s => s.is_current));
+        } finally { setTerminatingAll(false); }
+    };
+
+    const fmtDate = (iso: string) => {
+        const d = new Date(iso);
+        const now = new Date();
+        const diffMs = now.getTime() - d.getTime();
+        const diffMin = Math.floor(diffMs / 60000);
+        const diffH = Math.floor(diffMin / 60);
+        if (diffMin < 1) return lang === 'en' ? 'just now' : 'только что';
+        if (diffMin < 60) return lang === 'en' ? `${diffMin} min ago` : `${diffMin} мин. назад`;
+        const hhmm = d.toLocaleTimeString(lang === 'en' ? 'en-US' : 'ru-RU', { hour: '2-digit', minute: '2-digit' });
+        const today = new Date(); today.setHours(0,0,0,0);
+        const yesterday = new Date(today); yesterday.setDate(today.getDate()-1);
+        const msgDay = new Date(d); msgDay.setHours(0,0,0,0);
+        if (msgDay.getTime() === today.getTime()) return (lang === 'en' ? 'today at ' : 'сегодня в ') + hhmm;
+        if (msgDay.getTime() === yesterday.getTime()) return (lang === 'en' ? 'yesterday at ' : 'вчера в ') + hhmm;
+        if (diffH < 168) return d.toLocaleDateString(lang === 'en' ? 'en-US' : 'ru-RU', { weekday: 'short' });
+        return d.toLocaleDateString(lang === 'en' ? 'en-US' : 'ru-RU', { day: 'numeric', month: 'short' });
+    };
+
+    const current = sessions.find(s => s.is_current);
+    const others = sessions.filter(s => !s.is_current);
+
+    const SessionCard = ({ s }: { s: any }) => {
+        const { icon, bg } = getSessionIcon(s.device_name, s.is_current, dm, isOled);
+        const [browser, os] = s.device_name.includes(' · ')
+            ? s.device_name.split(' · ')
+            : [s.device_name, ''];
+        return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 14px', backgroundColor: cardBg2, borderRadius: 14, border: `1px solid ${border}` }}>
+                <div style={{ width: 44, height: 44, borderRadius: 12, background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: s.is_current ? '0 4px 12px rgba(99,102,241,0.35)' : 'none' }}>
+                    {icon}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: col, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{browser}</div>
+                    {os && <div style={{ fontSize: 12, color: subCol, marginTop: 1 }}>{os}</div>}
+                    <div style={{ fontSize: 11, color: subCol, marginTop: 2, display: 'flex', gap: 4, alignItems: 'center' }}>
+                        {s.ip && <span>{s.ip}</span>}
+                        {s.ip && <span>·</span>}
+                        <span>{fmtDate(s.last_active)}</span>
+                    </div>
+                </div>
+                {!s.is_current && (
+                    <button onClick={() => terminate(s.id)} disabled={terminating === s.id}
+                        style={{ background: 'none', border: `1.5px solid rgba(239,68,68,0.35)`, borderRadius: 10, color: '#ef4444', cursor: 'pointer', padding: '6px 12px', fontSize: 12, fontWeight: 600, flexShrink: 0, opacity: terminating === s.id ? 0.5 : 1 }}>
+                        {terminating === s.id ? '...' : (lang === 'en' ? 'End' : 'Завершить')}
+                    </button>
+                )}
+            </div>
+        );
+    };
+
+    return (
+        <SubModal title={lang === 'en' ? 'Active sessions' : 'Активные сессии'} onBack={onBack} dm={dm}>
+            {loading && <div style={{ textAlign: 'center', padding: 32, color: subCol }}>
+                <div style={{ width: 24, height: 24, border: `2px solid ${dm ? 'rgba(99,102,241,0.3)' : 'rgba(99,102,241,0.2)'}`, borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 0.7s linear infinite', margin: '0 auto' }} />
+            </div>}
+
+            {!loading && current && (
+                <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: isOled ? '#7c6aaa' : dm ? '#5a5a8a' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                        {lang === 'en' ? 'This device' : 'Это устройство'}
+                    </div>
+                    <SessionCard s={current} />
+                </div>
+            )}
+
+            {!loading && others.length > 0 && (
+                <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: isOled ? '#7c6aaa' : dm ? '#5a5a8a' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                        {lang === 'en' ? 'Active sessions' : 'Активные сеансы'}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {others.map(s => <SessionCard key={s.id} s={s} />)}
+                    </div>
+                </div>
+            )}
+
+            {!loading && others.length > 0 && (
+                <button onClick={terminateAll} disabled={terminatingAll}
+                    style={{ width: '100%', padding: '12px', borderRadius: 12, border: 'none', background: isOled ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.08)', color: '#ef4444', cursor: 'pointer', fontSize: 13, fontWeight: 700, marginTop: 16, opacity: terminatingAll ? 0.6 : 1 }}>
+                    {terminatingAll ? '...' : (lang === 'en' ? 'End all other sessions' : 'Завершить все другие сеансы')}
+                </button>
+            )}
+
+            {!loading && sessions.length === 0 && (
+                <div style={{ textAlign: 'center', color: subCol, padding: 32, fontSize: 13 }}>
+                    {lang === 'en' ? 'No sessions found' : 'Нет активных сеансов'}
+                </div>
+            )}
         </SubModal>
     );
 };
@@ -381,7 +535,9 @@ const PrivacySubModal: React.FC<PrivacySubProps> = ({ token, theme, onBack, onLo
     const [saving, setSaving] = useState(false);
     const [msg, setMsg] = useState('');
     const [showBlocked, setShowBlocked] = useState(false);
+    const [showSessions, setShowSessions] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState(false);
+    const [deleteConfirmText, setDeleteConfirmText] = useState('');
     const [deleting, setDeleting] = useState(false);
 
     useEffect(() => {
@@ -436,6 +592,9 @@ const PrivacySubModal: React.FC<PrivacySubProps> = ({ token, theme, onBack, onLo
     if (showBlocked) {
         return <BlockedUsersSubModal token={token} theme={theme} onBack={() => setShowBlocked(false)} />;
     }
+    if (showSessions) {
+        return <SessionsSubModal token={token} theme={theme} onBack={() => setShowSessions(false)} />;
+    }
 
     return (
         <SubModal title={t('Privacy')} onBack={onBack} dm={dm}>
@@ -468,6 +627,18 @@ const PrivacySubModal: React.FC<PrivacySubProps> = ({ token, theme, onBack, onLo
                 <Toggle value={allowMessages} onChange={setAllowMessages} />
             </div>
 
+            {/* Active sessions */}
+            <button onClick={() => setShowSessions(true)} style={{ width: '100%', padding: '12px 14px', borderRadius: 12, backgroundColor: cardBg, boxShadow: cardBox(dm), display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', color: col, fontSize: 14, fontWeight: 500, marginBottom: 8, textAlign: 'left' as const, border: 'none' }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: col }}>{lang === 'en' ? 'Active sessions' : 'Активные сессии'}</div>
+                    <div style={{ fontSize: 12, color: subCol }}>{lang === 'en' ? 'Manage devices' : 'Управление устройствами'}</div>
+                </div>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={subCol} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+
             {/* Blocked users */}
             <button
                 onClick={() => setShowBlocked(true)}
@@ -490,22 +661,37 @@ const PrivacySubModal: React.FC<PrivacySubProps> = ({ token, theme, onBack, onLo
             {/* Delete account */}
             <div style={{ marginTop: 20, borderTop: `1px solid ${dmC(dm, '#2a2a3d40', '#ede9fe', 'rgba(167,139,250,0.08)')}`, paddingTop: 16 }}>
                 {!confirmDelete ? (
-                    <button onClick={() => setConfirmDelete(true)} style={{ width: '100%', padding: '12px', borderRadius: 12, border: '1.5px solid rgba(239,68,68,0.4)', background: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+                    <button onClick={() => { setConfirmDelete(true); setDeleteConfirmText(''); }} style={{ width: '100%', padding: '12px', borderRadius: 12, border: '1.5px solid rgba(239,68,68,0.4)', background: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
                         🗑 {lang === 'en' ? 'Delete account' : 'Удалить аккаунт'}
                     </button>
                 ) : (
                     <div style={{ background: cardBg, border: `1.5px solid rgba(239,68,68,0.4)`, borderRadius: 12, padding: '14px' }}>
-                        <div style={{ fontSize: 13, color: '#ef4444', fontWeight: 600, marginBottom: 4 }}>
-                            {lang === 'en' ? '⚠️ Delete account?' : '⚠️ Удалить аккаунт?'}
+                        <div style={{ fontSize: 13, color: '#ef4444', fontWeight: 700, marginBottom: 4 }}>
+                            ⚠️ {lang === 'en' ? 'Delete account?' : 'Удалить аккаунт?'}
                         </div>
-                        <div style={{ fontSize: 12, color: subCol, marginBottom: 12 }}>
-                            {lang === 'en' ? 'This action is irreversible. All your data will be removed.' : 'Это действие необратимо. Все данные будут удалены.'}
+                        <div style={{ fontSize: 12, color: subCol, marginBottom: 12, lineHeight: 1.5 }}>
+                            {lang === 'en'
+                                ? 'This is irreversible. All messages, files and data will be permanently deleted.'
+                                : 'Это действие необратимо. Все сообщения, файлы и данные будут безвозвратно удалены.'}
                         </div>
+                        <div style={{ fontSize: 12, color: subCol, marginBottom: 6 }}>
+                            {lang === 'en' ? <>Type <strong style={{ color: '#ef4444' }}>DELETE</strong> to confirm:</> : <>Введите <strong style={{ color: '#ef4444' }}>УДАЛИТЬ</strong> для подтверждения:</>}
+                        </div>
+                        <input
+                            type="text"
+                            value={deleteConfirmText}
+                            onChange={e => setDeleteConfirmText(e.target.value)}
+                            placeholder={lang === 'en' ? 'DELETE' : 'УДАЛИТЬ'}
+                            style={{ width: '100%', boxSizing: 'border-box', padding: '8px 11px', border: `1.5px solid ${deleteConfirmText === (lang === 'en' ? 'DELETE' : 'УДАЛИТЬ') ? '#ef4444' : dmC(dm, 'rgba(255,255,255,0.1)', '#e5e7eb', 'rgba(167,139,250,0.2)')}`, borderRadius: 8, background: dmC(dm, '#050508', '#f9fafb', 'rgba(0,0,0,0.2)'), color: dm ? '#e2e8f0' : '#1e1b4b', fontSize: 13, outline: 'none', fontFamily: 'monospace', letterSpacing: 2, marginBottom: 12 }}
+                        />
                         <div style={{ display: 'flex', gap: 8 }}>
-                            <button onClick={handleDeleteAccount} disabled={deleting} style={{ flex: 1, padding: '10px', borderRadius: 10, border: 'none', background: '#ef4444', color: 'white', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
-                                {deleting ? '...' : (lang === 'en' ? 'Yes, delete' : 'Да, удалить')}
+                            <button
+                                onClick={handleDeleteAccount}
+                                disabled={deleting || deleteConfirmText !== (lang === 'en' ? 'DELETE' : 'УДАЛИТЬ')}
+                                style={{ flex: 1, padding: '10px', borderRadius: 10, border: 'none', background: (deleting || deleteConfirmText !== (lang === 'en' ? 'DELETE' : 'УДАЛИТЬ')) ? (dm ? '#2a2a3d' : '#e5e7eb') : '#ef4444', color: (deleting || deleteConfirmText !== (lang === 'en' ? 'DELETE' : 'УДАЛИТЬ')) ? subCol : 'white', cursor: (deleting || deleteConfirmText !== (lang === 'en' ? 'DELETE' : 'УДАЛИТЬ')) ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 700, transition: 'all 0.2s' }}>
+                                {deleting ? '...' : (lang === 'en' ? 'Delete permanently' : 'Удалить навсегда')}
                             </button>
-                            <button onClick={() => setConfirmDelete(false)} style={{ flex: 1, padding: '10px', borderRadius: 10, boxShadow: cardBox(dm), background: 'none', color: subCol, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                            <button onClick={() => { setConfirmDelete(false); setDeleteConfirmText(''); }} style={{ flex: 1, padding: '10px', borderRadius: 10, border: `1px solid ${dmC(dm, 'rgba(255,255,255,0.1)', '#e5e7eb', 'rgba(167,139,250,0.15)')}`, background: 'none', color: subCol, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
                                 {lang === 'en' ? 'Cancel' : 'Отмена'}
                             </button>
                         </div>
@@ -1045,7 +1231,7 @@ const AboutSubModal: React.FC<AboutSubProps> = ({ theme, onBack }) => {
                 <img src="/logo192.png" alt="Aurora" style={{ width: 80, height: 80, borderRadius: 22, boxShadow: '0 8px 28px rgba(99,102,241,0.3)' }} />
                 <div style={{ textAlign: 'center' }}>
                     <div style={{ fontSize: 32, fontWeight: 900, color: col, letterSpacing: -1 }}>Aurora</div>
-                    <div style={{ marginTop: 6, display: 'inline-block', padding: '3px 14px', borderRadius: 20, background: dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.1)'), color: '#a78bfa', fontSize: 13, fontWeight: 700, border: dm && getIsOled() ? '1px solid rgba(167,139,250,0.2)' : 'none' }}>beta v0.7.1 pre-release 1</div>
+                    <div style={{ marginTop: 6, display: 'inline-block', padding: '3px 14px', borderRadius: 20, background: dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.1)'), color: '#a78bfa', fontSize: 13, fontWeight: 700, border: dm && getIsOled() ? '1px solid rgba(167,139,250,0.2)' : 'none' }}>beta v0.7.2 pre-release 2</div>
                 </div>
                 <div style={{ fontSize: 13, color: subCol, textAlign: 'center', lineHeight: 1.6 }}>{lang === 'en' ? 'Modern open-source messenger' : 'Современный мессенджер с открытым исходным кодом'}</div>
 
@@ -1177,7 +1363,7 @@ const NotificationsSubModal: React.FC<NotifSubProps> = ({ theme, onBack }) => {
     const subCol = dm ? '#7c7caa' : '#6b7280';
     const cardBg = dmC(dm, '#1a1a2e', '#fafbff', '#050508');
     const sectionCol = dm ? (getIsOled() ? '#a78bfa' : '#818cf8') : '#6366f1';
-    const { t, lang } = useLang();
+    const { lang } = useLang();
 
     const [settings, setSettings] = useState<NotifSettings>(defaultNotif);
     const [permState, setPermState] = useState<NotificationPermission>('default');
@@ -1289,6 +1475,10 @@ interface SettingsModalProps {
     onOpenArchive: () => void;
     onOpenSupport: () => void;
     onOpenAdmin: () => void;
+    onShowOnboarding?: () => void;
+    accounts?: AccountEntry[];
+    currentUserId?: number;
+    onSwitchAccount?: (acc: AccountEntry) => void;
     onClose: () => void;
 }
 
@@ -1468,7 +1658,8 @@ type SubSection = 'profile' | 'privacy' | 'chat' | 'emoji' | 'language' | 'patch
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
     token, currentUsername, currentUserTag, currentAvatar, currentStatus, isOnline,
-    theme, onThemeChange, onProfileUpdate, onLogout, onOpenFolders, onOpenFavorites, onOpenArchive, onOpenSupport, onOpenAdmin, onClose
+    theme, onThemeChange, onProfileUpdate, onLogout, onOpenFolders, onOpenFavorites, onOpenArchive, onOpenSupport, onOpenAdmin, onShowOnboarding, onClose,
+    accounts, currentUserId, onSwitchAccount,
 }) => {
     const [activeSub, setActiveSub] = useState<SubSection>(null);
     const [closing, setClosing] = useState(false);
@@ -1603,6 +1794,34 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>} label={lang === 'en' ? 'Notifications' : 'Уведомления'} hint={lang === 'en' ? 'Sound, alerts, per-chat settings' : 'Звук, оповещения, настройки чатов'} color="linear-gradient(135deg,#8b5cf6,#a78bfa)" onClick={() => setActiveSub('notifications')} />
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} label={lang === 'en' ? 'Sound & Camera' : 'Звук и камера'} hint={lang === 'en' ? 'Microphone, speakers, calls' : 'Микрофон, колонки, звонки'} color="linear-gradient(135deg,#0ea5e9,#2563eb)" onClick={() => setActiveSub('audio')} />
 
+                    {/* Accounts section */}
+                    <>
+                        <SectionDivider label={lang === 'en' ? 'Accounts' : 'Аккаунты'} />
+                        {(accounts || []).filter(a => a.userId !== currentUserId).map(acc => {
+                            const accAvatarUrl = acc.avatar ? config.fileUrl(acc.avatar) : null;
+                            const accColor = acc.avatarColor || '#6366f1';
+                            const accInitial = acc.username[0]?.toUpperCase() || '?';
+                            return (
+                                <div key={acc.userId} onClick={() => onSwitchAccount && onSwitchAccount(acc)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '10px 14px', cursor: 'pointer', borderRadius: 12, margin: '1px 8px', transition: 'background 0.12s' }}
+                                    onMouseEnter={e => (e.currentTarget.style.backgroundColor = hoverBg)}
+                                    onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+                                >
+                                    <div style={{ width: 38, height: 38, borderRadius: '50%', backgroundColor: accAvatarUrl ? 'transparent' : accColor, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 16 }}>
+                                        {accAvatarUrl ? <img src={accAvatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : accInitial}
+                                    </div>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 14, color: col, fontWeight: 500 }}>{acc.username}</div>
+                                    </div>
+                                    <span style={{ fontSize: 12, color: '#6366f1', fontWeight: 600, flexShrink: 0 }}>{lang === 'en' ? 'Switch' : 'Войти'}</span>
+                                </div>
+                            );
+                        })}
+                        <div style={{ margin: '4px 22px 10px', fontSize: 11, color: subCol, lineHeight: 1.5 }}>
+                            {lang === 'en' ? 'To add another account — log out and sign in with a different one.' : 'Чтобы добавить аккаунт — выйдите и войдите с другого.'}
+                        </div>
+                    </>
+
                     <SectionDivider label={t('Appearance')} />
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.437-.652-.437-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>} label={t('Chat settings')} hint={t('Themes, wallpapers, animations')} color="linear-gradient(135deg,#3b82f6,#6366f1)" onClick={() => setActiveSub('chat')} />
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9" strokeWidth="3"/><line x1="15" y1="9" x2="15.01" y2="9" strokeWidth="3"/></svg>} label={t('Emoji & stickers')} hint={t('Quick reactions, packs')} color="linear-gradient(135deg,#ec4899,#f43f5e)" onClick={() => setActiveSub('emoji')} />
@@ -1619,6 +1838,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
                     <SectionDivider />
                     <MenuItem icon={dm ? <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg> : <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>} label={t('Night mode')} color={dm ? 'linear-gradient(135deg,#4f46e5,#312e81)' : 'linear-gradient(135deg,#f59e0b,#f97316)'} right={<Toggle value={dm} onChange={v => onThemeChange({ ...theme, darkMode: v, chatBg: v ? '#0f0f1a' : '#f8f9ff', bubbleOtherColor: v ? '#2a2a3d' : '#e8e8e8', bubbleOwnColor: '#6366f1' })} />} />
+                    {onShowOnboarding && (
+                        <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17" strokeWidth="3"/></svg>} label={lang === 'en' ? 'Beginner guide' : 'Гид для новичков'} hint={lang === 'en' ? 'Quick tour of Aurora features' : 'Быстрое знакомство с возможностями'} color="linear-gradient(135deg,#06b6d4,#6366f1)" onClick={() => { setClosing(true); setTimeout(() => { onClose(); onShowOnboarding!(); }, 200); }} />
+                    )}
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16" strokeWidth="3"/></svg>} label={t('About')} color="linear-gradient(135deg,#8b5cf6,#7c3aed)" onClick={() => setActiveSub('about')} />
                     {config.isElectron() && (
                         <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>} label={lang === 'en' ? 'Server' : 'Сервер'} hint={lang === 'en' ? 'Connection address' : 'Адрес подключения'} color="linear-gradient(135deg,#0f766e,#0d9488)" onClick={() => setActiveSub('server')} />
@@ -1635,7 +1857,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
             {/* Sub-modals */}
             {activeSub === 'profile' && (
-                <ProfileSubModal token={token} currentUsername={currentUsername} currentAvatar={currentAvatar} currentStatus={currentStatus} theme={theme} onThemeChange={onThemeChange} onProfileUpdate={onProfileUpdate} onBack={() => setActiveSub(null)} />
+                <ProfileSubModal token={token} currentUsername={currentUsername} currentAvatar={currentAvatar} currentStatus={currentStatus} theme={theme} onProfileUpdate={onProfileUpdate} onBack={() => setActiveSub(null)} />
             )}
             {activeSub === 'privacy' && (
                 <PrivacySubModal token={token} theme={theme} onBack={() => setActiveSub(null)} onLogout={onLogout} />

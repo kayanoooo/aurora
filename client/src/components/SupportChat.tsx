@@ -72,6 +72,7 @@ const SupportChat: React.FC<SupportChatProps> = ({ token, currentUserId, isDark 
         }
     };
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => { load(); }, []);
     useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -91,6 +92,7 @@ const SupportChat: React.FC<SupportChatProps> = ({ token, currentUserId, isDark 
             sender_name: 'Support',
             sender_tag: 'support',
         }]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [newReply]);
 
     const send = async (filePath?: string, fileName?: string) => {
@@ -138,9 +140,6 @@ const SupportChat: React.FC<SupportChatProps> = ({ token, currentUserId, isDark 
 
     // Color tokens
     const bg        = isOled ? '#000000'                  : dm ? '#1a1a2e'       : '#ffffff';
-    const headerBg  = isOled ? 'linear-gradient(135deg, #0a0014 0%, #18003a 100%)'
-                             : dm ? 'linear-gradient(135deg, #1e1a3d 0%, #2d2060 100%)'
-                             : 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)';
     const chatBg    = isOled ? '#000000'                  : dm ? '#0e0e1f'       : '#f0f2f5';
     const inputBg   = isOled ? '#07070d'                  : dm ? '#12122a'       : '#f5f3ff';
     const border    = isOled ? 'rgba(167,139,250,0.18)'   : dm ? 'rgba(99,102,241,0.25)' : '#ede9fe';

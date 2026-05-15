@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { DevBadge, TesterBadge, DEV_TAGS, TESTER_TAGS } from './UserBadges';
 import ReactDOM from 'react-dom';
 import { User } from '../types';
 import { api } from '../services/api';
@@ -22,10 +23,13 @@ interface UserProfileModalProps {
     onClose: () => void;
     onStartChat?: () => void;
     onGoToMessage?: (id: number) => void;
+    onReport?: (type: 'user', id: number, name: string) => void;
+    onClearChat?: () => void;
+    onExportChat?: () => void;
 }
 
 const UserProfileModal: React.FC<UserProfileModalProps> = ({
-    user, token, isDark = false, messages = [], isOnline, isSelf = false, initialMediaOpen = false, onClose, onStartChat, onGoToMessage
+    user, token, isDark = false, messages = [], isOnline, isSelf = false, initialMediaOpen = false, onClose, onStartChat, onGoToMessage, onReport, onClearChat, onExportChat
 }) => {
     const dm = isDark;
     const { t, lang } = useLang();
@@ -37,6 +41,9 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
     const [mediaTab, setMediaTab] = useState<'images' | 'video' | 'audio' | 'files'>('images');
     const [lightbox, setLightbox] = useState<{ src: string; filename: string; isVideo: boolean } | null>(null);
     const [mediaClosing, setMediaClosing] = useState(false);
+    const [usernameHistory, setUsernameHistory] = useState<{ old_username: string; changed_at: string }[]>([]);
+    const [mediaDateFrom, setMediaDateFrom] = useState('');
+    const [mediaDateTo, setMediaDateTo] = useState('');
     const close = () => { setClosing(true); setTimeout(onClose, 180); };
     const collapseMedia = () => { setMediaClosing(true); setTimeout(() => { setExpanded(false); setMediaClosing(false); }, 220); };
 
@@ -44,14 +51,27 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
         api.findUser(token, user.username).then(res => {
             if (res.user) setFullUser(res.user);
         }).catch(() => {});
-    }, [token, user.username]);
+        if (!isSelf) {
+            fetch(`${config.API_URL}/users/${user.id}/username-history?token=${token}`)
+                .then(r => r.json()).then(d => setUsernameHistory(d.history || [])).catch(() => {});
+        }
+    }, [token, user.username, user.id, isSelf]);
 
     const avatarUrl = config.fileUrl(fullUser.avatar);
 
     // Parse media from messages
     const { imgs, vids, auds, files } = useMemo(() => {
         const i: any[] = [], v: any[] = [], a: any[] = [], f: any[] = [];
-        const add = (fp: string, fn: string, fs: number | undefined, mid: number) => {
+        const dateFrom = mediaDateFrom ? new Date(mediaDateFrom) : null;
+        const dateTo = mediaDateTo ? new Date(mediaDateTo + 'T23:59:59') : null;
+        const add = (fp: string, fn: string, fs: number | undefined, mid: number, ts?: string) => {
+            if (dateFrom || dateTo) {
+                const d = ts ? new Date(ts) : null;
+                if (d) {
+                    if (dateFrom && d < dateFrom) return;
+                    if (dateTo && d > dateTo) return;
+                }
+            }
             const src = fp.startsWith('http') ? fp : `${BASE_URL}${fp}`;
             const item = { src, filename: fn, fileSize: fs, messageId: mid };
             if (isImg(fn)) i.push(item);
@@ -60,14 +80,14 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
             else f.push(item);
         };
         for (const msg of messages) {
-            if (msg.file_path && msg.filename) add(msg.file_path, msg.filename, msg.file_size, msg.id);
+            if (msg.file_path && msg.filename) add(msg.file_path, msg.filename, msg.file_size, msg.id, (msg as any).timestamp);
             if (msg.files) {
                 const arr = typeof msg.files === 'string' ? (() => { try { return JSON.parse(msg.files); } catch { return []; } })() : msg.files;
-                if (Array.isArray(arr)) arr.forEach((fi: any) => fi.file_path && fi.filename && add(fi.file_path, fi.filename, fi.file_size, msg.id));
+                if (Array.isArray(arr)) arr.forEach((fi: any) => fi.file_path && fi.filename && add(fi.file_path, fi.filename, fi.file_size, msg.id, (msg as any).timestamp));
             }
         }
         return { imgs: i.reverse(), vids: v.reverse(), auds: a.reverse(), files: f.reverse() };
-    }, [messages]);
+    }, [messages, mediaDateFrom, mediaDateTo]);
 
     const mediaTabs = [
         { key: 'images' as const, label: t('Photo'), count: imgs.length },
@@ -121,7 +141,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
     const tk = tokens(dm, isOled);
     const border = isOled ? 'rgba(167,139,250,0.2)' : (dm ? 'rgba(99,102,241,0.25)' : '#ede9fe');
     const bg = isOled ? '#000000' : (dm ? '#1a1a2e' : '#ffffff');
-    const sub = dm ? '#6060a0' : '#9ca3af';
+    const sub = isOled ? '#7c6aaa' : dm ? '#7c7caa' : '#9ca3af';
 
     const currentTabData = mediaTab === 'images' ? imgs : mediaTab === 'video' ? vids : mediaTab === 'audio' ? auds : files;
 
@@ -159,7 +179,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 {/* Profile content */}
                 <div style={{ flex: 1, overflowY: 'auto', padding: '24px 20px', paddingBottom: 'max(32px, calc(32px + env(safe-area-inset-bottom, 0px)))', textAlign: 'center' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 20 }}>
-                        <div onClick={() => avatarUrl && setAvatarLightbox(true)} style={{ width: 96, height: 96, borderRadius: '50%', backgroundColor: avatarUrl ? (dm ? '#1a1a2e' : '#f3f4f6') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14, overflow: 'hidden', boxShadow: '0 4px 20px rgba(108,71,212,0.4)', cursor: avatarUrl ? 'zoom-in' : 'default' }}>
+                        <div onClick={() => avatarUrl && setAvatarLightbox(true)} style={{ width: 96, height: 96, borderRadius: '50%', backgroundColor: avatarUrl ? (dm ? '#1a1a2e' : '#f3f4f6') : (fullUser.avatar_color || '#6366f1'), display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14, overflow: 'hidden', boxShadow: `0 4px 20px ${fullUser.avatar_color ? fullUser.avatar_color + '66' : 'rgba(108,71,212,0.4)'}`, cursor: avatarUrl ? 'zoom-in' : 'default' }}>
                             {avatarUrl ? <img src={avatarUrl} alt={fullUser.username} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : <span style={{ color: 'white', fontSize: 40, fontWeight: 700 }}>{fullUser.username[0]?.toUpperCase()}</span>}
                         </div>
                         <h2 style={{ fontSize: 22, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', margin: '0 0 2px', display: 'flex', alignItems: 'center', gap: 6 }}>{fullUser.username}</h2>
@@ -170,6 +190,14 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                                 ? <p style={{ fontSize: 13, color: sub, margin: '0 0 4px' }}>{formatLastSeenProfile(fullUser.last_seen)}</p>
                                 : null}
                         {fullUser.status && <p style={{ fontSize: 14, color: sub, margin: 0 }}>{fullUser.status}</p>}
+                        {!isSelf && usernameHistory.length > 0 && (
+                            <p style={{ fontSize: 11, color: sub, margin: '4px 0 0' }}>
+                                <span style={{ fontWeight: 600 }}>{lang === 'en' ? 'Also known as: ' : 'Также известен как: '}</span>
+                                {usernameHistory.slice(0, 3).map((h, i) => (
+                                    <span key={i}>{i > 0 ? ', ' : ''}<span style={{ color: dm ? '#c4b5fd' : '#6366f1' }}>{h.old_username}</span></span>
+                                ))}
+                            </p>
+                        )}
                     </div>
                     <div style={tk.infoCard}>
                         {fullUser.email && <div style={tk.infoRow}><span style={{ fontSize: 16, flexShrink: 0 }}>📧</span><span style={{ fontSize: 13, color: dm ? '#c0c0d8' : '#374151' }}>{fullUser.email}</span></div>}
@@ -197,11 +225,35 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                             })}
                         </div>
                     )}
-                    {onStartChat && (
-                        <button onClick={onStartChat} style={{ width: '100%', padding: 14, background: 'linear-gradient(135deg, #6c47d4, #8b5cf6)', color: 'white', border: 'none', borderRadius: 14, cursor: 'pointer', fontSize: 15, fontWeight: 600 }}>
-                            {isSelf ? `⭐ ${lang === 'en' ? 'Favorites' : 'Избранное'}` : `${t('Start chat')}`}
-                        </button>
-                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {onStartChat && (
+                            <button onClick={onStartChat} style={{ width: '100%', padding: 14, background: 'linear-gradient(135deg, #6c47d4, #8b5cf6)', color: 'white', border: 'none', borderRadius: 14, cursor: 'pointer', fontSize: 15, fontWeight: 600 }}>
+                                {isSelf ? `⭐ ${lang === 'en' ? 'Favorites' : 'Избранное'}` : `${t('Start chat')}`}
+                            </button>
+                        )}
+                        {!isSelf && (onClearChat || onExportChat) && (
+                            <div style={{ display: 'flex', gap: 8 }}>
+                                {onExportChat && (
+                                    <button onClick={() => { onExportChat(); onClose(); }} style={{ flex: 1, padding: '10px 8px', background: 'transparent', color: dm ? '#a5b4fc' : '#6366f1', border: `1.5px solid ${dm ? 'rgba(99,102,241,0.25)' : '#e0d9ff'}`, borderRadius: 14, cursor: 'pointer', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                        {lang === 'en' ? 'Export' : 'Экспорт'}
+                                    </button>
+                                )}
+                                {onClearChat && (
+                                    <button onClick={() => { onClearChat(); onClose(); }} style={{ flex: 1, padding: '10px 8px', background: 'transparent', color: '#ef4444', border: `1.5px solid rgba(239,68,68,0.3)`, borderRadius: 14, cursor: 'pointer', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                                        {lang === 'en' ? 'Clear chat' : 'Очистить'}
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                        {!isSelf && onReport && (
+                            <button onClick={() => onReport('user', fullUser.id, fullUser.username)} style={{ width: '100%', padding: 11, background: 'transparent', color: '#ef4444', border: `1.5px solid rgba(239,68,68,0.3)`, borderRadius: 14, cursor: 'pointer', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+                                {lang === 'en' ? 'Report' : 'Пожаловаться'}
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
             )}
@@ -236,6 +288,14 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                                 </button>
                             );
                         })}
+                    </div>
+                    {/* Date filter */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px 4px', flexShrink: 0 }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        <input type="date" value={mediaDateFrom} onChange={e => setMediaDateFrom(e.target.value)} style={{ flex: 1, background: dm ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', border: `1px solid ${border}`, borderRadius: 8, padding: '3px 6px', fontSize: 11, color: dm ? '#e2e8f0' : '#1e1b4b', outline: 'none', colorScheme: dm ? 'dark' as any : 'light' as any }} />
+                        <span style={{ fontSize: 11, color: sub }}>—</span>
+                        <input type="date" value={mediaDateTo} onChange={e => setMediaDateTo(e.target.value)} style={{ flex: 1, background: dm ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', border: `1px solid ${border}`, borderRadius: 8, padding: '3px 6px', fontSize: 11, color: dm ? '#e2e8f0' : '#1e1b4b', outline: 'none', colorScheme: dm ? 'dark' as any : 'light' as any }} />
+                        {(mediaDateFrom || mediaDateTo) && <button onClick={() => { setMediaDateFrom(''); setMediaDateTo(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: sub, padding: 2, display: 'flex' }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
                     </div>
                     {/* Media content */}
                     <div style={{ flex: 1, overflowY: 'auto', padding: (mediaTab === 'images' || mediaTab === 'video') ? 8 : 0 }}>
@@ -322,7 +382,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     )}
 
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 20 }}>
-                        <div onClick={() => avatarUrl && setAvatarLightbox(true)} style={{ width: 96, height: 96, borderRadius: '50%', backgroundColor: avatarUrl ? (dm ? '#1a1a2e' : '#f3f4f6') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14, overflow: 'hidden', boxShadow: '0 4px 20px rgba(108,71,212,0.4)', cursor: avatarUrl ? 'zoom-in' : 'default' }}>
+                        <div onClick={() => avatarUrl && setAvatarLightbox(true)} style={{ width: 96, height: 96, borderRadius: '50%', backgroundColor: avatarUrl ? (dm ? '#1a1a2e' : '#f3f4f6') : (fullUser.avatar_color || '#6366f1'), display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14, overflow: 'hidden', boxShadow: `0 4px 20px ${fullUser.avatar_color ? fullUser.avatar_color + '66' : 'rgba(108,71,212,0.4)'}`, cursor: avatarUrl ? 'zoom-in' : 'default' }}>
                             {avatarUrl
                                 ? <img src={avatarUrl} alt={fullUser.username} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
                                 : <span style={{ color: 'white', fontSize: 40, fontWeight: 700 }}>{fullUser.username[0]?.toUpperCase()}</span>
@@ -330,7 +390,8 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         </div>
                         <h2 style={{ fontSize: 22, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', margin: '0 0 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
                             {fullUser.username}
-                            {(fullUser.tag === 'kayano' || fullUser.tag === 'durov') && <span title={t('developer of Aurora')} style={{ cursor: 'default', display: 'inline-flex', color: '#f59e0b', flexShrink: 0 }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>}
+                            {DEV_TAGS.includes(fullUser.tag || '') && <DevBadge size={20} />}
+                            {TESTER_TAGS.includes(fullUser.tag || '') && <TesterBadge size={20} />}
                         </h2>
                         {fullUser.tag && <p style={{ fontSize: 13, color: '#6366f1', margin: '0 0 4px', fontWeight: 600 }}>@{fullUser.tag}</p>}
                         {(isOnline ?? fullUser.is_online)
@@ -413,11 +474,35 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         </div>
                     )}
 
-                    {onStartChat && (
-                        <button onClick={onStartChat} style={{ width: '100%', padding: 12, background: 'linear-gradient(135deg, #6c47d4, #8b5cf6)', color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
-                            {isSelf ? `⭐ ${lang === 'en' ? 'Favorites' : 'Избранное'}` : `${t('Start chat')}`}
-                        </button>
-                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                        {onStartChat && (
+                            <button onClick={onStartChat} style={{ width: '100%', padding: 12, background: 'linear-gradient(135deg, #6c47d4, #8b5cf6)', color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+                                {isSelf ? `⭐ ${lang === 'en' ? 'Favorites' : 'Избранное'}` : `${t('Start chat')}`}
+                            </button>
+                        )}
+                        {!isSelf && (onClearChat || onExportChat) && (
+                            <div style={{ display: 'flex', gap: 7 }}>
+                                {onExportChat && (
+                                    <button onClick={() => { onExportChat(); onClose(); }} style={{ flex: 1, padding: '9px 6px', background: 'transparent', color: dm ? '#a5b4fc' : '#6366f1', border: `1.5px solid ${dm ? 'rgba(99,102,241,0.25)' : '#e0d9ff'}`, borderRadius: 12, cursor: 'pointer', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                        {lang === 'en' ? 'Export' : 'Экспорт'}
+                                    </button>
+                                )}
+                                {onClearChat && (
+                                    <button onClick={() => { onClearChat(); onClose(); }} style={{ flex: 1, padding: '9px 6px', background: 'transparent', color: '#ef4444', border: `1.5px solid rgba(239,68,68,0.3)`, borderRadius: 12, cursor: 'pointer', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                                        {lang === 'en' ? 'Clear' : 'Очистить'}
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                        {!isSelf && onReport && (
+                            <button onClick={() => onReport('user', fullUser.id, fullUser.username)} style={{ width: '100%', padding: 9, background: 'transparent', color: '#ef4444', border: `1.5px solid rgba(239,68,68,0.3)`, borderRadius: 12, cursor: 'pointer', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+                                {lang === 'en' ? 'Report' : 'Пожаловаться'}
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {/* Media panel (animated) */}

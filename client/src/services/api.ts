@@ -3,12 +3,28 @@ import { config } from '../config';
 const API_URL = config.API_URL;
 
 export const api = {
-    async register(email: string, password: string) {
+    async sendRegisterCode(email: string) {
+        try {
+            const response = await fetch(`${API_URL}/auth/send-register-code`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email }),
+            });
+            if (!response.ok) {
+                let detail = 'Ошибка отправки кода';
+                try { const j = await response.json(); detail = j.detail || detail; } catch {}
+                return { success: false, detail };
+            }
+            return await response.json();
+        } catch (error) { throw error; }
+    },
+
+    async register(email: string, password: string, reg_code?: string) {
         try {
             const response = await fetch(`${API_URL}/register`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, password }),
+                body: JSON.stringify({ email, password, reg_code }),
             });
             if (!response.ok) {
                 let detail = 'Ошибка регистрации';
@@ -43,9 +59,12 @@ export const api = {
                 body: JSON.stringify({ email, password }),
             });
             if (!response.ok) {
-                let detail = 'Ошибка входа';
+                let detail: any = 'Ошибка входа';
                 try { const j = await response.json(); detail = j.detail || detail; } catch {}
-                return { success: false, detail };
+                if (detail && typeof detail === 'object' && detail.code === 'banned') {
+                    return { success: false, banned: true, ban_reason: detail.reason || '', ban_expires_at: detail.expires_at || null };
+                }
+                return { success: false, detail: typeof detail === 'string' ? detail : JSON.stringify(detail) };
             }
             return await response.json();
         } catch (error) { throw error; }
@@ -523,6 +542,18 @@ export const api = {
         return response.json();
     },
 
+    async banAdminUser(token: string, userId: number, reason: string = '', expiresAt?: string) {
+        let url = `${API_URL}/admin/users/${userId}/ban?token=${token}&reason=${encodeURIComponent(reason)}`;
+        if (expiresAt) url += `&expires_at=${encodeURIComponent(expiresAt)}`;
+        const response = await fetch(url, { method: 'POST' });
+        return response.json();
+    },
+
+    async unbanAdminUser(token: string, userId: number) {
+        const response = await fetch(`${API_URL}/admin/users/${userId}/unban?token=${token}`, { method: 'POST' });
+        return response.json();
+    },
+
     async updateAdminUser(token: string, userId: number, data: { username?: string; email?: string; tag?: string; status?: string }) {
         const response = await fetch(`${API_URL}/admin/users/${userId}?token=${token}`, {
             method: 'PATCH',
@@ -564,11 +595,11 @@ export const api = {
         } catch { return null; }
     },
 
-    async scheduleMessage(token: string, message_text: string, scheduled_at: string, receiver_id?: number, group_id?: number) {
+    async scheduleMessage(token: string, message_text: string, scheduled_at?: string, receiver_id?: number, group_id?: number, send_when_online?: boolean) {
         const response = await fetch(`${API_URL}/messages/schedule?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message_text, scheduled_at, receiver_id, group_id }),
+            body: JSON.stringify({ message_text, scheduled_at, receiver_id, group_id, send_when_online: !!send_when_online }),
         });
         return response.json();
     },
@@ -675,5 +706,22 @@ export const api = {
     async setNowPlaying(token: string, title: string | null, artist?: string | null) {
         const r = await fetch(`${API_URL}/now_playing`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, title: title ?? null, artist: artist ?? null }) });
         return r.json();
+    },
+
+    async getDisappearSetting(token: string, chatType: 'private' | 'group', chatId: number): Promise<{ seconds: number | null }> {
+        try {
+            const param = chatType === 'group' ? `group_id=${chatId}` : `receiver_id=${chatId}`;
+            const r = await fetch(`${API_URL}/messages/disappear-setting?token=${token}&${param}`);
+            return r.json();
+        } catch { return { seconds: null }; }
+    },
+
+    async setDisappearSetting(token: string, chatType: 'private' | 'group', chatId: number, seconds: number | null): Promise<{ success: boolean; seconds: number | null }> {
+        try {
+            const param = chatType === 'group' ? `group_id=${chatId}` : `receiver_id=${chatId}`;
+            const secondsParam = seconds != null ? `&seconds=${seconds}` : '';
+            const r = await fetch(`${API_URL}/messages/disappear-setting?token=${token}&${param}${secondsParam}`, { method: 'POST' });
+            return r.json();
+        } catch { return { success: false, seconds: null }; }
     },
 };

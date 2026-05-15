@@ -369,12 +369,18 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
                                                 <span style={{ fontSize: 10, opacity: 0.7 }}>{collapsedPlaylists.has(pl.id) ? '▶' : '▼'}</span>
                                             </div>
                                             <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
-                                                <button onClick={() => { fileInputRef.current!.setAttribute('data-pl', String(pl.id)); fileInputRef.current!.click(); }} style={btnStyle()} title="Добавить музыку">➕</button>
-                                                <button onClick={() => { setRenaming(pl.id); setRenameVal(pl.name); }} style={btnStyle()} title="Переименовать">✏️</button>
-                                                <button onClick={() => onSharePlaylist?.(pl)} style={btnStyle()} title="Поделиться в чат">
-                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                                                <button onClick={() => { fileInputRef.current!.setAttribute('data-pl', String(pl.id)); fileInputRef.current!.click(); }} style={btnStyle()} title="Добавить музыку">
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                                                 </button>
-                                                <button onClick={() => deletePlaylist(pl.id)} style={btnStyle()} title="Удалить">🗑️</button>
+                                                <button onClick={() => { setRenaming(pl.id); setRenameVal(pl.name); }} style={btnStyle()} title="Переименовать">
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                                </button>
+                                                <button onClick={() => onSharePlaylist?.(pl)} style={btnStyle()} title="Поделиться в чат">
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                                                </button>
+                                                <button onClick={() => deletePlaylist(pl.id)} style={{ ...btnStyle(), color: '#f87171' }} title="Удалить">
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
@@ -659,7 +665,9 @@ export const PlaylistBubble: React.FC<{
             <div style={{ width: '100%', height: 80, borderRadius: 12, overflow: 'hidden', position: 'relative', marginBottom: 10,
                 background: coverUrl ? `url(${coverUrl}) center/cover` : `linear-gradient(135deg, ${accent}cc, ${isOled ? '#5b21b6' : '#8b5cf6'}aa)` }}>
                 {!coverUrl && (
-                    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, opacity: 0.7 }}>🎵</div>
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+                    </div>
                 )}
                 <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 60%)', display: 'flex', alignItems: 'flex-end', padding: '8px 10px', gap: 6 }}>
                     <div style={{ minWidth: 0 }}>
@@ -687,7 +695,8 @@ export const PlaylistBubble: React.FC<{
             </div>
             {/* Open label */}
             <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 4, padding: '5px 8px', borderRadius: 8, background: accentAlpha }}>
-                <span style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.7)' : accent, fontWeight: 600 }}>🎵 Открыть плейлист</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isOwn ? 'rgba(255,255,255,0.7)' : accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+                <span style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.7)' : accent, fontWeight: 600 }}>{isOwn ? 'Open playlist' : 'Открыть плейлист'}</span>
             </div>
         </div>
     );

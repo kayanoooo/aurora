@@ -30,7 +30,9 @@ const isTunnelDomain = (): boolean => {
     const h = window.location.hostname;
     return h.endsWith('.ngrok-free.dev') || h.endsWith('.ngrok-free.app') ||
            h.endsWith('.ngrok.io') || h.endsWith('.ngrok.app') ||
-           h.endsWith('.loca.lt') || h.endsWith('.localhost.run');
+           h.endsWith('.loca.lt') || h.endsWith('.localhost.run') ||
+           h.endsWith('.lhr.life') || h.endsWith('.trycloudflare.com') ||
+           h.endsWith('.pinggy-free.link') || h.endsWith('.pinggy.link');
 };
 
 export const config = {

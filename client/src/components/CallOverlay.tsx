@@ -50,12 +50,17 @@ const CallOverlay: React.FC<Props> = ({
     }, [state]);
 
     useEffect(() => {
-        if (localVideoRef.current  && localStream)  localVideoRef.current.srcObject  = localStream;
+        if (localVideoRef.current && localStream) localVideoRef.current.srcObject = localStream;
+        return () => { if (localVideoRef.current) localVideoRef.current.srcObject = null; };
     }, [localStream]);
 
     useEffect(() => {
         if (remoteVideoRef.current && remoteStream) remoteVideoRef.current.srcObject = remoteStream;
         if (remoteAudioRef.current) remoteAudioRef.current.srcObject = remoteStream;
+        return () => {
+            if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+            if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
+        };
     }, [remoteStream]);
 
     const accent = extractHex(peerAvatarColor);
@@ -110,23 +115,28 @@ const CallOverlay: React.FC<Props> = ({
 
     // ── Minimized pill ──────────────────────────────────────────────────────────
     if (minimized) {
-        const pillBg = isOled
-            ? 'rgba(10,6,24,0.97)'
-            : dm ? 'rgba(20,14,44,0.97)' : 'rgba(15,10,40,0.96)';
+        const isMobilePill = typeof window !== 'undefined' && window.innerWidth < 768;
+        const pillBg = isOled ? '#000' : dm ? '#1a1a2e' : 'white';
+        const pillShadow = isOled
+            ? '0 0 0 1px rgba(167,139,250,0.15)'
+            : dm ? '0 2px 12px rgba(0,0,0,0.4)' : '0 2px 12px rgba(99,102,241,0.1)';
+        const pillPosition: React.CSSProperties = isMobilePill
+            ? { position: 'fixed', top: 0, left: 0, right: 0, transform: 'none', borderRadius: 0, paddingTop: 'max(8px, env(safe-area-inset-top, 8px))' }
+            : { position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', borderRadius: 40 };
         return (
             <>
                 <style>{`@keyframes callPillEnter { from { opacity: 0; transform: translateX(-50%) scale(0.92); } to { opacity: 1; transform: translateX(-50%) scale(1); } }`}</style>
                 <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
                 <div style={{
-                    position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+                    ...pillPosition,
                     zIndex: 9999, display: 'flex', alignItems: 'center', gap: 10,
                     background: pillBg,
                     border: `1.5px solid ${accent}44`,
-                    borderRadius: 40, padding: '8px 12px 8px 8px',
-                    boxShadow: `0 8px 40px rgba(0,0,0,0.7), 0 0 0 1px ${accent}22`,
+                    padding: '8px 12px 8px 8px',
+                    boxShadow: pillShadow,
                     backdropFilter: 'blur(20px)',
-                    userSelect: 'none', minWidth: 220,
-                    animation: 'callPillEnter 0.2s ease',
+                    userSelect: 'none', minWidth: isMobilePill ? undefined : 220,
+                    animation: isMobilePill ? undefined : 'callPillEnter 0.2s ease',
                 }}>
                     {/* Avatar */}
                     <div style={{
@@ -141,16 +151,16 @@ const CallOverlay: React.FC<Props> = ({
 
                     {/* Info */}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: 'white', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{peerName}</div>
-                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', fontVariantNumeric: 'tabular-nums' }}>{statusLabel}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: isOled || dm ? 'white' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{peerName}</div>
+                        <div style={{ fontSize: 11, color: isOled || dm ? 'rgba(255,255,255,0.5)' : '#6b7280', fontVariantNumeric: 'tabular-nums' }}>{statusLabel}</div>
                     </div>
 
                     {/* Mute (only when connected/calling) */}
                     {(state === 'connected' || state === 'calling') && (
                         <button onClick={onToggleMute} style={{
                             width: 36, height: 36, borderRadius: '50%', border: 'none', cursor: 'pointer',
-                            background: isMuted ? 'rgba(239,68,68,0.25)' : 'rgba(255,255,255,0.1)',
-                            color: isMuted ? '#f87171' : 'rgba(255,255,255,0.7)',
+                            background: isMuted ? 'rgba(239,68,68,0.25)' : (isOled || dm ? 'rgba(255,255,255,0.1)' : 'rgba(99,102,241,0.1)'),
+                            color: isMuted ? '#f87171' : (isOled || dm ? 'rgba(255,255,255,0.7)' : '#6366f1'),
                             display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                         }}>
                             {isMuted
@@ -163,7 +173,8 @@ const CallOverlay: React.FC<Props> = ({
                     {/* Expand */}
                     <button onClick={() => setMinimized(false)} style={{
                         width: 36, height: 36, borderRadius: '50%', border: 'none', cursor: 'pointer',
-                        background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)',
+                        background: isOled || dm ? 'rgba(255,255,255,0.1)' : 'rgba(99,102,241,0.1)',
+                        color: isOled || dm ? 'rgba(255,255,255,0.7)' : '#6366f1',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                     }}>
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>

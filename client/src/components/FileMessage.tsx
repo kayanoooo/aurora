@@ -12,6 +12,7 @@ interface FileMessageProps {
     isDark?: boolean;
     inBubble?: boolean;
     hasCaption?: boolean;
+    hasAboveContent?: boolean;
     onPlay?: (src: string, filename: string) => void;
     onPlayVideo?: (src: string, filename: string) => void;
     nowPlayingSrc?: string;
@@ -23,7 +24,7 @@ interface FileMessageProps {
     onDurationKnown?: (src: string, duration: number) => void;
 }
 
-const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize, isOwn, messageId, isGroup, isDark = false, inBubble = false, hasCaption = false, onPlay, onPlayVideo, nowPlayingSrc, globalPlaying, globalCurrentTime, globalDuration, onGlobalSeek, onGlobalToggle, onDurationKnown }) => {
+const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize, isOwn, messageId, isGroup, isDark = false, inBubble = false, hasCaption = false, hasAboveContent = false, onPlay, onPlayVideo, nowPlayingSrc, globalPlaying, globalCurrentTime, globalDuration, onGlobalSeek, onGlobalToggle, onDurationKnown }) => {
     const dm = isDark;
     const displayName = filename || 'file';
     const isImage = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(displayName);
@@ -83,7 +84,8 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
     }, [lightboxOpen]);
 
     // Gradient color that fades into bubble background
-    const fadeColor = isOwn
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _fadeColor = isOwn
         ? 'rgba(109,40,217,'  // purple own
         : dm
             ? 'rgba(37,32,72,'   // dark other
@@ -93,11 +95,12 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
     if (isImage) {
         const topRadius = isOwn ? '18px 4px 0 0' : '4px 18px 0 0';
         const allRadius = isOwn ? '18px 4px 18px 18px' : '4px 18px 18px 18px';
+        const topM = hasAboveContent ? '6px' : '-10px';
         const imgWrap: React.CSSProperties = inBubble ? {
-            margin: hasCaption ? '-11px -15px 6px' : '-11px -15px -11px',
-            width: 'calc(100% + 30px)',
+            margin: hasCaption ? `${topM} -14px 8px` : `${topM} -14px -10px`,
+            width: 'calc(100% + 28px)',
             display: 'block',
-            borderRadius: hasCaption ? topRadius : allRadius,
+            borderRadius: hasCaption ? (hasAboveContent ? allRadius : topRadius) : allRadius,
         } : {
             borderRadius: 18,
             display: 'inline-block',
@@ -127,11 +130,12 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
     if (isVideo) {
         const vidTopRadius = isOwn ? '18px 4px 0 0' : '4px 18px 0 0';
         const vidAllRadius = isOwn ? '18px 4px 18px 18px' : '4px 18px 18px 18px';
+        const vidTopM = hasAboveContent ? '6px' : '-10px';
         const vidWrap: React.CSSProperties = inBubble ? {
-            margin: hasCaption ? '-11px -15px 6px' : '-11px -15px -11px',
-            width: 'calc(100% + 30px)',
+            margin: hasCaption ? `${vidTopM} -14px 8px` : `${vidTopM} -14px -10px`,
+            width: 'calc(100% + 28px)',
             display: 'block',
-            borderRadius: hasCaption ? vidTopRadius : vidAllRadius,
+            borderRadius: hasCaption ? (hasAboveContent ? vidAllRadius : vidTopRadius) : vidAllRadius,
         } : {
             borderRadius: 18,
             maxWidth: 360,

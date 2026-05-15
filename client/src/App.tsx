@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect } from 'react';
 import Auth from './components/Auth';
 import Chat from './components/Chat';
 import SetupModal from './components/SetupModal';
-import { ThemeSettings } from './types';
+import OnboardingGuide, { resetOnboarding } from './components/OnboardingGuide';
+import { ThemeSettings, AccountEntry } from './types';
 import { api } from './services/api';
 import { wsService } from './services/websocket';
 import './App.css';
@@ -36,8 +37,12 @@ function App() {
     const [auth, setAuth] = useState<AuthState | null>(null);
     const [setupToken, setSetupToken] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
+    const [showOnboarding, setShowOnboarding] = useState(false);
     const [installPrompt, setInstallPrompt] = useState<any>(null);
     const [showInstallBanner, setShowInstallBanner] = useState(false);
+    const [accounts, setAccounts] = useState<AccountEntry[]>(() => {
+        try { return JSON.parse(localStorage.getItem('aurora_accounts') || '[]'); } catch { return []; }
+    });
 
     useEffect(() => {
         const handler = (e: any) => {
@@ -108,6 +113,15 @@ function App() {
         setLoading(false);
     }, [restoreSession]);
 
+    const addAccount = useCallback((entry: AccountEntry) => {
+        setAccounts(prev => {
+            const filtered = prev.filter(a => a.userId !== entry.userId);
+            const next = [entry, ...filtered].slice(0, 5);
+            localStorage.setItem('aurora_accounts', JSON.stringify(next));
+            return next;
+        });
+    }, []);
+
     const handleAuth = useCallback(async (token: string, userId: number, username: string, setupRequired?: boolean) => {
         if (setupRequired) {
             setSetupToken(token);
@@ -123,12 +137,14 @@ function App() {
         let avatar: string | undefined;
         let status: string | undefined;
         let tag: string | undefined;
+        let avatarColor: string | undefined;
         try {
             const res = await api.getProfile(token);
             if (res.success && res.user) {
                 avatar = res.user.avatar || undefined;
                 status = res.user.status || undefined;
                 tag = res.user.tag || undefined;
+                avatarColor = res.user.avatar_color || undefined;
                 if (res.user.avatar_color) {
                     setTheme(prev => {
                         const updated = { ...prev, avatarColor: res.user.avatar_color };
@@ -139,8 +155,9 @@ function App() {
             }
         } catch {}
         localStorage.setItem('chat_auth', JSON.stringify({ token, userId, username }));
+        addAccount({ token, userId, username, avatar, avatarColor });
         setAuth({ token, userId, username, avatar, status, tag });
-    }, []);
+    }, [addAccount]);
 
     const handleSetupComplete = useCallback(async (newToken: string, username: string, selectedTheme: string) => {
         const themeOverride = THEME_MAP[selectedTheme] || {};
@@ -149,11 +166,13 @@ function App() {
 
         setSetupToken(null);
         let avatar: string | undefined;
+        let avatarColor: string | undefined;
         let userId: number | null = null;
         try {
             const res = await api.getProfile(newToken);
             if (res.success && res.user) {
                 avatar = res.user.avatar || undefined;
+                avatarColor = res.user.avatar_color || undefined;
                 userId = res.user.id;
             }
         } catch {}
@@ -164,8 +183,11 @@ function App() {
         }
         localStorage.setItem(`chat_theme_${userId}`, JSON.stringify(newTheme));
         localStorage.setItem('chat_auth', JSON.stringify({ token: newToken, userId, username }));
+        addAccount({ token: newToken, userId, username, avatar, avatarColor });
         setAuth({ token: newToken, userId, username, avatar });
-    }, []);
+        // Show onboarding guide for new users
+        setTimeout(() => setShowOnboarding(true), 600);
+    }, [addAccount]);
 
     const handleThemeChange = useCallback((newTheme: ThemeSettings) => {
         const fixed = (!newTheme.darkMode && newTheme.chatBg === '#000000')
@@ -181,10 +203,28 @@ function App() {
     const handleLogout = useCallback(() => {
         wsService.disconnect();
         localStorage.removeItem('chat_auth');
+        // If this logout was triggered by a ban, remove that account from the switcher
+        const bannedId = localStorage.getItem('aurora_banned_userid');
+        if (bannedId) {
+            localStorage.removeItem('aurora_banned_userid');
+            setAccounts(prev => {
+                const next = prev.filter(a => String(a.userId) !== bannedId);
+                localStorage.setItem('aurora_accounts', JSON.stringify(next));
+                return next;
+            });
+        }
         setAuth(null);
         setSetupToken(null);
         setTheme(DEFAULT_THEME);
     }, []);
+
+    const handleSwitchAccount = useCallback((acc: AccountEntry) => {
+        wsService.disconnect();
+        localStorage.setItem('chat_auth', JSON.stringify({ token: acc.token, userId: acc.userId, username: acc.username }));
+        setAuth(null);
+        setLoading(true);
+        restoreSession(acc.token, acc.userId, acc.username);
+    }, [restoreSession]);
 
     const handleProfileUpdate = useCallback((username: string, avatar?: string, status?: string, tag?: string) => {
         setAuth(prev => {
@@ -255,6 +295,15 @@ function App() {
                     onThemeChange={handleThemeChange}
                     onProfileUpdate={handleProfileUpdate}
                     onLogout={handleLogout}
+                    onShowOnboarding={() => { resetOnboarding(); setShowOnboarding(true); }}
+                    accounts={accounts}
+                    onSwitchAccount={handleSwitchAccount}
+                />
+            )}
+            {showOnboarding && auth && (
+                <OnboardingGuide
+                    isDark={theme.darkMode}
+                    onClose={() => setShowOnboarding(false)}
                 />
             )}
         </div>

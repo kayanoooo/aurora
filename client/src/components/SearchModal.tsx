@@ -32,7 +32,7 @@ const SearchModal: React.FC<SearchModalProps> = ({
     token, isDark = false, activeChatId, activeChatType, groupMembers = [], onClose, onSelectMessage
 }) => {
     const dm = isDark;
-    const { t } = useLang();
+    const { t, lang } = useLang();
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<SearchResult[]>([]);
     const [loading, setLoading] = useState(false);
@@ -89,7 +89,7 @@ const SearchModal: React.FC<SearchModalProps> = ({
     const border = isOled ? 'rgba(167,139,250,0.2)' : (dm ? 'rgba(99,102,241,0.25)' : '#ede9fe');
     const inputBg = isOled ? '#050508' : (dm ? '#12122a' : '#f5f3ff');
     const textCol = dm ? '#e2e8f0' : '#1e1b4b';
-    const subCol = dm ? '#9999bb' : '#6b7280';
+    const subCol = isOled ? '#7c6aaa' : dm ? '#7c7caa' : '#6b7280';
     const accent = '#6366f1';
     const isMobile = window.innerWidth < 600;
     const shadow = dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)';
@@ -238,7 +238,7 @@ const SearchModal: React.FC<SearchModalProps> = ({
                         >
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: 12 }}>
                                 <span style={{ fontWeight: 700, color: accent }}>{result.sender_name}</span>
-                                <span style={{ color: subCol }}>{new Date(result.timestamp).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' })}</span>
+                                <span style={{ color: subCol }}>{new Date(result.timestamp).toLocaleDateString(lang === 'en' ? 'en-US' : 'ru-RU', { day: 'numeric', month: 'short', year: '2-digit' })}</span>
                             </div>
                             {result.message_text ? (
                                 <div style={{ fontSize: 13, color: textCol, wordBreak: 'break-word', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}>

@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \":*)",
+      "Bash(npm run:*)",
+      "Bash(find '/home/kayano/Рабочий стол/MAX/client' -type f -name *.tsx -o -name *.ts)",
+      "Bash(npx tsc:*)",
+      "Bash(find /home/kayano/Рабочий стол/aurora/client/src -name types*)",
+      "Bash(grep -E \"\\\\.\\(py|tsx?\\)$\")",
+      "Read(//home/kayano/**)",
+      "Bash(grep -n \"unreadCounts\\\\|private-\\\\${data\" client/src/components/Chat.tsx)",
+      "Bash(git commit -m ' *)",
+      "Bash(python3 /tmp/create_er_diagram.py)",
+      "Bash(python3 /tmp/create_usecase.py)",
+      "Bash(python3 /tmp/ch2_final.py)"
+    ]
+  }
+}

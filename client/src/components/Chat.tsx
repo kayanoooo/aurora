@@ -4868,15 +4868,15 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                         const avatarSrc = ct.avatar ? config.fileUrl(ct.avatar) : null;
                                                         const ctIsRead = !!(msg as any).is_read;
                                                         return (
-                                                            <div onClick={() => { const u = users.find(u => u.id === ct.id); if (u) setSelectedUserForProfile(u); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 4px 6px', cursor: 'pointer', margin: '-4px 0' }}>
+                                                            <div onClick={() => { const u = users.find(u => u.id === ct.id); if (u) setSelectedUserForProfile(u); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '2px 0', cursor: 'pointer' }}>
                                                                 <div style={{ width: 42, height: 42, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: ct.avatar_color || '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                                                     {avatarSrc ? <img src={avatarSrc} alt={ct.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ color: 'white', fontWeight: 700, fontSize: 17 }}>{ct.username[0]?.toUpperCase()}</span>}
                                                                 </div>
                                                                 <div style={{ flex: 1, minWidth: 0 }}>
                                                                     <div style={{ fontSize: 14, fontWeight: 700, color: isOwn ? 'white' : (dm ? '#e2e8f0' : '#1e1b4b'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ct.username}</div>
-                                                                    <div style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.6)' : (dm ? '#7c7caa' : '#6b7280'), marginTop: 1 }}>{lang === 'en' ? 'Contact' : 'Контакт'}</div>
+                                                                    <div style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.6)' : (dm ? '#7c7caa' : '#6b7280'), marginTop: 2 }}>{lang === 'en' ? 'Contact' : 'Контакт'}</div>
                                                                 </div>
-                                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'space-between', gap: 6, flexShrink: 0, alignSelf: 'stretch' }}>
                                                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={isOwn ? 'rgba(255,255,255,0.6)' : (dm ? '#5a5a8a' : '#9ca3af')} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
                                                                     <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.6)' : (dm ? '#7c7caa' : '#9ca3af') }}>
                                                                         {formatTime(msg.timestamp)}
@@ -4891,10 +4891,15 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     const dur = getCallDuration(msg.message_text);
                                                     const mins = Math.floor(dur / 60), secs = dur % 60;
                                                     const durStr = dur > 0 ? ` · ${mins > 0 ? `${mins} мин ` : ''}${secs} сек` : '';
+                                                    const callIsRead = !!(msg as any).is_read;
                                                     return (
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0', color: isOwn ? 'rgba(255,255,255,0.85)' : (dm ? '#a5b4fc' : '#6366f1') }}>
-                                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.68 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.08 6.08l1.8-1.8a2 2 0 0 1 2.11-.45c.9.32 1.85.55 2.81.68a2 2 0 0 1 1.72 2.03z"/></svg>
-                                                            <span style={{ fontSize: 13, fontWeight: 500 }}>{lang === 'en' ? 'Call ended' : 'Звонок завершён'}{durStr}</span>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0' }}>
+                                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isOwn ? 'rgba(255,255,255,0.85)' : (dm ? '#a5b4fc' : '#6366f1')} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.68 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.08 6.08l1.8-1.8a2 2 0 0 1 2.11-.45c.9.32 1.85.55 2.81.68a2 2 0 0 1 1.72 2.03z"/></svg>
+                                                            <span style={{ fontSize: 13, fontWeight: 500, color: isOwn ? 'rgba(255,255,255,0.85)' : (dm ? '#a5b4fc' : '#6366f1'), flex: 1 }}>{lang === 'en' ? 'Call ended' : 'Звонок завершён'}{durStr}</span>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.6)' : (dm ? '#7c7caa' : '#9ca3af'), flexShrink: 0 }}>
+                                                                {formatTime(msg.timestamp)}
+                                                                {isOwn && (callIsRead ? <svg width="16" height="10" viewBox="0 0 18 11" fill="none"><path d="M1 5.5L4.5 9L11 2" stroke="rgba(255,255,255,0.55)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/><path d="M6 5.5L9.5 9L16 2" stroke="#93c5fd" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg> : <svg width="11" height="10" viewBox="0 0 12 10" fill="none"><path d="M1 5L4.5 8.5L11 1.5" stroke="rgba(255,255,255,0.65)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>)}
+                                                            </div>
                                                         </div>
                                                     );
                                                 }
@@ -4936,7 +4941,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 );
                                             })()}
 
-                                            {!isSpecialMsg(msg.message_text) && !isGeo(msg.message_text) && !isContact(msg.message_text) && (
+                                            {!isSpecialMsg(msg.message_text) && !isGeo(msg.message_text) && !isContact(msg.message_text) && !isCallEnded(msg.message_text) && (
                                             <div style={{ ...styles.timestamp, display: 'flex', alignItems: 'center', gap: 4, justifyContent: isOwn ? 'flex-end' : 'flex-start', ...(isMediaOnlyMsg(msg) ? { position: 'absolute' as const, bottom: 6, right: 10, backgroundColor: 'rgba(0,0,0,0.45)', color: 'rgba(255,255,255,0.92)', borderRadius: 8, padding: '2px 7px', opacity: 1 } : {}) }}>
                                                 {msg.edited_at && <span style={{ opacity: 0.6, marginRight: 4 }}>{t('edited')}</span>}
                                                 {(msg as any).disappear_after && (() => {

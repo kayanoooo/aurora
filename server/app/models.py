@@ -98,7 +98,7 @@ class UserModel:
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute("""
-                    SELECT u.id, u.username, u.tag, u.email, u.created_at, u.avatar, u.status, u.avatar_color, u.privacy_settings, u.last_seen,
+                    SELECT u.id, u.username, u.tag, u.email, u.created_at, u.avatar, u.status, u.avatar_color, u.privacy_settings, u.last_seen, u.is_deleted,
                         lm.id AS last_msg_id,
                         lm.message_text AS last_msg_text,
                         COALESCE(lm.file_path, JSON_UNQUOTE(JSON_EXTRACT(lm.files, '$[0].file_path'))) AS last_msg_file,

@@ -53,6 +53,7 @@ class SetupRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+    device_id: Optional[str] = None
 
 class PasswordResetRequest(BaseModel):
     email: str
@@ -71,18 +72,19 @@ class ConfirmResetRequest(BaseModel):
 class SendRegisterCodeRequest(BaseModel):
     email: str
 
-# In-memory reset code store: email → {code, expires_at}
+# In-memory reset code store: email → {code, expires_at, attempts}
 _reset_codes: dict = {}
 _RESET_CODE_TTL = 900  # 15 минут
+_MAX_CODE_ATTEMPTS = 5  # максимум попыток перед инвалидацией
 
-# In-memory registration verification store: email → {code, expires_at}
+# In-memory registration verification store: email → {code, expires_at, attempts}
 _reg_codes: dict = {}
 _REG_CODE_TTL = 600  # 10 минут
 
 def _send_email(to: str, subject: str, body: str) -> bool:
     """Отправить письмо через SMTP. Возвращает True если успешно."""
     smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_port_env = os.getenv("SMTP_PORT", "")
     smtp_user = os.getenv("SMTP_USER", "")
     smtp_pass = os.getenv("SMTP_PASS", "")
     if not smtp_user or not smtp_pass:
@@ -93,12 +95,21 @@ def _send_email(to: str, subject: str, body: str) -> bool:
         msg["From"] = f"Aurora Messenger <{smtp_user}>"
         msg["To"] = to
         msg.attach(MIMEText(body, "html", "utf-8"))
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, to, msg.as_string())
-        return True
+        # Try SSL (port 465) first, fall back to STARTTLS (port 587)
+        ssl_port = int(smtp_port_env) if smtp_port_env and int(smtp_port_env) != 587 else 465
+        try:
+            with smtplib.SMTP_SSL(smtp_host, ssl_port, timeout=10) as server:
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, to, msg.as_string())
+            return True
+        except Exception:
+            starttls_port = int(smtp_port_env) if smtp_port_env else 587
+            with smtplib.SMTP(smtp_host, starttls_port, timeout=10) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, to, msg.as_string())
+            return True
     except Exception as e:
         print(f"❌ Email send error: {e}")
         return False
@@ -408,6 +419,8 @@ async def startup():
                     INDEX idx_uh_user (user_id)
                 )""",
                 "ALTER TABLE users ADD COLUMN ban_expires_at DATETIME NULL DEFAULT NULL",
+                "ALTER TABLE user_sessions ADD COLUMN device_id VARCHAR(64) NULL DEFAULT NULL",
+                "ALTER TABLE user_sessions ADD UNIQUE KEY idx_user_device (user_id, device_id)",
             ]:
                 try:
                     await cur.execute(sql)
@@ -450,7 +463,7 @@ async def send_register_code(request: SendRegisterCodeRequest):
                 raise HTTPException(status_code=400, detail="Этот email уже зарегистрирован")
 
     code = str(random.randint(100000, 999999))
-    _reg_codes[request.email] = {"code": code, "expires_at": time.time() + _REG_CODE_TTL}
+    _reg_codes[request.email] = {"code": code, "expires_at": time.time() + _REG_CODE_TTL, "attempts": 0}
 
     # Очищаем просроченные коды
     expired = [e for e, v in _reg_codes.items() if v["expires_at"] < time.time()]
@@ -477,6 +490,9 @@ async def send_register_code(request: SendRegisterCodeRequest):
         sent = await asyncio.get_event_loop().run_in_executor(
             None, lambda: _send_email(request.email, "Подтверждение email — Aurora", body)
         )
+        if not sent:
+            print(f"⚠️  Email failed. Register code for {request.email}: {code}")
+            return {"success": True, "email_sent": False, "smtp_configured": True, "dev_code": code}
         return {"success": True, "email_sent": sent, "smtp_configured": True}
     else:
         print(f"⚠️  SMTP not configured. Register code for {request.email}: {code}")
@@ -501,7 +517,11 @@ async def register(request: RegisterRequest):
         if time.time() > entry["expires_at"]:
             del _reg_codes[request.email]
             raise HTTPException(status_code=400, detail="Код устарел. Запросите новый.")
+        if entry.get("attempts", 0) >= _MAX_CODE_ATTEMPTS:
+            del _reg_codes[request.email]
+            raise HTTPException(status_code=429, detail="Превышено количество попыток. Запросите новый код.")
         if not request.reg_code or entry["code"] != request.reg_code.strip():
+            entry["attempts"] = entry.get("attempts", 0) + 1
             raise HTTPException(status_code=400, detail="Неверный код подтверждения.")
         del _reg_codes[request.email]
 
@@ -589,14 +609,22 @@ async def login(request: LoginRequest):
     import hashlib as _hashlib
     token_hash = _hashlib.sha256(token.encode()).hexdigest()[:64]
     device_name = getattr(request, 'device_name', None) or 'Aurora Web'
+    _dev_id = request.device_id or None
     try:
         pool2 = await DatabasePool.get_pool()
         async with pool2.acquire() as conn2:
             async with conn2.cursor() as cur2:
-                await cur2.execute(
-                    "INSERT INTO user_sessions (user_id, token_hash, device_name) VALUES (%s,%s,%s) ON DUPLICATE KEY UPDATE last_active=UTC_TIMESTAMP()",
-                    (user['id'], token_hash, device_name)
-                )
+                if _dev_id:
+                    await cur2.execute(
+                        "INSERT INTO user_sessions (user_id, token_hash, device_name, device_id) VALUES (%s,%s,%s,%s) "
+                        "ON DUPLICATE KEY UPDATE token_hash=%s, last_active=UTC_TIMESTAMP()",
+                        (user['id'], token_hash, device_name, _dev_id, token_hash)
+                    )
+                else:
+                    await cur2.execute(
+                        "INSERT INTO user_sessions (user_id, token_hash, device_name) VALUES (%s,%s,%s) ON DUPLICATE KEY UPDATE last_active=UTC_TIMESTAMP()",
+                        (user['id'], token_hash, device_name)
+                    )
                 await conn2.commit()
     except Exception: pass
     return {
@@ -692,7 +720,7 @@ async def send_reset_code(request: SendResetCodeRequest):
                 return {"success": True, "email_sent": False}
 
     code = str(random.randint(100000, 999999))
-    _reset_codes[request.email] = {"code": code, "expires_at": time.time() + _RESET_CODE_TTL}
+    _reset_codes[request.email] = {"code": code, "expires_at": time.time() + _RESET_CODE_TTL, "attempts": 0}
 
     # Очищаем старые коды
     expired = [e for e, v in _reset_codes.items() if v["expires_at"] < time.time()]
@@ -720,6 +748,9 @@ async def send_reset_code(request: SendResetCodeRequest):
         sent = await asyncio.get_event_loop().run_in_executor(
             None, lambda: _send_email(request.email, "Код сброса пароля Aurora", body)
         )
+        if not sent:
+            print(f"⚠️  Email failed. Reset code for {request.email}: {code}")
+            return {"success": True, "email_sent": False, "smtp_configured": True, "dev_code": code}
         return {"success": True, "email_sent": sent, "smtp_configured": True}
     else:
         # SMTP не настроен — возвращаем код в ответе для разработки
@@ -739,18 +770,26 @@ async def confirm_reset(request: ConfirmResetRequest):
     if time.time() > entry["expires_at"]:
         del _reset_codes[request.email]
         raise HTTPException(status_code=400, detail="Код устарел. Запросите новый.")
+    if entry.get("attempts", 0) >= _MAX_CODE_ATTEMPTS:
+        del _reset_codes[request.email]
+        raise HTTPException(status_code=429, detail="Превышено количество попыток. Запросите новый код.")
     if entry["code"] != request.code.strip():
+        entry["attempts"] = entry.get("attempts", 0) + 1
         raise HTTPException(status_code=400, detail="Неверный код. Попробуйте снова.")
 
     pool = await DatabasePool.get_pool()
     async with pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("SELECT id FROM users WHERE email = %s", (request.email,))
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT id, is_banned, ban_expires_at FROM users WHERE email = %s", (request.email,))
             user = await cur.fetchone()
             if not user:
                 raise HTTPException(status_code=404, detail="Пользователь не найден")
+            if user.get('is_banned'):
+                expires_at = user.get('ban_expires_at')
+                if not (expires_at and datetime.now(timezone.utc) > expires_at.replace(tzinfo=timezone.utc)):
+                    raise HTTPException(status_code=403, detail="Аккаунт заблокирован")
             new_hash = hash_password(request.new_password)
-            await cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (new_hash, user[0]))
+            await cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (new_hash, user['id']))
             await conn.commit()
 
     del _reset_codes[request.email]
@@ -792,7 +831,7 @@ async def get_recent_users(token: str):
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                "SELECT id, username, tag, avatar, avatar_color, status, last_seen FROM users WHERE id != %s AND setup_complete = 1 ORDER BY created_at DESC LIMIT 15",
+                "SELECT id, username, tag, avatar, avatar_color, status, last_seen FROM users WHERE id != %s AND setup_complete = 1 AND is_deleted = 0 AND is_banned = 0 ORDER BY created_at DESC LIMIT 15",
                 (payload['user_id'],)
             )
             rows = await cur.fetchall()
@@ -812,7 +851,7 @@ async def find_user(token: str, username: str):
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
     user = await UserModel.get_user_by_username(username)
-    if not user:
+    if not user or (user.get('is_deleted') and user['id'] != payload['user_id']):
         raise HTTPException(status_code=404, detail="User not found")
     is_self = user['id'] == payload['user_id']
     tags = await UserModel.get_tags(user['id'])
@@ -928,7 +967,20 @@ async def get_profile(token: str):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if user.get('is_deleted'):
-        raise HTTPException(status_code=403, detail="Аккаунт удалён")
+        raise HTTPException(status_code=403, detail={"code": "deleted"})
+    if user.get('is_banned'):
+        expires_at = user.get('ban_expires_at')
+        if expires_at and datetime.now(timezone.utc) > expires_at.replace(tzinfo=timezone.utc):
+            # Expired temporary ban — auto-unban
+            _pool_ub = await DatabasePool.get_pool()
+            async with _pool_ub.acquire() as _conn_ub:
+                async with _conn_ub.cursor() as _cur_ub:
+                    await _cur_ub.execute("UPDATE users SET is_banned=0, ban_reason=NULL, ban_expires_at=NULL WHERE id=%s", (user['id'],))
+                    await _conn_ub.commit()
+        else:
+            reason = user.get('ban_reason') or ''
+            expires_str = expires_at.replace(tzinfo=timezone.utc).isoformat() if expires_at else None
+            raise HTTPException(status_code=403, detail={"code": "banned", "reason": reason, "expires_at": expires_str})
     tags = await UserModel.get_tags(payload['user_id'])
     user_data = dict(user)
     user_data.pop('password_hash', None)
@@ -1241,8 +1293,10 @@ async def create_group(token: str, name: str, description: str = ""):
     payload = decode_jwt_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
-    
-    group_id = await GroupModel.create_group(name, description, payload['user_id'])
+    if not name or not name.strip():
+        raise HTTPException(status_code=400, detail="Group name cannot be empty")
+
+    group_id = await GroupModel.create_group(name.strip(), description, payload['user_id'])
     if not group_id:
         raise HTTPException(status_code=500, detail="Failed to create group")
 
@@ -1275,7 +1329,10 @@ async def get_group_info(group_id: int, token: str):
     group = await GroupModel.get_group(group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-    
+    role = await GroupModel.get_member_role(group_id, payload['user_id'])
+    if role is None and not group.get('is_channel'):
+        raise HTTPException(status_code=403, detail="Not a member of this group")
+
     members = await GroupModel.get_members(group_id)
     return {"group": group, "members": members}
 
@@ -1293,7 +1350,9 @@ async def invite_to_group(group_id: int, request: InviteToGroupRequest, token: s
     user = await UserModel.get_user_by_tag(request.tag)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+    if user['id'] == payload['user_id']:
+        raise HTTPException(status_code=400, detail="Cannot invite yourself")
+
     # Проверяем, не состоит ли уже в группе
     members = await GroupModel.get_members(group_id)
     for member in members:
@@ -1369,6 +1428,9 @@ async def get_group_messages(group_id: int, token: str, limit: int = 200, before
     payload = decode_jwt_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
+    role = await GroupModel.get_member_role(group_id, payload['user_id'])
+    if role is None:
+        raise HTTPException(status_code=403, detail="Not a member of this group")
 
     messages, has_more = await GroupMessageModel.get_messages(group_id, limit, before_id)
 
@@ -1483,6 +1545,9 @@ async def record_post_view(group_id: int, message_id: int, token: str):
     payload = decode_jwt_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
+    role = await GroupModel.get_member_role(group_id, payload['user_id'])
+    if role is None:
+        raise HTTPException(status_code=403, detail="Not a member")
     count = await PostViewModel.record_view(message_id, payload['user_id'])
     return {"view_count": count}
 
@@ -1492,6 +1557,9 @@ async def get_message_readers(group_id: int, message_id: int, token: str):
     payload = decode_jwt_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
+    role = await GroupModel.get_member_role(group_id, payload['user_id'])
+    if role is None:
+        raise HTTPException(status_code=403, detail="Not a member")
     pool = await DatabasePool.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
@@ -1566,6 +1634,9 @@ async def remove_group_member(group_id: int, user_id: int, token: str):
     role = await GroupModel.get_member_role(group_id, payload['user_id'])
     if role != 'admin' and payload['user_id'] != user_id:
         raise HTTPException(status_code=403, detail="Not allowed")
+    _group_for_kick = await GroupModel.get_group(group_id)
+    if _group_for_kick and _group_for_kick.get('creator_id') == user_id and payload['user_id'] != user_id:
+        raise HTTPException(status_code=403, detail="Cannot remove group creator")
     success = await GroupModel.remove_member(group_id, user_id)
     if not success:
         raise HTTPException(status_code=400, detail="Failed to remove member")
@@ -1785,6 +1856,9 @@ async def set_member_role(group_id: int, user_id: int, token: str, role: str):
         raise HTTPException(status_code=403, detail="Only admins can change roles")
     if role not in ('admin', 'member'):
         raise HTTPException(status_code=400, detail="Invalid role")
+    _group_for_role = await GroupModel.get_group(group_id)
+    if _group_for_role and _group_for_role.get('creator_id') == user_id and role == 'member':
+        raise HTTPException(status_code=403, detail="Cannot demote group creator")
     success = await GroupModel.set_member_role(group_id, user_id, role)
     if not success:
         raise HTTPException(status_code=400, detail="User not found in group")
@@ -1892,14 +1966,10 @@ async def clear_conversation(user_id: int, token: str):
     success = await MessageModel.clear_conversation(payload['user_id'], user_id)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to clear conversation")
-    # Notify both users
+    # Notify only the requesting user — the other user keeps their history
     await manager.send_message_to_user(payload['user_id'], {
         "type": "chat_cleared",
         "data": {"user_id": user_id, "is_group": False}
-    })
-    await manager.send_message_to_user(user_id, {
-        "type": "chat_cleared",
-        "data": {"user_id": payload['user_id'], "is_group": False}
     })
     return {"success": True}
 
@@ -1926,6 +1996,8 @@ async def upload_file(token: str = Form(...), file: UploadFile = File(...)):
 
     content = await file.read()
     total_size = len(content)
+    if total_size == 0:
+        raise HTTPException(status_code=400, detail="Файл пустой")
     if total_size > MAX_UPLOAD_SIZE:
         raise HTTPException(status_code=413, detail="Файл превышает лимит 1 ГБ")
 
@@ -1973,12 +2045,17 @@ async def get_file(filename: str):
     return FileResponse(file_path, media_type=content_type, headers={"Access-Control-Allow-Origin": "*"})
 
 @app.get("/files/download/{message_id}")
-async def download_file_by_id(message_id: int):
+async def download_file_by_id(message_id: int, token: str):
     """Скачать файл с оригинальным именем по ID сообщения"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
     try:
         message = await MessageModel.get_message_by_id(message_id)
         if not message:
             raise HTTPException(status_code=404, detail="Message not found")
+        if message.get('sender_id') != payload['user_id'] and message.get('receiver_id') != payload['user_id']:
+            raise HTTPException(status_code=403, detail="Access denied")
         
         file_path = message.get('file_path')
         if not file_path:
@@ -2028,13 +2105,19 @@ async def options_download_file(message_id: int):
 
 
 @app.get("/files/group/download/{message_id}")
-async def download_group_file_by_id(message_id: int):
+async def download_group_file_by_id(message_id: int, token: str):
     """Скачать файл из группового сообщения с оригинальным именем"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
     try:
         # Получаем сообщение из групповых сообщений
         message = await GroupMessageModel.get_message_by_id(message_id)
         if not message:
             raise HTTPException(status_code=404, detail="Message not found")
+        role = await GroupModel.get_member_role(message['group_id'], payload['user_id'])
+        if role is None:
+            raise HTTPException(status_code=403, detail="Not a member of this group")
         
         file_path = message.get('file_path')
         if not file_path:
@@ -2216,6 +2299,20 @@ async def submit_report(request: ReportRequest, token: str):
                 "INSERT INTO reports (reporter_id, target_type, target_id, reason, comment) VALUES (%s,%s,%s,%s,%s)",
                 (reporter_id, request.target_type, request.target_id, request.reason[:64], request.comment[:500])
             )
+    reporter_info = await UserModel.get_user_by_id(reporter_id)
+    reporter_name = reporter_info.get('username', f'User #{reporter_id}') if reporter_info else f'User #{reporter_id}'
+    admin_ids = await SupportModel.get_admin_ids()
+    for admin_id in admin_ids:
+        await manager.send_message_to_user(admin_id, {
+            "type": "new_report",
+            "data": {
+                "reporter_id": reporter_id,
+                "reporter_name": reporter_name,
+                "target_type": request.target_type,
+                "target_id": request.target_id,
+                "reason": request.reason,
+            }
+        })
     return {"success": True}
 
 @app.get("/api/admin/reports")
@@ -2349,6 +2446,24 @@ async def get_link_preview(url: str, token: str):
     if not re.match(r'https?://', url):
         raise HTTPException(status_code=400, detail="Invalid URL")
 
+    # Block SSRF: internal IPs, localhost, cloud metadata
+    import urllib.parse as _urlparse, ipaddress as _ipaddress
+    try:
+        _host = _urlparse.urlparse(url).hostname or ''
+        _blocked_hosts = {'localhost', '0.0.0.0'}
+        if _host in _blocked_hosts:
+            raise HTTPException(status_code=400, detail="URL not allowed")
+        try:
+            _addr = _ipaddress.ip_address(_host)
+            if _addr.is_private or _addr.is_loopback or _addr.is_link_local or _addr.is_reserved:
+                raise HTTPException(status_code=400, detail="URL not allowed")
+        except ValueError:
+            pass  # hostname, not IP — OK
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid URL")
+
     cached = _link_preview_cache.get(url)
     if cached and time.time() - cached['_ts'] < _LINK_PREVIEW_TTL:
         return {k: v for k, v in cached.items() if k != '_ts'}
@@ -2447,14 +2562,22 @@ async def websocket_endpoint(websocket: WebSocket):
             else: os_ = ''
             return f'{browser} · {os_}' if os_ else browser
         _device = _parse_device(_ua)
+        _ws_device_id = websocket.query_params.get('device_id') or None
         _sp = await DatabasePool.get_pool()
         async with _sp.acquire() as _sc:
             async with _sc.cursor() as _scur:
-                await _scur.execute(
-                    "INSERT INTO user_sessions (user_id, token_hash, device_name, ip) VALUES (%s,%s,%s,%s) "
-                    "ON DUPLICATE KEY UPDATE last_active=UTC_TIMESTAMP(), ip=%s",
-                    (user_id, _token_hash, _device, _client_ip, _client_ip)
-                )
+                if _ws_device_id:
+                    await _scur.execute(
+                        "INSERT INTO user_sessions (user_id, token_hash, device_name, ip, device_id) VALUES (%s,%s,%s,%s,%s) "
+                        "ON DUPLICATE KEY UPDATE token_hash=%s, last_active=UTC_TIMESTAMP(), ip=%s",
+                        (user_id, _token_hash, _device, _client_ip, _ws_device_id, _token_hash, _client_ip)
+                    )
+                else:
+                    await _scur.execute(
+                        "INSERT INTO user_sessions (user_id, token_hash, device_name, ip) VALUES (%s,%s,%s,%s) "
+                        "ON DUPLICATE KEY UPDATE last_active=UTC_TIMESTAMP(), ip=%s",
+                        (user_id, _token_hash, _device, _client_ip, _client_ip)
+                    )
                 await _sc.commit()
     except Exception: pass
 
@@ -2939,11 +3062,15 @@ async def websocket_endpoint(websocket: WebSocket):
             
             elif data.get("type") == "edit_message":
                 message_id = data.get("message_id")
-                new_text = data.get("new_text")
+                new_text = data.get("new_text", "") or ""
                 is_group = data.get("is_group", False)
-                
+
+                if not new_text.strip():
+                    await manager.send_message_to_user(user_id, {"type": "error", "data": {"message": "Нельзя сохранить пустое сообщение"}})
+                    continue
+
                 print(f"✏️ EDIT MESSAGE RECEIVED: id={message_id}, new_text={new_text}, is_group={is_group}")
-                
+
                 try:
                     if is_group:
                         msg = await GroupMessageModel.get_message_by_id(message_id)
@@ -3064,7 +3191,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 message_id = data.get("message_id")
                 is_group = data.get("is_group", False)
                 emoji = data.get("emoji", "")
-                if message_id and emoji:
+                if message_id and emoji and emoji.strip():
+                    _rmsg = await (GroupMessageModel.get_message_by_id(message_id) if is_group else MessageModel.get_message_by_id(message_id))
+                    if _rmsg and _rmsg.get('is_deleted'): continue
                     await ReactionModel.add_reaction(message_id, is_group, user_id, emoji)
                     event = {"type": "reaction_update", "data": {
                         "message_id": message_id, "is_group": is_group,
@@ -3304,6 +3433,8 @@ async def delete_folder(folder_id: int, token: str):
 async def add_chat_to_folder(folder_id: int, request: AddChatToFolderRequest, token: str):
     payload = decode_jwt_token(token)
     if not payload: raise HTTPException(401, "Invalid token")
+    folders = await FolderModel.get_folders(payload['user_id'])
+    if not any(f['id'] == folder_id for f in folders): raise HTTPException(403, "Not your folder")
     ok = await FolderModel.add_chat(folder_id, request.chat_type, request.chat_id)
     return {"ok": ok}
 
@@ -3311,6 +3442,8 @@ async def add_chat_to_folder(folder_id: int, request: AddChatToFolderRequest, to
 async def remove_chat_from_folder(folder_id: int, chat_type: str, chat_id: int, token: str):
     payload = decode_jwt_token(token)
     if not payload: raise HTTPException(401, "Invalid token")
+    folders = await FolderModel.get_folders(payload['user_id'])
+    if not any(f['id'] == folder_id for f in folders): raise HTTPException(403, "Not your folder")
     ok = await FolderModel.remove_chat(folder_id, chat_type, chat_id)
     return {"ok": ok}
 
@@ -3343,10 +3476,12 @@ async def support_send(request: SupportSendRequest, token: str):
     if not msg_id:
         raise HTTPException(500, "Failed to send message")
     admin_ids = await SupportModel.get_admin_ids()
+    sender_info = await UserModel.get_user_by_id(user_id)
+    sender_username = sender_info.get('username', f'User #{user_id}') if sender_info else f'User #{user_id}'
     for admin_id in admin_ids:
         await manager.send_message_to_user(admin_id, {
             "type": "support_message",
-            "data": {"user_id": user_id, "msg_id": msg_id, "message_text": text, "file_path": request.file_path, "filename": request.filename}
+            "data": {"user_id": user_id, "username": sender_username, "msg_id": msg_id, "message_text": text, "file_path": request.file_path, "filename": request.filename}
         })
     return {"success": True, "id": msg_id}
 
@@ -3506,6 +3641,24 @@ async def unban_user(user_id: int, token: str):
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute("UPDATE users SET is_banned=0, ban_reason=NULL WHERE id=%s", (user_id,))
+            await conn.commit()
+    return {"success": True}
+
+class AdminSetPasswordRequest(BaseModel):
+    password: str
+
+@app.post("/api/admin/users/{user_id}/set-password")
+async def admin_set_password(user_id: int, token: str, request: AdminSetPasswordRequest):
+    """Установить новый пароль пользователю (только админ)"""
+    await require_admin(token)
+    new_password = request.password.strip()
+    if len(new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    new_hash = hash_password(new_password)
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE users SET password_hash=%s WHERE id=%s", (new_hash, user_id))
             await conn.commit()
     return {"success": True}
 
@@ -3770,6 +3923,9 @@ async def scheduled_message_worker():
                         sender_avatar_color = sender.get('avatar_color', '#6366f1') if sender else '#6366f1'
 
                         if m['receiver_id']:
+                            recv_check = await UserModel.get_user_by_id(m['receiver_id'])
+                            if recv_check and recv_check.get('is_deleted'):
+                                continue  # Получатель удалён — пропускаем
                             await cur.execute(
                                 "INSERT INTO messages (sender_id, receiver_id, message_text, timestamp) VALUES (%s, %s, %s, UTC_TIMESTAMP())",
                                 (m['sender_id'], m['receiver_id'], m['message_text'])
@@ -4134,6 +4290,10 @@ async def add_track(req: TrackAdd):
     pool = await DatabasePool.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT user_id FROM playlists WHERE id = %s", (req.playlist_id,))
+            pl = await cur.fetchone()
+            if not pl or pl['user_id'] != payload['user_id']:
+                raise HTTPException(status_code=403, detail="Not your playlist")
             await cur.execute("SELECT MAX(position) as mp FROM playlist_tracks WHERE playlist_id = %s", (req.playlist_id,))
             row = await cur.fetchone()
             pos = (row['mp'] or 0) + 1
@@ -4151,7 +4311,13 @@ async def delete_track(track_id: int, token: str):
         raise HTTPException(status_code=401, detail="Invalid token")
     pool = await DatabasePool.get_pool()
     async with pool.acquire() as conn:
-        async with conn.cursor() as cur:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT pt.id FROM playlist_tracks pt JOIN playlists p ON p.id = pt.playlist_id WHERE pt.id = %s AND p.user_id = %s",
+                (track_id, payload['user_id'])
+            )
+            if not await cur.fetchone():
+                raise HTTPException(status_code=403, detail="Not your track")
             await cur.execute("DELETE FROM playlist_tracks WHERE id = %s", (track_id,))
             await conn.commit()
     return {"ok": True}
@@ -4184,6 +4350,19 @@ async def get_shared_playlist(code: str, token: str):
             await cur.execute("SELECT * FROM playlist_tracks WHERE playlist_id = %s ORDER BY position", (pl['id'],))
             tracks = await cur.fetchall()
             return {**pl, 'tracks': tracks}
+
+@app.patch("/api/playlists/{playlist_id}/cover-path")
+async def set_playlist_cover_path(playlist_id: int, token: str, cover: str):
+    """Установить обложку плейлиста по уже существующему пути (при копировании плейлиста)"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE playlists SET cover = %s WHERE id = %s AND user_id = %s", (cover, playlist_id, payload['user_id']))
+            await conn.commit()
+    return {"ok": True}
 
 @app.put("/api/playlists/{playlist_id}/cover")
 async def update_playlist_cover(playlist_id: int, token: str = Form(...), file: UploadFile = File(...)):

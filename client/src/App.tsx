@@ -90,6 +90,23 @@ function App() {
                     });
                 }
                 setAuth({ token, userId, username: res.user.username || username, avatar, status, tag });
+            } else if (res.banned) {
+                localStorage.removeItem('chat_auth');
+                localStorage.setItem('aurora_banned_reason', res.ban_reason || '');
+                localStorage.setItem('aurora_banned_userid', String(userId));
+                if (res.ban_expires_at) localStorage.setItem('aurora_banned_expires_at', res.ban_expires_at);
+                setAccounts(prev => {
+                    const next = prev.filter(a => a.userId !== userId);
+                    localStorage.setItem('aurora_accounts', JSON.stringify(next));
+                    return next;
+                });
+            } else if (res.deleted) {
+                localStorage.removeItem('chat_auth');
+                setAccounts(prev => {
+                    const next = prev.filter(a => a.userId !== userId);
+                    localStorage.setItem('aurora_accounts', JSON.stringify(next));
+                    return next;
+                });
             } else {
                 localStorage.removeItem('chat_auth');
             }
@@ -112,6 +129,29 @@ function App() {
         } catch {}
         setLoading(false);
     }, [restoreSession]);
+
+    // Background: validate saved accounts and remove deleted/invalid ones
+    useEffect(() => {
+        const validate = async () => {
+            const saved = localStorage.getItem('aurora_accounts');
+            if (!saved) return;
+            let list: AccountEntry[];
+            try { list = JSON.parse(saved); } catch { return; }
+            const valid: AccountEntry[] = [];
+            await Promise.all(list.map(async (acc) => {
+                try {
+                    const res = await api.getProfile(acc.token);
+                    if (res.success || (!res.deleted && !res.banned)) valid.push(acc);
+                } catch { valid.push(acc); } // keep on network error
+            }));
+            if (valid.length !== list.length) {
+                localStorage.setItem('aurora_accounts', JSON.stringify(valid));
+                setAccounts(valid);
+            }
+        };
+        validate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const addAccount = useCallback((entry: AccountEntry) => {
         setAccounts(prev => {

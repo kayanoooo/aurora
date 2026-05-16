@@ -84,15 +84,19 @@ const SearchModal: React.FC<SearchModalProps> = ({
     };
 
     const isOled = dm && document.body.classList.contains('oled-theme');
-    const bg = isOled ? '#000000' : (dm ? '#1a1a2e' : '#ffffff');
-    const cardBg = isOled ? '#050508' : (dm ? '#12122a' : '#f8f7ff');
+    const bg = isOled ? '#000000' : dm ? '#0d0d1a' : '#f7f6ff';
+    const cardBg = isOled ? '#050508' : dm ? '#13131f' : 'white';
     const border = isOled ? 'rgba(167,139,250,0.2)' : (dm ? 'rgba(99,102,241,0.25)' : '#ede9fe');
-    const inputBg = isOled ? '#050508' : (dm ? '#12122a' : '#f5f3ff');
+    const inputBg = isOled ? '#0a0a14' : dm ? '#1e1e38' : '#f5f3ff';
     const textCol = dm ? '#e2e8f0' : '#1e1b4b';
     const subCol = isOled ? '#7c6aaa' : dm ? '#7c7caa' : '#6b7280';
-    const accent = '#6366f1';
+    const accent = isOled ? '#a78bfa' : '#6366f1';
     const isMobile = window.innerWidth < 600;
-    const shadow = dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)';
+    const glow = isOled
+        ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)'
+        : dm
+        ? '0 0 50px rgba(99,102,241,0.22), 0 24px 70px rgba(0,0,0,0.6)'
+        : '0 0 40px rgba(99,102,241,0.14), 0 20px 60px rgba(0,0,0,0.15)';
 
     const contentTypes: { id: ContentType; label: string; icon: string }[] = [
         { id: 'all', label: t('All'), icon: '🔍' },
@@ -102,8 +106,8 @@ const SearchModal: React.FC<SearchModalProps> = ({
     ];
 
     const panelStyle: React.CSSProperties = isMobile
-        ? { position: 'fixed', left: 0, right: 0, bottom: 0, backgroundColor: bg, borderRadius: '20px 20px 0 0', maxHeight: '92svh', display: 'flex', flexDirection: 'column', overflow: 'hidden', paddingBottom: 'env(safe-area-inset-bottom, 0px)', boxShadow: dm ? '0 0 50px rgba(99,102,241,0.22), 0 -4px 40px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 -4px 30px rgba(0,0,0,0.15)' }
-        : { backgroundColor: bg, borderRadius: 20, width: 600, maxWidth: '92vw', maxHeight: '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: shadow, border: `1px solid ${border}` };
+        ? { position: 'fixed', left: 0, right: 0, bottom: 0, backgroundColor: bg, borderRadius: '20px 20px 0 0', maxHeight: '92svh', display: 'flex', flexDirection: 'column', overflow: 'hidden', paddingBottom: 'env(safe-area-inset-bottom, 0px)', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.25), 0 -4px 40px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 -4px 40px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 -4px 30px rgba(0,0,0,0.15)' }
+        : { backgroundColor: bg, borderRadius: 20, width: 600, maxWidth: '92vw', maxHeight: '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: glow };
 
     return (
         <div
@@ -119,7 +123,7 @@ const SearchModal: React.FC<SearchModalProps> = ({
                 {isMobile && <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px', flexShrink: 0 }}><div style={{ width: 36, height: 4, borderRadius: 2, background: dm ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)' }} /></div>}
 
                 {/* Header */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: isMobile ? '8px 16px 12px' : '18px 24px', borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: isMobile ? '8px 16px 12px' : '18px 24px', background: cardBg, boxShadow: `0 1px 0 ${isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}`, flexShrink: 0 }}>
                     <span style={{ fontWeight: 700, fontSize: isMobile ? 16 : 18, color: textCol }}>{t('Search messages')}</span>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <button
@@ -133,7 +137,7 @@ const SearchModal: React.FC<SearchModalProps> = ({
                 </div>
 
                 {/* Search input + scope */}
-                <div style={{ padding: isMobile ? '12px 16px 0' : '16px 24px 0', flexShrink: 0 }}>
+                <div style={{ padding: isMobile ? '12px 16px 0' : '16px 24px 0', background: cardBg, boxShadow: `0 1px 0 ${isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}`, flexShrink: 0 }}>
                     <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                         <input
                             ref={inputRef}
@@ -142,19 +146,19 @@ const SearchModal: React.FC<SearchModalProps> = ({
                             value={query}
                             onChange={e => setQuery(e.target.value)}
                             onKeyDown={e => e.key === 'Enter' && handleSearch()}
-                            style={{ flex: 1, padding: '10px 14px', fontSize: 14, border: `1.5px solid ${border}`, borderRadius: 12, backgroundColor: inputBg, color: textCol, outline: 'none', fontFamily: 'inherit' }}
+                            style={{ flex: 1, padding: '10px 14px', fontSize: 14, border: `1.5px solid ${isOled ? 'rgba(167,139,250,0.2)' : dm ? 'rgba(99,102,241,0.2)' : '#ede9fe'}`, borderRadius: 12, backgroundColor: inputBg, color: textCol, outline: 'none', fontFamily: 'inherit' }}
                             autoFocus
                         />
-                        <button onClick={handleSearch} disabled={loading} style={{ padding: '10px 16px', background: 'linear-gradient(135deg, #6c47d4, #8b5cf6)', color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600, flexShrink: 0, opacity: loading ? 0.7 : 1 }}>
+                        <button onClick={handleSearch} disabled={loading} style={{ padding: '10px 16px', background: `linear-gradient(135deg, ${isOled ? '#7c3aed' : '#6c47d4'}, #8b5cf6)`, color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600, flexShrink: 0, opacity: loading ? 0.7 : 1 }}>
                             {loading ? '...' : '🔍'}
                         </button>
                     </div>
 
                     {/* Scope */}
-                    <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
                         {(['current', 'all'] as const).map(s => (
                             <button key={s} onClick={() => setSearchType(s)} disabled={s === 'current' && !activeChatId}
-                                style={{ padding: '5px 12px', borderRadius: 20, border: `1.5px solid ${searchType === s ? accent : border}`, background: searchType === s ? (isOled ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.1)') : 'none', color: searchType === s ? accent : subCol, fontSize: 12, fontWeight: 600, cursor: s === 'current' && !activeChatId ? 'not-allowed' : 'pointer', opacity: s === 'current' && !activeChatId ? 0.4 : 1, transition: 'all 0.15s' }}>
+                                style={{ padding: '5px 14px', borderRadius: 20, border: `1.5px solid ${searchType === s ? accent : (isOled ? 'rgba(167,139,250,0.2)' : dm ? 'rgba(99,102,241,0.2)' : '#ede9fe')}`, background: searchType === s ? (isOled ? 'rgba(167,139,250,0.15)' : 'rgba(99,102,241,0.1)') : 'none', color: searchType === s ? accent : subCol, fontSize: 12, fontWeight: 600, cursor: s === 'current' && !activeChatId ? 'not-allowed' : 'pointer', opacity: s === 'current' && !activeChatId ? 0.4 : 1, transition: 'all 0.15s' }}>
                                 {s === 'current' ? t('In current chat') : t('In all chats')}
                             </button>
                         ))}
@@ -163,7 +167,7 @@ const SearchModal: React.FC<SearchModalProps> = ({
 
                 {/* Filters panel */}
                 {showFilters && (
-                    <div style={{ padding: isMobile ? '0 16px 12px' : '0 24px 12px', borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
+                    <div style={{ padding: isMobile ? '0 16px 12px' : '0 24px 14px', background: cardBg, boxShadow: `0 1px 0 ${isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}`, flexShrink: 0 }}>
                         {/* Content type chips */}
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
                             {contentTypes.map(ct => (

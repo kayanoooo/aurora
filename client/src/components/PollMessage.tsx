@@ -167,4 +167,4 @@ const PollMessage: React.FC<PollMessageProps> = ({ pollId, token, isDark = false
     );
 };
 
-export default PollMessage;
+export default React.memo(PollMessage);

@@ -31,7 +31,7 @@ const PollCreator: React.FC<PollCreatorProps> = ({ isDark = false, onClose, onCr
 
     const handleCreate = () => {
         const q = question.trim();
-        const opts = options.map(o => o.trim()).filter(Boolean);
+        const opts = [...new Set(options.map(o => o.trim()).filter(Boolean))];
         if (!q || opts.length < 2) return;
         onCreate(q, opts, isAnonymous, isMultiChoice);
         close();

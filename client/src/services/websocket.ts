@@ -51,7 +51,12 @@ class WebSocketService {
         }
 
         this.token = token;
-        const url = `${config.WS_URL}/ws?token=${token}`;
+        let _deviceId = localStorage.getItem('aurora_device_id');
+        if (!_deviceId) {
+            _deviceId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
+            localStorage.setItem('aurora_device_id', _deviceId);
+        }
+        const url = `${config.WS_URL}/ws?token=${token}&device_id=${encodeURIComponent(_deviceId)}`;
         console.log('🔌 Creating WS to:', url);
 
         const ws = new WebSocket(url);

@@ -633,7 +633,7 @@ const PrivacySubModal: React.FC<PrivacySubProps> = ({ token, theme, onBack, onLo
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: col }}>{lang === 'en' ? 'Active sessions' : 'Активные сессии'}</div>
+                    <div style={{ fontSize: 14, color: col }}>{lang === 'en' ? 'Active sessions' : 'Активные сессии'}</div>
                     <div style={{ fontSize: 12, color: subCol }}>{lang === 'en' ? 'Manage devices' : 'Управление устройствами'}</div>
                 </div>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={subCol} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
@@ -648,7 +648,7 @@ const PrivacySubModal: React.FC<PrivacySubProps> = ({ token, theme, onBack, onLo
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: col }}>{lang === 'en' ? 'Blocked users' : 'Заблокированные пользователи'}</div>
+                    <div style={{ fontSize: 14, color: col }}>{lang === 'en' ? 'Blocked users' : 'Заблокированные пользователи'}</div>
                 </div>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={subCol} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
@@ -1231,7 +1231,7 @@ const AboutSubModal: React.FC<AboutSubProps> = ({ theme, onBack }) => {
                 <img src="/logo192.png" alt="Aurora" style={{ width: 80, height: 80, borderRadius: 22, boxShadow: '0 8px 28px rgba(99,102,241,0.3)' }} />
                 <div style={{ textAlign: 'center' }}>
                     <div style={{ fontSize: 32, fontWeight: 900, color: col, letterSpacing: -1 }}>Aurora</div>
-                    <div style={{ marginTop: 6, display: 'inline-block', padding: '3px 14px', borderRadius: 20, background: dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.1)'), color: '#a78bfa', fontSize: 13, fontWeight: 700, border: dm && getIsOled() ? '1px solid rgba(167,139,250,0.2)' : 'none' }}>beta v0.7.2 pre-release 2</div>
+                    <div style={{ marginTop: 6, display: 'inline-block', padding: '3px 14px', borderRadius: 20, background: dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.1)'), color: '#a78bfa', fontSize: 13, fontWeight: 700, border: dm && getIsOled() ? '1px solid rgba(167,139,250,0.2)' : 'none' }}>v1.0.0</div>
                 </div>
                 <div style={{ fontSize: 13, color: subCol, textAlign: 'center', lineHeight: 1.6 }}>{lang === 'en' ? 'Modern open-source messenger' : 'Современный мессенджер с открытым исходным кодом'}</div>
 
@@ -1391,7 +1391,7 @@ const NotificationsSubModal: React.FC<NotifSubProps> = ({ theme, onBack }) => {
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={value ? 'white' : subCol} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{icon}</svg>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: col }}>{label}</div>
+                <div style={{ fontSize: 14, color: col }}>{label}</div>
                 {hint && <div style={{ fontSize: 12, color: subCol, marginTop: 1 }}>{hint}</div>}
             </div>
             <Toggle value={value} onChange={onChange} />

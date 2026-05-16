@@ -73,6 +73,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
     const [editForm, setEditForm] = useState({ username: '', email: '', tag: '', status: '' });
     const [editSaving, setEditSaving] = useState(false);
     const [editError, setEditError] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [passwordSaving, setPasswordSaving] = useState(false);
+    const [passwordMsg, setPasswordMsg] = useState('');
 
     // Support
     const [threads, setThreads] = useState<SupportThread[]>([]);
@@ -125,6 +128,24 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
         setEditingUser(u);
         setEditForm({ username: u.username, email: u.email, tag: u.tag || '', status: u.status || '' });
         setEditError('');
+        setNewPassword('');
+        setPasswordMsg('');
+    };
+
+    const savePassword = async () => {
+        if (!editingUser || newPassword.length < 6) return;
+        setPasswordSaving(true);
+        setPasswordMsg('');
+        try {
+            const res = await fetch(`${config.API_URL}/admin/users/${editingUser.id}/set-password?token=${token}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: newPassword }),
+            });
+            if (res.ok) { setPasswordMsg('✅ Пароль изменён'); setNewPassword(''); }
+            else { const j = await res.json(); setPasswordMsg(`❌ ${j.detail || 'Ошибка'}`); }
+        } catch { setPasswordMsg('❌ Ошибка сети'); }
+        finally { setPasswordSaving(false); }
     };
 
     const saveEditUser = async () => {
@@ -852,6 +873,25 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
                             <button onClick={saveEditUser} disabled={editSaving} style={{ flex: 2, padding: '9px', borderRadius: 10, border: 'none', background: editSaving ? (dm ? '#2a2a3d' : '#e5e7eb') : 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: editSaving ? subCol : 'white', cursor: editSaving ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 700 }}>
                                 {editSaving ? 'Сохранение...' : 'Сохранить'}
                             </button>
+                        </div>
+
+                        {/* Password section */}
+                        <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${border}` }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Сменить пароль</div>
+                            <div style={{ display: 'flex', gap: 8 }}>
+                                <input
+                                    type="text"
+                                    placeholder="Новый пароль (мин. 6 символов)"
+                                    value={newPassword}
+                                    onChange={e => { setNewPassword(e.target.value); setPasswordMsg(''); }}
+                                    style={{ ...inputStyle(), flex: 1, marginBottom: 0 }}
+                                />
+                                <button onClick={savePassword} disabled={passwordSaving || newPassword.length < 6}
+                                    style={{ padding: '9px 14px', borderRadius: 10, border: 'none', background: newPassword.length >= 6 ? 'linear-gradient(135deg,#f59e0b,#f97316)' : (dm ? '#2a2a3d' : '#e5e7eb'), color: newPassword.length >= 6 ? 'white' : subCol, cursor: newPassword.length >= 6 ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
+                                    {passwordSaving ? '...' : 'Сохранить'}
+                                </button>
+                            </div>
+                            {passwordMsg && <div style={{ fontSize: 12, marginTop: 6, color: passwordMsg.startsWith('✅') ? '#22c55e' : '#ef4444' }}>{passwordMsg}</div>}
                         </div>
                     </div>
                 </div>

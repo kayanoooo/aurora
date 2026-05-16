@@ -50,16 +50,19 @@ const CallOverlay: React.FC<Props> = ({
     }, [state]);
 
     useEffect(() => {
-        if (localVideoRef.current && localStream) localVideoRef.current.srcObject = localStream;
-        return () => { if (localVideoRef.current) localVideoRef.current.srcObject = null; };
+        const localVideo = localVideoRef.current;
+        if (localVideo && localStream) localVideo.srcObject = localStream;
+        return () => { if (localVideo) localVideo.srcObject = null; };
     }, [localStream]);
 
     useEffect(() => {
-        if (remoteVideoRef.current && remoteStream) remoteVideoRef.current.srcObject = remoteStream;
-        if (remoteAudioRef.current) remoteAudioRef.current.srcObject = remoteStream;
+        const remoteVideo = remoteVideoRef.current;
+        const remoteAudio = remoteAudioRef.current;
+        if (remoteVideo && remoteStream) remoteVideo.srcObject = remoteStream;
+        if (remoteAudio) remoteAudio.srcObject = remoteStream;
         return () => {
-            if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-            if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
+            if (remoteVideo) remoteVideo.srcObject = null;
+            if (remoteAudio) remoteAudio.srcObject = null;
         };
     }, [remoteStream]);
 

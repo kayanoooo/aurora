@@ -1,12 +1,18 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { wsService } from '../services/websocket';
 
+const _TURN = { username: '03a4bedbfae879cef3fd26d1', credential: 'DR6wufffKLd32STv' };
 const ICE_SERVERS: RTCIceServer[] = [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    // Add Metered.ca TURN (free 1 GB/mo):
-    // { urls: 'turn:relay.metered.ca:80', username: 'YOUR_USERNAME', credential: 'YOUR_CREDENTIAL' },
+    { urls: 'turn:global.relay.metered.ca:80',                ..._TURN }, // UDP
+    { urls: 'turn:global.relay.metered.ca:80?transport=tcp',  ..._TURN }, // TCP
+    { urls: 'turn:global.relay.metered.ca:443?transport=tcp', ..._TURN }, // TCP 443
+    { urls: 'turns:global.relay.metered.ca:443?transport=tcp',..._TURN }, // TLS
 ];
+
+async function fetchIceServers(): Promise<RTCIceServer[]> {
+    return ICE_SERVERS;
+}
 
 export type CallState = 'idle' | 'calling' | 'ringing' | 'connected' | 'error';
 
@@ -38,6 +44,8 @@ export function useCall() {
     const peerIdRef = useRef<number | null>(null);
     const peerNameRef = useRef<string | null>(null);
     const callTypeRef = useRef<'audio' | 'video'>('audio');
+    const isAcceptingRef = useRef(false); // guard against double doAccept
+    const answerSetRef = useRef(false);   // guard against double call_answer
 
     const [callInfo, setCallInfo] = useState<CallInfo>(IDLE);
 
@@ -49,6 +57,8 @@ export function useCall() {
         pendingCandidates.current = [];
         pendingOffer.current = null;
         wantsToAccept.current = false;
+        isAcceptingRef.current = false;
+        answerSetRef.current = false;
         peerIdRef.current = null;
         peerNameRef.current = null;
         setCallInfo(IDLE);
@@ -59,14 +69,15 @@ export function useCall() {
         setTimeout(cleanup, 3500);
     }, [cleanup]);
 
-    const buildPC = useCallback((targetId: number) => {
-        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const buildPC = useCallback((targetId: number, iceServers: RTCIceServer[]) => {
+        console.log('🔧 ICE servers:', JSON.stringify(iceServers));
+        const pc = new RTCPeerConnection({ iceServers });
         pcRef.current = pc;
 
         pc.onicecandidate = ({ candidate }) => {
-            if (candidate) {
-                wsService.send({ type: 'ice_candidate', target_id: targetId, candidate: candidate.toJSON() });
-            }
+            if (!candidate || !candidate.candidate) return; // skip null and empty end-of-candidates
+            console.log('🧊 ICE candidate:', candidate.type, candidate.protocol, candidate.address);
+            wsService.send({ type: 'ice_candidate', target_id: targetId, candidate: candidate.toJSON() });
         };
 
         pc.ontrack = (e) => {
@@ -82,6 +93,12 @@ export function useCall() {
             }
             if (pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
                 if (pcRef.current === pc) cleanup();
+            }
+        };
+
+        pc.oniceconnectionstatechange = () => {
+            if (pc.iceConnectionState === 'failed') {
+                showError('Не удалось установить соединение. Попробуйте ещё раз.');
             }
         };
 
@@ -118,13 +135,15 @@ export function useCall() {
         const callerName = peerNameRef.current;
         const callType = callTypeRef.current;
         if (!offer || !callerId) return;
+        if (isAcceptingRef.current) return; // already in progress
+        isAcceptingRef.current = true;
 
         try {
-            const stream = await getMedia(callType);
+            const [stream, iceServers] = await Promise.all([getMedia(callType), fetchIceServers()]);
             localStreamRef.current = stream;
             setCallInfo(prev => ({ ...prev, localStream: stream }));
 
-            const pc = buildPC(callerId);
+            const pc = buildPC(callerId, iceServers);
             stream.getTracks().forEach(t => pc.addTrack(t, stream));
 
             await pc.setRemoteDescription(new RTCSessionDescription(offer));
@@ -143,13 +162,13 @@ export function useCall() {
 
     const startCall = useCallback(async (targetId: number, targetName: string, callType: 'audio' | 'video') => {
         try {
-            const stream = await getMedia(callType);
+            const [stream, iceServers] = await Promise.all([getMedia(callType), fetchIceServers()]);
             localStreamRef.current = stream;
             peerIdRef.current = targetId;
             peerNameRef.current = targetName;
             callTypeRef.current = callType;
 
-            const pc = buildPC(targetId);
+            const pc = buildPC(targetId, iceServers);
             stream.getTracks().forEach(t => pc.addTrack(t, stream));
 
             const offer = await pc.createOffer();
@@ -227,18 +246,25 @@ export function useCall() {
             }
 
             if (type === 'call_answer' && pcRef.current) {
+                if (answerSetRef.current) return; // ignore duplicate answers
+                answerSetRef.current = true;
                 try {
                     await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.sdp as RTCSessionDescriptionInit));
                     await flushCandidates(pcRef.current);
-                    // onconnectionstatechange will set 'connected' when ICE finishes
                 } catch (err) {
                     console.error('call_answer error:', err);
                 }
             }
 
             if (type === 'ice_candidate' && data.candidate) {
+                const cStr: string = data.candidate?.candidate || '';
+                const parts = cStr.split(' ');
+                const cType = parts[7] || '?';
+                const cProto = parts[2] || '?';
+                const cAddr = parts[4] || '?';
+                console.log('📥 Remote ICE candidate:', cType, cProto, cAddr);
                 if (pcRef.current?.remoteDescription) {
-                    try { await pcRef.current.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch {}
+                    try { await pcRef.current.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch (e) { console.warn('addIceCandidate error:', e); }
                 } else {
                     pendingCandidates.current.push(data.candidate);
                 }

@@ -555,7 +555,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                                 style={{ width: '100%', padding: '13px', background: dm ? 'rgba(239,68,68,0.06)' : '#fff8f8', color: '#f87171', border: `1px solid ${dm ? 'rgba(239,68,68,0.2)' : '#fecaca'}`, borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
                                 🚪 {lang === 'en' ? `Leave ${isChannel ? 'channel' : 'group'}` : `Покинуть ${isChannel ? 'канал' : 'группу'}`}
                             </button>
-                            {onReport && (
+                            {onReport && !isAdmin && (
                                 <button onClick={() => onReport('group', groupId, group?.name || '')}
                                     style={{ width: '100%', padding: '11px', background: 'transparent', color: '#ef4444', border: `1.5px solid rgba(239,68,68,0.25)`, borderRadius: 12, cursor: 'pointer', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>

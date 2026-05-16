@@ -297,7 +297,7 @@ const FolderManager: React.FC<FolderManagerProps> = ({
                 {isMobile && <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px' }}><div style={{ width: 36, height: 4, borderRadius: 2, background: dm ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.1)' }} /></div>}
 
                 {/* Header — matches SubModal style */}
-                <div style={{ padding: isMobile ? '8px 16px 10px' : '16px 20px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.06)' : dm ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}` }}>
+                <div style={{ padding: isMobile ? '8px 16px 10px' : '16px 20px', display: 'flex', alignItems: 'center', gap: 8 }}>
                     {isMobile && (
                         <button
                             onClick={mobileView === 'chats'

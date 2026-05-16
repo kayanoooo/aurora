@@ -593,6 +593,17 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             return next;
         });
     };
+    const unhideChat = React.useCallback((key: string) => {
+        setHiddenChats(prev => {
+            if (!prev.has(key)) return prev;
+            const next = new Set(prev);
+            next.delete(key);
+            localStorage.setItem(`aurora_hidden_${currentUserId}`, JSON.stringify(Array.from(next)));
+            return next;
+        });
+    }, [currentUserId]);
+    const unhideChatRef = useRef(unhideChat);
+    useEffect(() => { unhideChatRef.current = unhideChat; }, [unhideChat]);
     const [showArchive, setShowArchive] = useState(false);
     const toggleArchive = (key: string) => {
         setArchivedChats(prev => {
@@ -667,11 +678,17 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         setPinMenu(null);
     };
 
-    const handleDeleteChat = (key: string) => {
+    const handleDeleteChat = async (key: string) => {
         const parts = key.split('-');
         const type = parts[0];
         const id = parseInt(parts[1]);
+        // Clear messages on server first
+        try {
+            if (type === 'private') { await api.clearConversation(token, id); }
+            else { await api.clearGroupMessages(token, id); }
+        } catch {}
         hideChat(key);
+        scrollPositions.current.delete(key);
         if (type === 'private') {
             if (activeChat?.type === 'private' && activeChat.id === id) { setActiveChat(null); setMessages([]); }
         } else {
@@ -754,6 +771,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const [showScrollDown, setShowScrollDown] = useState(false);
+    const [newMsgWhileScrolled, setNewMsgWhileScrolled] = useState(0);
+    const showScrollDownRef = useRef(false);
+    const [inputCharCount, setInputCharCount] = useState(0);
+    useEffect(() => { showScrollDownRef.current = showScrollDown; }, [showScrollDown]);
     const scrollPositions = useRef<Map<string, number>>(new Map());
     const currentUploadXHR = useRef<XMLHttpRequest | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -765,6 +786,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         el.style.height = Math.min(el.scrollHeight, 150) + 'px';
     };
     const activeChatRef = useRef<ChatItem | null>(null);
+    const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     // Draft text per chat: key = "type-id", persisted in localStorage
     const _loadDrafts = (): Record<string, string> => {
         try { return JSON.parse(localStorage.getItem('aurora_drafts') || '{}'); } catch { return {}; }
@@ -813,8 +835,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             // Notify peers about voice recording
             const recChat = activeChatRef.current;
             if (recChat) {
-                if (recChat.type === 'private') wsService.send({ type: 'typing', receiver_id: recChat.id, action: 'recording' });
-                else wsService.send({ type: 'group_typing', group_id: recChat.id, action: 'recording' });
+                if (recChat.type === 'private' && recChat.id !== currentUserId) wsService.send({ type: 'typing', receiver_id: recChat.id, action: 'recording' });
+                else if (recChat.type === 'group') wsService.send({ type: 'group_typing', group_id: recChat.id, action: 'recording' });
             }
             recordingTimeRef.current = 0;
             recordingTimerRef.current = setInterval(() => {
@@ -1155,6 +1177,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         try {
             const res = await api.getConversation(token, userId);
             if (res.messages) {
+                // Guard against race: discard if user switched chat before response arrived
+                if (activeChatRef.current?.type !== 'private' || activeChatRef.current?.id !== userId) return;
                 setMessages(res.messages);
                 setHasMoreMessages(res.has_more ?? false);
                 if (chatLoadingTimerRef.current) { clearTimeout(chatLoadingTimerRef.current); chatLoadingTimerRef.current = null; }
@@ -1174,6 +1198,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         try {
             const res = await api.getGroupMessages(token, groupId);
             if (res.messages) {
+                if (activeChatRef.current?.type !== 'group' || activeChatRef.current?.id !== groupId) return;
                 setMessages(res.messages);
                 setHasMoreMessages(res.has_more ?? false);
                 if (chatLoadingTimerRef.current) { clearTimeout(chatLoadingTimerRef.current); chatLoadingTimerRef.current = null; }
@@ -1504,7 +1529,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     setMessages(prev =>
                         prev.some(m => m.id === data.data.id) ? prev : [...prev, { ...data.data, reactions: [] }]
                     );
-                    scrollToBottom(true);
+                    if (showScrollDownRef.current) { setNewMsgWhileScrolled(n => n + 1); } else { scrollToBottom(true); }
                     wsService.markRead(data.data.sender_id);
                 } else if (data.data.sender_id !== currentUserId) {
                     const key = `private-${data.data.sender_id}`;
@@ -1515,6 +1540,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 // Add sender to contacts if not present, update last message
                 const senderId = data.data.sender_id;
                 if (senderId && senderId !== currentUserId) {
+                    // Un-hide if this chat was previously deleted
+                    unhideChatRef.current(`private-${senderId}`);
                     setUsers(prev => {
                         if (!prev.some(u => u.id === senderId)) { loadUsers(); return prev; }
                         const u = prev.find(u => u.id === senderId)!;
@@ -1571,6 +1598,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 // Bring receiver to top, update last message
                 const recvId = data.data.receiver_id;
                 if (recvId && recvId !== currentUserId) {
+                    // Un-hide if this chat was previously deleted
+                    unhideChatRef.current(`private-${recvId}`);
                     setUsers(prev => {
                         if (!prev.some(u => u.id === recvId)) {
                             // New contact not yet in list — reload to add them
@@ -1591,8 +1620,14 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     setMessages(prev =>
                         prev.some(m => m.id === data.data.id) ? prev : [...prev, data.data]
                     );
-                    if (data.data.sender_id === currentUserId && chat) scrollPositions.current.delete(`${chat.type}-${chat.id}`);
-                    scrollToBottom(true);
+                    if (data.data.sender_id === currentUserId) {
+                        if (chat) scrollPositions.current.delete(`${chat.type}-${chat.id}`);
+                        scrollToBottom(true);
+                    } else if (showScrollDownRef.current) {
+                        setNewMsgWhileScrolled(n => n + 1);
+                    } else {
+                        scrollToBottom(true);
+                    }
                     // Auto-mark as read when message arrives while chat is open (like private messages do)
                     if (data.data.sender_id !== currentUserId) {
                         wsService.send({ type: 'group_mark_read', group_id: data.data.group_id });
@@ -1796,6 +1831,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     setActiveChat(null);
                     setMessages([]);
                 }
+                // Clear draft for the removed group
+                const _draftKey = `group-${data.data.group_id}`;
+                chatDrafts.current.delete(_draftKey);
+                try { const _d = JSON.parse(localStorage.getItem('aurora_drafts') || '{}'); delete _d[_draftKey]; localStorage.setItem('aurora_drafts', JSON.stringify(_d)); } catch {}
 
             } else if (data.type === 'group_member_removed') {
                 loadGroups();
@@ -1936,10 +1975,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             } else if (data.type === 'support_reply') {
                 // Admin replied to current user
                 setNewSupportReply({ ...data.data });
-                if (!showSupportChatRef.current) {
+                const _supportText = data.data.message_text;
+                const _isMarker = _supportText === '__SUPPORT_RESOLVE__' || _supportText === '__SUPPORT_CONFIRMED__';
+                if (!showSupportChatRef.current && !_isMarker) {
                     showInAppToastRef.current?.({
                         title: 'Поддержка Aurora',
-                        body: data.data.message_text,
+                        body: _supportText,
                         chatType: 'private',
                         chatId: 0,
                         senderId: 0,
@@ -1952,9 +1993,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 // User sent message to support — notify admin
                 setNewSupportMsg({ ...data.data });
                 if (!showAdminPanelRef.current) {
+                    const supportName = data.data.username || `User #${data.data.user_id}`;
                     showInAppToast({
-                        title: `Поддержка: ${data.data.message_text.slice(0, 40)}`,
-                        body: `User #${data.data.user_id}`,
+                        title: `Поддержка: ${supportName}`,
+                        body: data.data.message_text.slice(0, 60),
                         chatType: 'private',
                         chatId: 0,
                         senderId: 0,
@@ -1962,6 +2004,18 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         avatarColor: '#ef4444',
                     });
                 }
+            } else if (data.type === 'new_report') {
+                const targetLabels: Record<string, string> = { user: 'пользователь', group: 'группа', message: 'сообщение' };
+                const targetLabel = targetLabels[data.data.target_type] || data.data.target_type;
+                showInAppToastRef.current?.({
+                    title: `🚨 Новая жалоба`,
+                    body: `${data.data.reporter_name} → ${targetLabel} · ${data.data.reason}`,
+                    chatType: 'private',
+                    chatId: 0,
+                    senderId: 0,
+                    avatarLetter: '🚨',
+                    avatarColor: '#ef4444',
+                });
             } else if (data.type === 'disappear_setting_changed') {
                 const key = `${data.data.chat_type}-${data.data.other_id}`;
                 setDisappearSettings(prev => ({ ...prev, [key]: data.data.seconds }));
@@ -2019,6 +2073,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         });
     }, []);
 
+    // Save current draft before page unload (handles F5 / Ctrl+R)
+    useEffect(() => {
+        const handler = () => saveDraft(activeChatRef.current);
+        window.addEventListener('beforeunload', handler);
+        return () => window.removeEventListener('beforeunload', handler);
+    }, [saveDraft]);
+
     const pendingDraftKey = useRef<string | null>(null);
 
     const restoreDraft = useCallback((key: string) => {
@@ -2045,6 +2106,18 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         setCommentPostId(null);
         setPreviewGroup(null);
         setShowScrollDown(false);
+        setNewMsgWhileScrolled(0);
+        setTypingUser(null);
+        if (typingUserTimerRef.current) { clearTimeout(typingUserTimerRef.current); typingUserTimerRef.current = null; }
+        sentGroupReadRef.current.clear();
+        setEditingMessageId(null);
+        setEditingText('');
+        setReactionPickerMsgId(null);
+        setShowFullReactionPicker(false);
+        setDeletingMsgIds(new Set());
+        setEditingCommentId(null);
+        setEditingCommentText('');
+        setCommentReplyTo(null);
         setScheduledMessages([]);
         setMessages([]);
         setHasMoreMessages(false);
@@ -2083,12 +2156,23 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         setCommentPostId(null);
         setPreviewGroup(null);
         setShowScrollDown(false);
+        setNewMsgWhileScrolled(0);
+        setTypingUser(null);
+        if (typingUserTimerRef.current) { clearTimeout(typingUserTimerRef.current); typingUserTimerRef.current = null; }
+        sentGroupReadRef.current.clear();
+        setEditingMessageId(null);
+        setEditingText('');
+        setReactionPickerMsgId(null);
+        setShowFullReactionPicker(false);
+        setDeletingMsgIds(new Set());
+        setEditingCommentId(null);
+        setEditingCommentText('');
+        setCommentReplyTo(null);
         setScheduledMessages([]);
         setMessages([]);
         setHasMoreMessages(false);
         setShowAttachMenu(false);
         setShowEmojiPicker(false);
-        sentGroupReadRef.current.clear();
         if (chatLoadingTimerRef.current) clearTimeout(chatLoadingTimerRef.current);
         chatLoadingTimerRef.current = setTimeout(() => { setChatLoading(true); chatLoadingTimerRef.current = null; }, 150);
         setChatKey(k => k + 1);
@@ -2155,11 +2239,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         const hasFiles = pendingFiles.length > 0;
         if (!text && !hasFiles) return;
         if (!activeChat) return;
+        if (uploading) return;
+        if (activeChat.type === 'private' && (usersById.get(activeChat.id) as any)?.is_deleted) return;
 
         const targetChat = { ...activeChat };
         const targetReplyTo = replyTo;
 
-        if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; }
+        if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; setInputCharCount(0); }
         setReplyTo(null);
         // Clear draft for this chat
         const draftKey = `${targetChat.type}-${targetChat.id}`;
@@ -2190,8 +2276,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             setUploading(true);
             setUploadProgress(0);
             // Notify peers about file upload
-            if (targetChat.type === 'private') wsService.send({ type: 'typing', receiver_id: targetChat.id, action: 'uploading' });
-            else wsService.send({ type: 'group_typing', group_id: targetChat.id, action: 'uploading' });
+            if (targetChat.type === 'private' && targetChat.id !== currentUserId) wsService.send({ type: 'typing', receiver_id: targetChat.id, action: 'uploading' });
+            else if (targetChat.type === 'group') wsService.send({ type: 'group_typing', group_id: targetChat.id, action: 'uploading' });
 
             (async () => {
                 try {
@@ -2238,6 +2324,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const sendVoiceBlob = async (blob: Blob, ext: string, knownDuration?: number) => {
         const chat = activeChatRef.current;
         if (!chat) return;
+        if (chat.type === 'private' && (usersById.get(chat.id) as any)?.is_deleted) return;
         const file = new File([blob], `voice_${Date.now()}.${ext}`, { type: blob.type });
         setUploading(true);
         setUploadProgress(0);
@@ -2268,6 +2355,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
     const sendGeoMessage = (geo: { lat: number; lon: number; name: string; address: string }) => {
         if (!activeChat) return;
+        if (activeChat.type === 'private' && (isDeletedUser || isBlockedByMeInput)) return;
         const text = `__geo__:${JSON.stringify(geo)}`;
         if (activeChat.type === 'private') { wsService.sendMessage(activeChat.id, text); loadUsers(); }
         else wsService.sendGroupMessage(activeChat.id, text);
@@ -2275,6 +2363,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
     const sendContactMessage = (contact: { id: number; username: string; avatar?: string; avatar_color?: string }) => {
         if (!activeChat) return;
+        if (activeChat.type === 'private' && (isDeletedUser || isBlockedByMeInput)) return;
         const text = `__contact__:${JSON.stringify(contact)}`;
         if (activeChat.type === 'private') { wsService.sendMessage(activeChat.id, text); loadUsers(); }
         else wsService.sendGroupMessage(activeChat.id, text);
@@ -2296,6 +2385,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         const text = (inputRef.current?.value || '').trim();
         if (!text || !activeChat) return;
         if (!sendWhenOnline && !scheduleDateTime) return;
+        if (isDeletedUser || isBlockedByMeInput) return;
         try {
             const isoTime = sendWhenOnline ? undefined : new Date(scheduleDateTime).toISOString();
             const res = activeChat.type === 'private'
@@ -2312,7 +2402,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     group_id: activeChat.type === 'group' ? activeChat.id : null,
                 };
                 setScheduledMessages(prev => [...prev, newItem]);
-                if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; }
+                if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; setInputCharCount(0); }
             }
         } catch {}
         setShowSchedulePicker(false);
@@ -2366,8 +2456,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         if (uploading || pendingFiles.length > 0) return; // suppress during file upload
         if (!typing && activeChat) {
             setTyping(true);
-            if (activeChat.type === 'private') wsService.sendTyping(activeChat.id);
-            else wsService.sendGroupTyping(activeChat.id);
+            if (activeChat.type === 'private' && activeChat.id !== currentUserId) wsService.sendTyping(activeChat.id);
+            else if (activeChat.type === 'group') wsService.sendGroupTyping(activeChat.id);
             if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
             typingTimerRef.current = setTimeout(() => setTyping(false), 2000);
         }
@@ -2511,7 +2601,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const handleEditSubmit = (messageId?: number) => {
         const id = messageId ?? editingMessageId;
         const text = (inputRef.current?.value || editingText).trim();
-        if (id && text) {
+        if (!text) return; // block empty edit — server also rejects it
+        if (id) {
             wsService.sendRaw({
                 type: 'edit_message',
                 message_id: id,
@@ -2521,16 +2612,23 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         }
         setEditingMessageId(null);
         setEditingText('');
-        if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; }
+        if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; setInputCharCount(0); }
     };
 
-    const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+    const [deleteConfirmId, setDeleteConfirmId] = useState<{ id: number; senderId: number } | null>(null);
     const [deletingMsgIds, setDeletingMsgIds] = useState<Set<number>>(new Set());
     const [forwardingMessage, setForwardingMessage] = useState<any | null>(null);
 
     const handleDelete = (messageId: number) => {
         setMenuMessageId(null);
-        setDeleteConfirmId(messageId);
+        const isFavorites = activeChat?.type === 'private' && activeChat.id === currentUserId;
+        if (isFavorites) {
+            // In Favorites, delete immediately without confirmation
+            wsService.sendRaw({ type: 'delete_message', message_id: messageId, is_group: false, for_self: false });
+            return;
+        }
+        const msg = messages.find(m => m.id === messageId);
+        setDeleteConfirmId({ id: messageId, senderId: msg?.sender_id ?? currentUserId });
     };
 
     // One reaction per user: if user already has a different emoji, swap it; same emoji = toggle off
@@ -2549,7 +2647,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         if (deleteConfirmId === null) return;
         wsService.sendRaw({
             type: 'delete_message',
-            message_id: deleteConfirmId,
+            message_id: deleteConfirmId.id,
             is_group: activeChatRef.current?.type === 'group',
             for_self: forSelf,
         });
@@ -2589,7 +2687,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     };
 
     const handleBulkForward = () => {
-        const msgs = messages.filter(m => selectedMsgIds.has(m.id));
+        const msgs = messages.filter(m => selectedMsgIds.has(m.id) && !m.is_deleted);
         setForwardingMessages(msgs);
         exitSelectionMode();
     };
@@ -2645,6 +2743,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     };
 
     const scrollToBottom = (smooth = false) => {
+        setNewMsgWhileScrolled(0);
         setTimeout(() => {
             if (!messagesEndRef.current) return;
             if (smooth) {
@@ -2664,6 +2763,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         if (text.startsWith('__call_ended__')) return lang === 'en' ? '📞 Call ended' : '📞 Звонок завершён';
         if (text.startsWith('__geo__:')) { try { const g = JSON.parse(text.slice(8)); return `📍 ${g.name || (lang === 'en' ? 'Location' : 'Геопозиция')}`; } catch { return `📍 ${lang === 'en' ? 'Location' : 'Геопозиция'}`; } }
         if (text.startsWith('__contact__:')) { try { const c = JSON.parse(text.slice(12)); return `👤 ${c.username}`; } catch { return '👤 Контакт'; } }
+        if (text.startsWith(PLAYLIST_MSG_PREFIX)) { try { const p = JSON.parse(text.slice(PLAYLIST_MSG_PREFIX.length)); return `🎵 ${p.name || (lang === 'en' ? 'Playlist' : 'Плейлист')}`; } catch { return `🎵 ${lang === 'en' ? 'Playlist' : 'Плейлист'}`; } }
         const files: any[] = d.files?.length ? d.files : d.file_path ? [{ filename: d.filename || t('File') }] : [];
         if (!files.length) return text || '...';
         if (files.length === 1) return text ? `📎 ${text}` : `📎 ${files[0].filename || t('File')}`;
@@ -2838,11 +2938,16 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         toastSwipeRef.current = null;
     };
 
+    const notifAudioCtxRef = useRef<AudioContext | null>(null);
     const playNotificationSound = () => {
         try {
             const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
             if (!AudioCtx) return;
-            const ctx = new AudioCtx();
+            if (!notifAudioCtxRef.current || notifAudioCtxRef.current.state === 'closed') {
+                notifAudioCtxRef.current = new AudioCtx();
+            }
+            const ctx = notifAudioCtxRef.current;
+            if (ctx.state === 'suspended') ctx.resume().catch(() => {});
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
             osc.connect(gain);
@@ -2854,16 +2959,20 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
             osc.start(ctx.currentTime);
             osc.stop(ctx.currentTime + 0.35);
-            setTimeout(() => ctx.close().catch(() => {}), 500);
         } catch {}
     };
 
     const showInAppToast = (toast: Omit<ToastItem, 'id' | 'exiting'>) => {
         const id = ++toastIdRef.current;
-        setToasts(prev => [...prev.slice(-4), { ...toast, id }]);
+        setToasts(prev => {
+            // Replace existing toast from the same sender instead of stacking
+            const filtered = prev.filter(t =>
+                !(t.chatType === toast.chatType && t.chatId === toast.chatId && t.senderId === toast.senderId)
+            );
+            return [...filtered.slice(-3), { ...toast, id }];
+        });
         playNotificationSound();
-        const timer = setTimeout(() => dismissToast(id), 5000);
-        return () => clearTimeout(timer);
+        setTimeout(() => dismissToast(id), 5000);
     };
     // Keep ref current so WebSocket handler (stale closure) always fires the latest toast
     showInAppToastRef.current = showInAppToast;
@@ -2871,6 +2980,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const replyFromToast = (toast: ToastItem, text: string) => {
         if (!text.trim()) return;
         if (toast.chatType === 'private' && toast.senderId != null) {
+            const sender = usersRef.current.find((u: User) => u.id === toast.senderId);
+            if (sender && (sender as any).is_deleted) return;
+            if (toast.senderId && blockedUserIds.has(toast.senderId)) return;
             wsService.sendMessage(toast.senderId, text.trim());
         } else if (toast.chatType === 'group' && toast.groupId != null) {
             wsService.sendGroupMessage(toast.groupId, text.trim());
@@ -2931,7 +3043,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const isGroupAdmin = activeGroup ? (activeGroup.my_role === 'admin' || activeGroup.creator_id === currentUserId) : false;
     const isChannelChat = !!(activeGroup?.is_channel);
     const isChannelMember = isChannelChat && groups.some(g => g.id === activeChat?.id);
-    const isDeletedUser = activeChat?.type === 'private' && !!(usersById.get(activeChat.id) as any)?.is_deleted;
+    const isDeletedUser = activeChat?.type === 'private' && (() => {
+        const u = usersById.get(activeChat.id) as any;
+        return !!(u?.is_deleted) || u?.username === 'Удалённый пользователь';
+    })();
     const isBlockedByMeInput = !!(activeChat?.type === 'private' && activeChat.id !== currentUserId && blockedUserIds.has(activeChat.id));
     const isBlockedByThemInput = !!(activeChat?.type === 'private' && usersById.get(activeChat.id)?.last_seen === 'blocked_you');
 
@@ -3005,6 +3120,53 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         return map;
     }, [folders, unreadCounts]);
 
+    // Memoized sidebar lists — recalculate only when data actually changes
+    const sidebarFolder = useMemo(
+        () => activeFolder !== null ? folders.find(f => f.id === activeFolder) : null,
+        [activeFolder, folders]
+    );
+    const sidebarFolderGroupIds = useMemo(
+        () => sidebarFolder ? new Set(sidebarFolder.chats.filter(c => c.chat_type === 'group').map(c => c.chat_id)) : null,
+        [sidebarFolder]
+    );
+    const sidebarFolderUserIds = useMemo(
+        () => sidebarFolder ? new Set(sidebarFolder.chats.filter(c => c.chat_type === 'private').map(c => c.chat_id)) : null,
+        [sidebarFolder]
+    );
+    const sidebarVisibleGroups = useMemo(
+        () => (sidebarFolderGroupIds ? groups.filter(g => sidebarFolderGroupIds.has(g.id)) : groups)
+            .filter(g => !archivedChats.has(`group-${g.id}`) && !hiddenChats.has(`group-${g.id}`)),
+        [groups, sidebarFolderGroupIds, archivedChats, hiddenChats]
+    );
+    const sidebarVisibleUsers = useMemo(
+        () => (sidebarFolderUserIds ? users.filter(u => sidebarFolderUserIds.has(u.id)) : users)
+            .filter(u => !archivedChats.has(`private-${u.id}`) && !hiddenChats.has(`private-${u.id}`)),
+        [users, sidebarFolderUserIds, archivedChats, hiddenChats]
+    );
+    const favKey = `private-${currentUserId}`;
+    const sidebarSorted = useMemo(() => {
+        const showFav = !archivedChats.has(favKey) && !hiddenChats.has(favKey)
+            && (!sidebarFolderUserIds || sidebarFolderUserIds.has(currentUserId));
+        type CE = { kind: 'group'; data: Group } | { kind: 'user'; data: User } | { kind: 'favorites' };
+        const entries: CE[] = [
+            ...(showFav ? [{ kind: 'favorites' as const }] : []),
+            ...sidebarVisibleGroups.map(g => ({ kind: 'group' as const, data: g })),
+            ...sidebarVisibleUsers.map(u => ({ kind: 'user' as const, data: u })),
+        ];
+        const getKey = (e: CE) => e.kind === 'favorites' ? favKey : e.kind === 'group' ? `group-${(e.data as Group).id}` : `private-${(e.data as User).id}`;
+        const getTime = (e: CE) => {
+            if (e.kind === 'favorites') return favoritesLastMsg?.time ? new Date(favoritesLastMsg.time).getTime() : 0;
+            const t = e.kind === 'group' ? (e.data as Group).last_msg_time : (e.data as User).last_msg_time;
+            return t ? new Date(t).getTime() : 0;
+        };
+        return [...entries].sort((a, b) => {
+            const pa = pinnedChats.has(getKey(a)) ? 1 : 0;
+            const pb = pinnedChats.has(getKey(b)) ? 1 : 0;
+            if (pa !== pb) return pb - pa;
+            return getTime(b) - getTime(a);
+        });
+    }, [sidebarVisibleGroups, sidebarVisibleUsers, archivedChats, hiddenChats, pinnedChats, favoritesLastMsg, sidebarFolderUserIds, currentUserId, favKey]);
+
     return (
         <div className={isMobile ? 'mobile-root-container' : undefined} style={{ ...styles.container, backgroundColor: dm ? C.bg0 : '#eef0f5', ...(isMobile ? { position: 'relative' as const, overflow: 'hidden' } : {}) }}>
             {/* Persistent audio element */}
@@ -3028,7 +3190,14 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 onTimeUpdate={e => {
                     const a = e.target as HTMLAudioElement;
                     setGlobalCurrentTime(a.currentTime);
-                    if (isFinite(a.duration) && a.duration > 0) { setGlobalDuration(a.duration); if (a.src) knownAudioDurations.current.set(a.src, a.duration); }
+                    if (isFinite(a.duration) && a.duration > 0) {
+                        setGlobalDuration(a.duration);
+                        if (a.src) knownAudioDurations.current.set(a.src, a.duration);
+                    } else if (a.src) {
+                        // Duration is Infinity (webm MediaRecorder) — poll cache for resolved duration
+                        const cached = knownAudioDurations.current.get(a.src);
+                        if (cached && cached > 0) setGlobalDuration(cached);
+                    }
                 }}
             />
 
@@ -3568,35 +3737,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     })()}
 
                     {!showArchive && (() => {
-                        const folder = activeFolder !== null ? folders.find(f => f.id === activeFolder) : null;
-                        const folderGroupIds = folder ? new Set(folder.chats.filter(c => c.chat_type === 'group').map(c => c.chat_id)) : null;
-                        const folderUserIds = folder ? new Set(folder.chats.filter(c => c.chat_type === 'private').map(c => c.chat_id)) : null;
-                        const visibleGroups = (folderGroupIds ? groups.filter(g => folderGroupIds.has(g.id)) : groups)
-                            .filter(g => !archivedChats.has(`group-${g.id}`) && !hiddenChats.has(`group-${g.id}`));
-                        const visibleUsers = (folderUserIds ? users.filter(u => folderUserIds.has(u.id)) : users)
-                            .filter(u => !archivedChats.has(`private-${u.id}`) && !hiddenChats.has(`private-${u.id}`));
-
-                        type ChatEntry = { kind: 'group'; data: Group } | { kind: 'user'; data: User } | { kind: 'favorites' };
-                        const favKey = `private-${currentUserId}`;
-                        const showFavorites = !archivedChats.has(favKey) && !hiddenChats.has(favKey)
-                            && (!folderUserIds || folderUserIds.has(currentUserId));
-                        const entries: ChatEntry[] = [
-                            ...(showFavorites ? [{ kind: 'favorites' as const }] : []),
-                            ...visibleGroups.map(g => ({ kind: 'group' as const, data: g })),
-                            ...visibleUsers.map(u => ({ kind: 'user' as const, data: u })),
-                        ];
-                        const getKey = (e: ChatEntry) => e.kind === 'favorites' ? favKey : e.kind === 'group' ? `group-${e.data.id}` : `private-${e.data.id}`;
-                        const getTime = (e: ChatEntry) => {
-                            if (e.kind === 'favorites') return favoritesLastMsg?.time ? new Date(favoritesLastMsg.time).getTime() : 0;
-                            const t = e.kind === 'group' ? (e.data as Group).last_msg_time : (e.data as User).last_msg_time;
-                            return t ? new Date(t).getTime() : 0;
-                        };
-                        const sorted = entries.sort((a, b) => {
-                            const pa = pinnedChats.has(getKey(a)) ? 1 : 0;
-                            const pb = pinnedChats.has(getKey(b)) ? 1 : 0;
-                            if (pa !== pb) return pb - pa;
-                            return getTime(b) - getTime(a);
-                        });
+                        const sorted = sidebarSorted;
 
                         return (
                         <div>
@@ -4240,7 +4381,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             onScroll={e => {
                                 const el = e.currentTarget;
                                 const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-                                setShowScrollDown(distFromBottom > 200);
+                                const atBottom = distFromBottom <= 200;
+                                setShowScrollDown(!atBottom);
+                                if (atBottom) setNewMsgWhileScrolled(0);
                                 if (activeChat) scrollPositions.current.set(`${activeChat.type}-${activeChat.id}`, el.scrollTop);
                                 if (el.scrollTop < 120 && hasMoreMessages && !loadingMoreMessages) loadMoreMessages();
                             }}
@@ -4552,6 +4695,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                             inBubble={false} hasCaption={false}
                                                             onPlay={playGlobalAudio} onPlayVideo={playVideo}
                                                             nowPlayingSrc={nowPlaying?.src} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} globalDuration={globalDuration} onGlobalSeek={seekGlobal} onGlobalToggle={toggleGlobalPlay} onDurationKnown={handleDurationKnown}
+                                                            knownDuration={knownAudioDurations.current.get(mediaFiles[0].file_path?.startsWith('http') ? mediaFiles[0].file_path : `${BASE_URL}${mediaFiles[0].file_path}`)}
                                                         />
                                                     ) : (
                                                         <MediaGrid items={mediaFiles.map((f: any) => ({ url: toUrl(f.file_path), name: f.filename || 'file', type: IS_IMG(f.filename || '') ? 'image' as const : 'video' as const, onPlayVideo: IS_VID(f.filename || '') ? playVideo : undefined }))} />
@@ -4702,6 +4846,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     onGlobalSeek={seekGlobal}
                                                     onGlobalToggle={toggleGlobalPlay}
                                                     onDurationKnown={handleDurationKnown}
+                                                    knownDuration={knownAudioDurations.current.get(msg.file_path.startsWith('http') ? msg.file_path : `${BASE_URL}${msg.file_path}`)}
+                                                    token={token}
                                                 />
                                                 );
                                             })()}
@@ -4750,6 +4896,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                                 inBubble={false} hasCaption={false}
                                                                 onPlay={playGlobalAudio} onPlayVideo={playVideo}
                                                                 nowPlayingSrc={nowPlaying?.src} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} globalDuration={globalDuration} onGlobalSeek={seekGlobal} onGlobalToggle={toggleGlobalPlay} onDurationKnown={handleDurationKnown}
+                                                                knownDuration={knownAudioDurations.current.get(f.file_path?.startsWith('http') ? f.file_path : `${BASE_URL}${f.file_path}`)}
                                                             />
                                                         ))}
                                                         {/* Documents */}
@@ -5094,9 +5241,16 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 <div style={{ position: 'sticky', bottom: 16, display: 'flex', justifyContent: 'flex-end', paddingRight: 16, pointerEvents: 'none', zIndex: 10 }}>
                                     <button
                                         onClick={() => scrollToBottom(true)}
-                                        style={{ pointerEvents: 'all', width: 40, height: 40, borderRadius: '50%', background: isOled ? '#050508' : (dm ? '#2d2b5a' : 'white'), border: `1.5px solid ${isOled ? 'rgba(167,139,250,0.35)' : (dm ? 'rgba(99,102,241,0.35)' : '#d0caff')}`, boxShadow: isOled ? '0 4px 16px rgba(0,0,0,0.8), 0 0 0 1px rgba(167,139,250,0.1)' : '0 4px 16px rgba(99,102,241,0.25)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, color: isOled ? '#c4b5fd' : (dm ? '#a5b4fc' : '#6366f1'), transition: 'opacity 0.2s' }}
+                                        style={{ pointerEvents: 'all', width: 40, height: 40, borderRadius: '50%', background: isOled ? '#050508' : (dm ? '#2d2b5a' : 'white'), border: `1.5px solid ${isOled ? 'rgba(167,139,250,0.35)' : (dm ? 'rgba(99,102,241,0.35)' : '#d0caff')}`, boxShadow: isOled ? '0 4px 16px rgba(0,0,0,0.8), 0 0 0 1px rgba(167,139,250,0.1)' : '0 4px 16px rgba(99,102,241,0.25)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, color: isOled ? '#c4b5fd' : (dm ? '#a5b4fc' : '#6366f1'), transition: 'opacity 0.2s', position: 'relative' as const }}
                                         title={lang === 'en' ? 'Scroll to latest' : 'К последнему сообщению'}
-                                    >↓</button>
+                                    >
+                                        ↓
+                                        {newMsgWhileScrolled > 0 && (
+                                            <span style={{ position: 'absolute', top: -6, right: -6, minWidth: 18, height: 18, borderRadius: 9, background: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', boxShadow: '0 2px 6px rgba(99,102,241,0.5)' }}>
+                                                {newMsgWhileScrolled > 99 ? '99+' : newMsgWhileScrolled}
+                                            </span>
+                                        )}
+                                    </button>
                                 </div>
                             )}
                         </div>
@@ -5235,7 +5389,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                                         <div style={{ fontSize: 13, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{parsed.mainText}{(c as any).edited_at && <span style={{ fontSize: 10, opacity: 0.55, marginLeft: 4 }}>{t('edited')}</span>}</div>
                                                                     </>;
                                                                 })()}
-                                                                {c.file_path && <FileMessage filePath={c.file_path} filename={(c as any).filename || ''} fileSize={(c as any).file_size} isOwn={isOwn2} isDark={dm} onPlay={playGlobalAudio} nowPlayingSrc={nowPlaying?.src} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} />}
+                                                                {c.file_path && <FileMessage filePath={c.file_path} filename={(c as any).filename || ''} fileSize={(c as any).file_size} isOwn={isOwn2} isDark={dm} onPlay={playGlobalAudio} nowPlayingSrc={nowPlaying?.src} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} knownDuration={knownAudioDurations.current.get(c.file_path?.startsWith('http') ? c.file_path : `${BASE_URL}${c.file_path}`)} />}
                                                             </>
                                                         )}
                                                         <div style={{ fontSize: 10, opacity: 0.5, marginTop: 4, textAlign: isOwn2 ? 'right' : 'left' }}>{new Date(c.timestamp).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ru-RU', { hour: '2-digit', minute: '2-digit' })}</div>
@@ -5245,7 +5399,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                             <button title={t('Reply')} onClick={() => setCommentReplyTo({ id: c.id, name: cName, text: stripCommentReplyPrefix(c.message_text) })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', color: dm ? '#a5b4fc' : '#6366f1', display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg></button>
                                                             <button title={lang === 'en' ? 'Forward' : 'Переслать'} onClick={() => setForwardingMessages([{ ...c, message_text: stripCommentReplyPrefix(c.message_text) }])} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', color: dm ? '#a5b4fc' : '#6366f1', display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg></button>
                                                             {canEdit && <button title={t('Edit')} onClick={() => { setEditingCommentId(c.id); setEditingCommentText(stripCommentReplyPrefix(c.message_text) || ''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', color: dm ? '#a5b4fc' : '#6366f1', display: 'flex', alignItems: 'center' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>}
-                                                            {canDelete && <button title={t('Delete')} onClick={() => { setDeleteConfirmId(c.id); setMenuMessageId(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', color: '#ef4444', display: 'flex', alignItems: 'center' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>}
+                                                            {canDelete && <button title={t('Delete')} onClick={() => { setDeleteConfirmId({ id: c.id, senderId: c.sender_id ?? currentUserId }); setMenuMessageId(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', color: '#ef4444', display: 'flex', alignItems: 'center' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>}
                                                         </div>
                                                     )}
                                                 </div>
@@ -5335,7 +5489,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         <div style={{ fontSize: 12, color: dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{editingText.slice(0, 80)}</div>
                                     </div>
                                 </div>
-                                <button onClick={() => { setEditingMessageId(null); setEditingText(''); if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; } }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', padding: '2px 4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+                                <button onClick={() => { setEditingMessageId(null); setEditingText(''); if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; setInputCharCount(0); } }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', padding: '2px 4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                 </button>
                             </div>
@@ -5358,17 +5512,17 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             else if (replyFilename) replyFileLabel = `📄 ${replyFilename}`;
                             else if (replyFilePath) replyFileLabel = `📎 ${lang === 'en' ? 'file' : 'файл'}`;
                             return (
-                                <div className="bar-enter" style={{ padding: '8px 16px', backgroundColor: dm ? C.bg2 : '#f0efff', borderTop: `1px solid ${dm ? 'rgba(99,102,241,0.2)' : '#d9d6fe'}`, borderLeft: `3px solid #6366f1`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                                <div className="bar-enter" style={{ padding: '8px 16px', background: isOled ? '#000000' : dm ? '#13131f' : '#f7f8fc', borderTop: `1px solid ${isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.12)'}`, borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.12)'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                                        {replyImgSrc && <img src={replyImgSrc} alt="" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />}
+                                        {replyImgSrc && <img src={replyImgSrc} alt="" style={{ width: 32, height: 32, objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />}
                                         <div style={{ minWidth: 0 }}>
-                                            <div style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', marginBottom: 2 }}>↩️ {replyTo.sender_name || t('Reply')}</div>
-                                            <div style={{ fontSize: 12, color: dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            <div style={{ fontSize: 10, fontWeight: 700, color: isOled ? '#a78bfa' : dm ? '#818cf8' : '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>{replyTo.sender_name || t('Reply')}</div>
+                                            <div style={{ fontSize: 12, color: isOled ? '#6b6b9a' : dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                 {replyTo.message_text?.slice(0, 80) || replyFileLabel || `📎 ${lang === 'en' ? 'file' : 'файл'}`}
                                             </div>
                                         </div>
                                     </div>
-                                    <button onClick={() => setReplyTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', padding: '2px 4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                                    <button onClick={() => setReplyTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: isOled ? '#4a4a6a' : dm ? '#5a5a8a' : '#9ca3af', padding: '2px 4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                                 </div>
                             );
                         })()}
@@ -5468,7 +5622,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         style={{ padding: '8px 14px', background: dm ? '#1e1e3a' : '#f5f3ff', color: '#6366f1', border: `1.5px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 10, cursor: selectedMsgIds.size === 0 ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: selectedMsgIds.size === 0 ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: 6 }}
                                     ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg> {t('Forward')}</button>
                                     <button
-                                        onClick={() => setBulkDeleteConfirm(true)}
+                                        onClick={() => {
+                                            const isFav = activeChatRef.current?.type === 'private' && activeChatRef.current?.id === currentUserId;
+                                            if (isFav) { handleBulkDelete(false); } else { setBulkDeleteConfirm(true); }
+                                        }}
                                         disabled={selectedMsgIds.size === 0}
                                         style={{ padding: '8px 14px', background: 'none', color: '#ef4444', border: '1.5px solid #fca5a5', borderRadius: 10, cursor: selectedMsgIds.size === 0 ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: selectedMsgIds.size === 0 ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: 6 }}
                                     ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> {t('Delete')}</button>
@@ -5774,12 +5931,15 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 if (e.key === 'Escape') { setMentionQuery(null); return; }
                                             }
                                         }
-                                        if (e.key === 'Escape' && editingMessageId) { setEditingMessageId(null); setEditingText(''); if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; } return; }
+                                        if (e.key === 'Escape' && editingMessageId) { setEditingMessageId(null); setEditingText(''); if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; setInputCharCount(0); } return; }
                                         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
                                     }}
                                     onKeyUp={handleTyping}
                                     onInput={(e) => {
                                         autoResize(e.currentTarget);
+                                        // Auto-save draft so it survives page reload
+                                        if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+                                        draftSaveTimerRef.current = setTimeout(() => { saveDraft(activeChatRef.current); }, 800);
                                         if (activeChat?.type === 'group') {
                                             const val = e.currentTarget.value;
                                             const pos = e.currentTarget.selectionStart || 0;
@@ -5803,12 +5963,18 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             e.preventDefault();
                                             addPendingFiles(imgs.map(i => i.getAsFile()!).filter(Boolean));
                                         } else {
-                                            setTimeout(() => { if (inputRef.current) autoResize(inputRef.current); }, 0);
+                                            setTimeout(() => { if (inputRef.current) { autoResize(inputRef.current); setInputCharCount(inputRef.current.value.length); } }, 0);
                                         }
                                     }}
+                                    onChange={() => { if (inputRef.current) setInputCharCount(inputRef.current.value.length); }}
                                     placeholder={isChannelChat ? t('Write a post...') : t('Type a message...')}
                                     style={{ ...darkStyles.input, ...(isMobile ? { fontSize: 16 } : {}) }}
                                 />
+                                {inputCharCount > 500 && (
+                                    <span style={{ position: 'absolute', bottom: 2, right: 8, fontSize: 10, color: inputCharCount > 4000 ? '#ef4444' : isOled ? '#7c6aaa' : dm ? '#5a5a8a' : '#9ca3af', pointerEvents: 'none', fontVariantNumeric: 'tabular-nums' }}>
+                                        {inputCharCount}/4096
+                                    </span>
+                                )}
                                 <div style={{ position: 'relative', alignSelf: 'center', display: 'flex' }}>
                                     <button ref={attachBtnRef} onClick={() => {
                                         if (!showAttachMenu && attachBtnRef.current) {
@@ -5912,7 +6078,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 {scheduledMessages.length > 0 && <span style={{ position: 'absolute', top: 1, right: 1, minWidth: 14, height: 14, borderRadius: 7, background: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', boxShadow: '0 0 4px rgba(99,102,241,0.5)' }}>{scheduledMessages.length}</span>}
                             </button>
                             </div>{/* end inputPill */}
-                            <button onClick={sendMessage} className={isMobile ? 'chat-send-btn-mobile' : ''} style={isMobile ? undefined : darkStyles.sendBtn2}>
+                            <button onClick={sendMessage} disabled={uploading} className={isMobile ? 'chat-send-btn-mobile' : ''} style={isMobile ? undefined : { ...darkStyles.sendBtn2, opacity: uploading ? 0.45 : 1, cursor: uploading ? 'not-allowed' : 'pointer' }}>
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                                     <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
                                 </svg>
@@ -5953,9 +6119,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         {/* Recent chats */}
                         {(() => {
                             const allUnread = Object.values(unreadCounts).reduce((s, n) => s + n, 0);
-                            const recentUsers = [...users].filter(u => u.last_msg_time).sort((a, b) => new Date(b.last_msg_time!).getTime() - new Date(a.last_msg_time!).getTime()).slice(0, 4);
-                            const recentGroups = [...groups].filter(g => g.last_msg_time).sort((a, b) => new Date(b.last_msg_time!).getTime() - new Date(a.last_msg_time!).getTime()).slice(0, 4);
-                            const recent = [...recentUsers.map(u => ({ kind: 'user' as const, data: u })), ...recentGroups.map(g => ({ kind: 'group' as const, data: g }))].sort((a, b) => new Date((b.data as any).last_msg_time!).getTime() - new Date((a.data as any).last_msg_time!).getTime()).slice(0, 5);
+                            const recentUsers = [...users].filter(u => u.last_msg_time && !hiddenChats.has(`private-${u.id}`)).sort((a, b) => new Date(b.last_msg_time!).getTime() - new Date(a.last_msg_time!).getTime()).slice(0, 4);
+                            const recentGroups = [...groups].filter(g => g.last_msg_time && !hiddenChats.has(`group-${g.id}`)).sort((a, b) => new Date(b.last_msg_time!).getTime() - new Date(a.last_msg_time!).getTime()).slice(0, 4);
+                            const favEntry = favoritesLastMsg?.time && !hiddenChats.has(`private-${currentUserId}`) ? [{ kind: 'favorites' as const, data: { last_msg_time: favoritesLastMsg.time, last_msg_text: favoritesLastMsg.text, last_msg_file: favoritesLastMsg.file, last_msg_filename: favoritesLastMsg.filename } }] : [];
+                            const recent = [...favEntry, ...recentUsers.map(u => ({ kind: 'user' as const, data: u })), ...recentGroups.map(g => ({ kind: 'group' as const, data: g }))].sort((a, b) => new Date((b.data as any).last_msg_time!).getTime() - new Date((a.data as any).last_msg_time!).getTime()).slice(0, 5);
                             if (!recent.length) return null;
                             const cardBg = isOled ? '#050508' : dm ? '#12122a' : 'white';
                             const cardBorder = isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.12)' : '#f0eeff';
@@ -5968,28 +6135,34 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                         {recent.map(({ kind, data }) => {
                                             const d = data as any;
-                                            const name = d.username || d.name || '';
-                                            const avatarSrc = d.avatar ? config.fileUrl(d.avatar) : null;
-                                            const avatarBgColor = d.avatar_color || '#6366f1';
-                                            const unread = unreadCounts[`${kind === 'user' ? 'private' : 'group'}-${d.id}`] || 0;
+                                            const isFav = kind === 'favorites';
+                                            const name = isFav ? (lang === 'en' ? 'Favorites' : 'Избранное') : (d.username || d.name || '');
+                                            const avatarSrc = !isFav && d.avatar ? config.fileUrl(d.avatar) : null;
+                                            const avatarBgColor = isFav ? 'linear-gradient(135deg,#f59e0b,#f97316)' : (d.avatar_color || '#6366f1');
+                                            const unread = isFav ? 0 : (unreadCounts[`${kind === 'user' ? 'private' : 'group'}-${d.id}`] || 0);
                                             const isOwnMsg = d.last_msg_sender_id === currentUserId;
                                             const prefix = kind === 'group' && !d.is_channel && d.last_msg_time
                                                 ? (isOwnMsg ? (lang === 'en' ? 'You: ' : 'Вы: ') : (d.last_msg_sender_name ? `${d.last_msg_sender_name}: ` : undefined))
                                                 : undefined;
+                                            const handleClick = () => {
+                                                if (isFav) { setActiveChat({ type: 'private', id: currentUserId, name: lang === 'en' ? '⭐ Favorites' : '⭐ Избранные' }); loadPrivateMessages(currentUserId); }
+                                                else if (kind === 'user') selectPrivateChat(d);
+                                                else selectGroupChat(d);
+                                            };
                                             return (
-                                                <div key={`${kind}-${d.id}`} onClick={() => kind === 'user' ? selectPrivateChat(d) : selectGroupChat(d)}
+                                                <div key={isFav ? 'favorites' : `${kind}-${d.id}`} onClick={handleClick}
                                                     style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 14, background: cardBg, border: `1px solid ${cardBorder}`, cursor: 'pointer', transition: 'all 0.15s' }}
                                                     onMouseEnter={e => { e.currentTarget.style.borderColor = isOled ? 'rgba(167,139,250,0.3)' : '#6366f1'; e.currentTarget.style.background = isOled ? '#0a0614' : dm ? '#16113a' : '#f8f5ff'; }}
                                                     onMouseLeave={e => { e.currentTarget.style.borderColor = cardBorder; e.currentTarget.style.background = cardBg; }}
                                                 >
-                                                    <div style={{ width: 42, height: 42, borderRadius: '50%', background: avatarSrc ? 'transparent' : avatarBgColor, flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 17 }}>
-                                                        {avatarSrc ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : name[0]?.toUpperCase()}
+                                                    <div style={{ width: 42, height: 42, borderRadius: '50%', background: avatarSrc ? 'transparent' : avatarBgColor, flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: isFav ? 18 : 17 }}>
+                                                        {avatarSrc ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : isFav ? <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> : name[0]?.toUpperCase()}
                                                     </div>
                                                     <div style={{ flex: 1, minWidth: 0 }}>
                                                         <div style={{ fontSize: 14, fontWeight: 600, color: dm ? '#e2e8f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
                                                         {(d.last_msg_text || d.last_msg_file) && (
                                                             <div style={{ fontSize: 12, marginTop: 1, display: 'flex', alignItems: 'center', overflow: 'hidden', minWidth: 0 }}>
-                                                                {renderSidebarSub(undefined, d.last_msg_text, d.last_msg_file, d.last_msg_filename, '', prefix, kind === 'user' ? d.id : undefined)}
+                                                                {renderSidebarSub(undefined, d.last_msg_text, d.last_msg_file, d.last_msg_filename, '', prefix, !isFav && kind === 'user' ? d.id : undefined)}
                                                             </div>
                                                         )}
                                                     </div>
@@ -6073,6 +6246,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         {activeChat && (() => {
                             const chatKey = `${activeChat.type}-${activeChat.id}`;
                             const isPinned = (pinnedMessages[chatKey] || []).some(p => p.id === menuMessage.id);
+                            const canPin = activeChat.type === 'private' || isGroupAdmin;
+                            if (!canPin) return null;
                             return (
                                 <button onClick={() => togglePinMessage(chatKey, menuMessage)} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
@@ -6084,20 +6259,22 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
                             {t('Select message')}
                         </button>
-                        {menuMessage.sender_id !== currentUserId && (
+                        {menuMessage.sender_id !== currentUserId && !menuMessage.is_deleted && (
                             <button onClick={() => { setReportTarget({ type: 'message', id: menuMessage.id, name: lang === 'en' ? 'this message' : 'это сообщение' }); setReportReason(''); setReportComment(''); setReportSent(false); setMenuMessageId(null); }} style={{ ...styles.menuItem, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 10 }}>
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
                                 {lang === 'en' ? 'Report' : 'Пожаловаться'}
                             </button>
                         )}
+                        {!menuMessage.is_deleted && (
                         <button onClick={() => { setReplyTo(menuMessage); setMenuMessageId(null); }} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
                             {t('Reply')}
                         </button>
-                        <button onClick={() => { setForwardingMessage(menuMessage); setMenuMessageId(null); }} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
+                        )}
+                        {!menuMessage.is_deleted && <button onClick={() => { setForwardingMessage(menuMessage); setMenuMessageId(null); }} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg>
                             {t('Forward')}
-                        </button>
+                        </button>}
                         <button onClick={() => {
                             const text = menuMessage.message_text ?? '';
                             if (navigator.clipboard?.writeText) {
@@ -6164,9 +6341,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         {'file_path' in menuMessage && menuMessage.file_path && (
                             <button onClick={async () => {
                                 const isGroup = activeChat?.type === 'group';
+                                const tokenParam = `?token=${encodeURIComponent(token)}`;
                                 const url = isGroup
-                                    ? `${BASE_URL}/files/group/download/${menuMessage.id}`
-                                    : `${BASE_URL}/files/download/${menuMessage.id}`;
+                                    ? `${BASE_URL}/files/group/download/${menuMessage.id}${tokenParam}`
+                                    : `${BASE_URL}/files/download/${menuMessage.id}${tokenParam}`;
                                 const filename = (menuMessage as any).filename || 'file';
                                 try {
                                     const res = await fetch(url);
@@ -6193,7 +6371,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 {t('Download')}
                             </button>
                         )}
-                        {menuMessage.sender_id === currentUserId && (
+                        {menuMessage.sender_id === currentUserId && !menuMessage.is_deleted && (
                             <>
                                 {!isPoll(menuMessage.message_text) && !isGeo(menuMessage.message_text) && !isContact(menuMessage.message_text) && (
                                     <button onClick={() => handleEdit(menuMessage.id, menuMessage.message_text ?? '')} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -6490,6 +6668,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         try {
                                             await fetch(`${config.API_URL}/reports?token=${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_type: reportTarget.type, target_id: reportTarget.id, reason: reportReason, comment: reportComment }) });
                                             setReportSent(true);
+                                            showInAppToast({ title: lang === 'en' ? 'Report sent' : 'Жалоба отправлена', body: lang === 'en' ? 'Thank you, we will review it.' : 'Спасибо, мы рассмотрим её.', chatType: 'private', chatId: 0, avatarLetter: '✅', avatarColor: '#22c55e' });
                                         } catch {} finally { setReportLoading(false); }
                                     }} style={{ flex: 1, padding: '11px', borderRadius: 12, border: 'none', background: reportReason ? 'linear-gradient(135deg,#ef4444,#dc2626)' : (dm ? 'rgba(255,255,255,0.08)' : '#f3f4f6'), color: reportReason ? 'white' : (dm ? '#5a5a8a' : '#9ca3af'), fontSize: 14, fontWeight: 700, cursor: reportReason ? 'pointer' : 'default', transition: 'all 0.15s' }}>
                                         {reportLoading ? '...' : (lang === 'en' ? 'Send report' : 'Отправить')}
@@ -6517,72 +6696,44 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             )}
 
             {/* Bulk forward modal */}
-            {forwardingMessages && (
+            {forwardingMessages && (() => {
+                const fwdBg = isOled ? '#000000' : dm ? '#0d0d1a' : '#f7f6ff';
+                const fwdCard = isOled ? '#050508' : dm ? '#13131f' : 'white';
+                const fwdShadow = isOled ? '0 2px 16px rgba(0,0,0,0.9),0 0 0 1px rgba(167,139,250,0.07)' : dm ? '0 2px 12px rgba(0,0,0,0.4),0 0 0 1px rgba(99,102,241,0.08)' : '0 2px 8px rgba(99,102,241,0.07),0 0 0 1px rgba(99,102,241,0.05)';
+                const fwdCol = dm ? '#e2e8f0' : '#1e1b4b';
+                const fwdSub = isOled ? '#7c6aaa' : dm ? '#5a5a8a' : '#9ca3af';
+                const fwdSecLabel: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: fwdSub, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'block', marginBottom: 6, marginTop: 10 };
+                const fwdItem = (onClick: () => void, key: string, avatar: React.ReactNode, name: string, sub?: string) => (
+                    <div key={key} onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', cursor: 'pointer', background: fwdCard, borderRadius: 12, boxShadow: fwdShadow, marginBottom: 6 }}
+                        onMouseEnter={e => (e.currentTarget.style.opacity = '0.85')} onMouseLeave={e => (e.currentTarget.style.opacity = '1')}>
+                        {avatar}
+                        <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 14, color: fwdCol, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+                            {sub && <div style={{ fontSize: 11, color: fwdSub }}>{sub}</div>}
+                        </div>
+                    </div>
+                );
+                return (
                 <div className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 4000, background: isOled ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)', backdropFilter: isOled ? 'blur(8px)' : 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setForwardingMessages(null)}>
-                    <div className="modal-enter" style={{ background: isOled ? '#000000' : (dm ? '#13132a' : 'white'), borderRadius: 20, width: 360, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 40px rgba(167,139,250,0.15), 0 20px 60px rgba(0,0,0,0.8)' : '0 20px 60px rgba(0,0,0,0.3)', border: isOled ? '1px solid rgba(167,139,250,0.18)' : (dm ? '1px solid rgba(99,102,241,0.2)' : '1px solid #ede9fe') }} onClick={e => e.stopPropagation()}>
-                        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${dm ? C.bdr1 : '#ede9fe'}` }}>
+                    <div className="modal-enter" style={{ background: fwdBg, borderRadius: 20, width: 360, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 24px 70px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 20px 60px rgba(0,0,0,0.15)' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ padding: '16px 18px 14px', background: fwdCard, boxShadow: `0 1px 0 ${isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}` }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span style={{ fontWeight: 700, fontSize: 15, color: dm ? '#e2e8f0' : '#1e1b4b' }}>{lang === 'en' ? `Forward ${forwardingMessages.length} msg.` : `Переслать ${forwardingMessages.length} сообщ.`}</span>
-                                <button onClick={() => setForwardingMessages(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                                <span style={{ fontWeight: 700, fontSize: 15, color: fwdCol }}>{lang === 'en' ? `Forward ${forwardingMessages.length} msg.` : `Переслать ${forwardingMessages.length} сообщ.`}</span>
+                                <button onClick={() => setForwardingMessages(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: fwdSub, display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                             </div>
                         </div>
-                        <div style={{ overflowY: 'auto', flex: 1 }}>
-                            {/* Favorites */}
-                            <div onClick={() => {
-                                forwardingMessages!.forEach(msg => {
-                                    const senderName = (msg as any).sender_name || users.find((u: any) => u.id === msg.sender_id)?.username || (lang === 'en' ? 'Unknown' : 'Неизвестно');
-                                    const fwdPrefix = `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${senderName}\n`;
-                                    const fwdText = (msg as any).message_text ? fwdPrefix + (msg as any).message_text : fwdPrefix + ((msg as any).filename ? `📎 ${(msg as any).filename}` : '');
-                                    const filesRaw = (msg as any).files;
-                                    const filesArr = filesRaw ? (typeof filesRaw === 'string' ? (() => { try { return JSON.parse(filesRaw); } catch { return []; } })() : filesRaw) : null;
-                                    if (filesArr?.length) wsService.sendMessage(currentUserId, fwdText, undefined, undefined, undefined, undefined, undefined, undefined, filesArr);
-                                    else wsService.sendMessage(currentUserId, fwdText, (msg as any).file_path, (msg as any).filename, (msg as any).file_size);
-                                });
-                                setForwardingMessages(null);
-                            }} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px', cursor: 'pointer', borderBottom: `1px solid ${dm ? C.bg3 : '#f3f3f8'}` }}>
-                                <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'linear-gradient(135deg,#f59e0b,#f97316)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'white' }}><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
-                                <span style={{ fontSize: 14, color: dm ? '#e0e0e0' : '#1e1b4b', fontWeight: 600 }}>{lang === 'en' ? 'Favorites' : 'Избранное'}</span>
-                            </div>
-                            {groups.filter(g => !g.is_channel || g.my_role === 'admin' || g.creator_id === currentUserId).map(g => (
-                                <div key={`fg-${g.id}`} onClick={() => {
-                                    forwardingMessages!.forEach(msg => {
-                                        const senderName = (msg as any).sender_name || users.find((u: any) => u.id === msg.sender_id)?.username || (lang === 'en' ? 'Unknown' : 'Неизвестно');
-                                        const fwdPrefix = `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${senderName}\n`;
-                                        const fwdText = (msg as any).message_text ? fwdPrefix + (msg as any).message_text : fwdPrefix + ((msg as any).filename ? `📎 ${(msg as any).filename}` : '');
-                                        const filesRaw = (msg as any).files;
-                                        const filesArr = filesRaw ? (typeof filesRaw === 'string' ? (() => { try { return JSON.parse(filesRaw); } catch { return []; } })() : filesRaw) : null;
-                                        if (filesArr?.length) wsService.sendGroupMessage(g.id, fwdText, undefined, undefined, undefined, undefined, undefined, undefined, filesArr);
-                                        else wsService.sendGroupMessage(g.id, fwdText, (msg as any).file_path, (msg as any).filename, (msg as any).file_size);
-                                    });
-                                    setForwardingMessages(null);
-                                }} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px', cursor: 'pointer', borderBottom: `1px solid ${dm ? C.bg3 : '#f3f3f8'}` }}>
-                                    <div style={{ width: 38, height: 38, borderRadius: '50%', background: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 15, flexShrink: 0 }}>{g.name[0]?.toUpperCase()}</div>
-                                    <span style={{ fontSize: 14, color: dm ? '#e0e0e0' : '#1e1b4b', fontWeight: 500 }}>{g.name}</span>
-                                </div>
-                            ))}
-                            {users.map(u => (
-                                <div key={`fu-${u.id}`} onClick={() => {
-                                    forwardingMessages.forEach(msg => {
-                                        const senderName = (msg as any).sender_name || users.find((uu: any) => uu.id === msg.sender_id)?.username || (lang === 'en' ? 'Unknown' : 'Неизвестно');
-                                        const fwdPrefix = `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${senderName}\n`;
-                                        const fwdText = (msg as any).message_text ? fwdPrefix + (msg as any).message_text : fwdPrefix + ((msg as any).filename ? `📎 ${(msg as any).filename}` : '');
-                                        const filesRaw = (msg as any).files;
-                                        const filesArr = filesRaw ? (typeof filesRaw === 'string' ? (() => { try { return JSON.parse(filesRaw); } catch { return []; } })() : filesRaw) : null;
-                                        if (filesArr?.length) wsService.sendMessage(u.id, fwdText, undefined, undefined, undefined, undefined, undefined, undefined, filesArr);
-                                        else wsService.sendMessage(u.id, fwdText, (msg as any).file_path, (msg as any).filename, (msg as any).file_size);
-                                    });
-                                    setForwardingMessages(null);
-                                }} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px', cursor: 'pointer', borderBottom: `1px solid ${dm ? C.bg3 : '#f3f3f8'}` }}>
-                                    <div style={{ width: 38, height: 38, borderRadius: '50%', backgroundColor: u.avatar ? (dm ? C.bg2 : 'white') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
-                                        {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ color: 'white', fontWeight: 700, fontSize: 15 }}>{u.username[0]?.toUpperCase()}</span>}
-                                    </div>
-                                    <span style={{ fontSize: 14, color: dm ? '#e0e0e0' : '#1e1b4b', fontWeight: 500 }}>{u.username}</span>
-                                </div>
-                            ))}
+                        <div style={{ overflowY: 'auto', flex: 1, padding: '10px 14px' }}>
+                            <span style={fwdSecLabel}>Избранное</span>
+                            {fwdItem(() => { forwardingMessages!.forEach(msg => { const sn = (msg as any).sender_name || users.find((u: any) => u.id === msg.sender_id)?.username || 'Unknown'; const fp = `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${sn}\n`; const ft = (msg as any).message_text ? fp + (msg as any).message_text : fp + ((msg as any).filename ? `📎 ${(msg as any).filename}` : ''); const fa = (() => { try { const r = (msg as any).files; return r ? (typeof r === 'string' ? JSON.parse(r) : r) : null; } catch { return null; } })(); if (fa?.length) wsService.sendMessage(currentUserId, ft, undefined, undefined, undefined, undefined, undefined, undefined, fa); else wsService.sendMessage(currentUserId, ft, (msg as any).file_path, (msg as any).filename, (msg as any).file_size); }); setForwardingMessages(null); }, 'fav', <div style={{ width: 38, height: 38, borderRadius: 10, background: 'linear-gradient(135deg,#f59e0b,#f97316)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'white' }}><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>, lang === 'en' ? 'Favorites' : 'Избранное')}
+                            {groups.filter(g => !g.is_channel || g.my_role === 'admin' || g.creator_id === currentUserId).length > 0 && <span style={fwdSecLabel}>Группы</span>}
+                            {groups.filter(g => !g.is_channel || g.my_role === 'admin' || g.creator_id === currentUserId).map(g => fwdItem(() => { forwardingMessages!.forEach(msg => { const sn = (msg as any).sender_name || users.find((u: any) => u.id === msg.sender_id)?.username || 'Unknown'; const fp = `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${sn}\n`; const ft = (msg as any).message_text ? fp + (msg as any).message_text : fp + ((msg as any).filename ? `📎 ${(msg as any).filename}` : ''); const fa = (() => { try { const r = (msg as any).files; return r ? (typeof r === 'string' ? JSON.parse(r) : r) : null; } catch { return null; } })(); if (fa?.length) wsService.sendGroupMessage(g.id, ft, undefined, undefined, undefined, undefined, undefined, undefined, fa); else wsService.sendGroupMessage(g.id, ft, (msg as any).file_path, (msg as any).filename, (msg as any).file_size); }); setForwardingMessages(null); }, `fg-${g.id}`, <div style={{ width: 38, height: 38, borderRadius: 10, background: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 15, flexShrink: 0, overflow: 'hidden' }}>{g.avatar ? <img src={config.fileUrl(g.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : g.name[0]?.toUpperCase()}</div>, g.name, g.is_channel ? '📢 Канал' : '👥 Группа'))}
+                            {users.filter(u => !(u as any).is_deleted && u.username !== 'Удалённый пользователь').length > 0 && <span style={fwdSecLabel}>Люди</span>}
+                            {users.filter(u => !(u as any).is_deleted && u.username !== 'Удалённый пользователь').map(u => fwdItem(() => { forwardingMessages.forEach(msg => { const sn = (msg as any).sender_name || users.find((uu: any) => uu.id === msg.sender_id)?.username || 'Unknown'; const fp = `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${sn}\n`; const ft = (msg as any).message_text ? fp + (msg as any).message_text : fp + ((msg as any).filename ? `📎 ${(msg as any).filename}` : ''); const fa = (() => { try { const r = (msg as any).files; return r ? (typeof r === 'string' ? JSON.parse(r) : r) : null; } catch { return null; } })(); if (fa?.length) wsService.sendMessage(u.id, ft, undefined, undefined, undefined, undefined, undefined, undefined, fa); else wsService.sendMessage(u.id, ft, (msg as any).file_path, (msg as any).filename, (msg as any).file_size); }); setForwardingMessages(null); }, `fu-${u.id}`, <div style={{ width: 38, height: 38, borderRadius: 10, background: (u as any).avatar_color || '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 15 }}>{u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}</div>, u.username, u.tag ? `@${u.tag}` : undefined))}
                         </div>
                     </div>
                 </div>
-            )}
+                );
+            })()}
 
             {/* Clear chat confirmation modal */}
             {showClearConfirm && (
@@ -6619,10 +6770,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 onClick={() => confirmDelete(false)}
                                 style={{ width: '100%', padding: '11px 0', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #e53935, #ef5350)', color: 'white', fontSize: 14, fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 14px rgba(229,57,53,0.35)' }}
                             >{t('Delete for everyone')}</button>
+                            {deleteConfirmId?.senderId === currentUserId && (
                             <button
                                 onClick={() => confirmDelete(true)}
                                 style={{ width: '100%', padding: '11px 0', borderRadius: 12, border: isOled ? '1.5px solid rgba(167,139,250,0.2)' : (dm ? '1.5px solid #3a3a5e' : '1.5px solid #ede9fe'), background: isOled ? '#0a0a10' : (dm ? '#1e1e3a' : '#f5f3ff'), color: isOled ? '#c4b5fd' : (dm ? '#c0c0d8' : '#374151'), fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
                             >{t('Delete for me')}</button>
+                            )}
                             <button
                                 onClick={() => setDeleteConfirmId(null)}
                                 style={{ width: '100%', padding: '9px 0', borderRadius: 12, border: 'none', background: 'none', color: dm ? '#5a5a8a' : '#9ca3af', fontSize: 13, cursor: 'pointer' }}
@@ -6688,7 +6841,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         setSelectedUserForProfile(null);
                     }}
                     onGoToMessage={id => { setSelectedUserForProfile(null); setTimeout(() => goToMessage(id), 50); }}
-                    onReport={(type, id, name) => { setSelectedUserForProfile(null); setReportTarget({ type, id, name }); setReportReason(''); setReportComment(''); setReportSent(false); }}
+                    onReport={(type, id, name) => { if (type === 'user' && id === currentUserId) return; setSelectedUserForProfile(null); setReportTarget({ type, id, name }); setReportReason(''); setReportComment(''); setReportSent(false); }}
                     onClearChat={selectedUserForProfile.id !== currentUserId ? () => { setSelectedUserForProfile(null); handleClearChat(); } : undefined}
                     onExportChat={selectedUserForProfile.id !== currentUserId ? () => { api.exportChat(token, 'private', selectedUserForProfile.id, 'json'); } : undefined}
                 />
@@ -6696,91 +6849,59 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             )}
 
             {/* Forward message modal */}
-            {forwardingMessage && (
+            {forwardingMessage && (() => {
+                const sfBg = isOled ? '#000000' : dm ? '#0d0d1a' : '#f7f6ff';
+                const sfCard = isOled ? '#050508' : dm ? '#13131f' : 'white';
+                const sfShadow = isOled ? '0 2px 16px rgba(0,0,0,0.9),0 0 0 1px rgba(167,139,250,0.07)' : dm ? '0 2px 12px rgba(0,0,0,0.4),0 0 0 1px rgba(99,102,241,0.08)' : '0 2px 8px rgba(99,102,241,0.07),0 0 0 1px rgba(99,102,241,0.05)';
+                const sfCol = dm ? '#e2e8f0' : '#1e1b4b';
+                const sfSub = isOled ? '#7c6aaa' : dm ? '#5a5a8a' : '#9ca3af';
+                const sfSecLabel: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: sfSub, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'block', marginBottom: 6, marginTop: 10 };
+                const sfItem = (onClick: () => void, key: string, avatar: React.ReactNode, name: string, sub?: string) => (
+                    <div key={key} onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', cursor: 'pointer', background: sfCard, borderRadius: 12, boxShadow: sfShadow, marginBottom: 6 }}
+                        onMouseEnter={e => (e.currentTarget.style.opacity = '0.85')} onMouseLeave={e => (e.currentTarget.style.opacity = '1')}>
+                        {avatar}
+                        <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 14, color: sfCol, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+                            {sub && <div style={{ fontSize: 11, color: sfSub }}>{sub}</div>}
+                        </div>
+                    </div>
+                );
+                const doFwd = (sendFn: (ft: string, fp?: string, fn?: string, fs?: number, fa?: any[]) => void) => {
+                    const msg = forwardingMessage;
+                    const sn = msg.sender_name || users.find((u: any) => u.id === msg.sender_id)?.username || (lang === 'en' ? 'Unknown' : 'Неизвестно');
+                    const fp2 = `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${sn}\n`;
+                    const ft2 = msg.message_text ? fp2 + msg.message_text : fp2 + (msg.filename ? `📎 ${msg.filename}` : '');
+                    const fa2 = (() => { try { const r = msg.files; return r ? (typeof r === 'string' ? JSON.parse(r) : r) : null; } catch { return null; } })();
+                    sendFn(ft2, msg.file_path, msg.filename, msg.file_size, fa2?.length ? fa2 : undefined);
+                    setForwardingMessage(null);
+                };
+                return (
                 <div className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 4000, background: isOled ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)', backdropFilter: isOled ? 'blur(8px)' : 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                     onClick={() => setForwardingMessage(null)}>
-                    <div className="modal-enter" style={{ background: isOled ? '#000000' : (dm ? '#1a1a2e' : 'white'), borderRadius: 18, width: 360, maxHeight: '70vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 20px 60px rgba(0,0,0,0.35)', border: isOled ? '1px solid rgba(167,139,250,0.2)' : (dm ? '1px solid rgba(99,102,241,0.25)' : 'none') }}
+                    <div className="modal-enter" style={{ background: sfBg, borderRadius: 20, width: 360, maxHeight: '70vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 24px 70px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 20px 60px rgba(0,0,0,0.15)' }}
                         onClick={e => e.stopPropagation()}>
-                        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${dm ? C.bdr1 : '#ede9fe'}` }}>
+                        <div style={{ padding: '16px 18px 14px', background: sfCard, boxShadow: `0 1px 0 ${isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}` }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                                <span style={{ fontWeight: 700, fontSize: 15, color: dm ? '#e2e8f0' : '#1e1b4b' }}>{t('Forward to...')}</span>
-                                <button onClick={() => setForwardingMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                                <span style={{ fontWeight: 700, fontSize: 15, color: sfCol }}>{t('Forward to...')}</span>
+                                <button onClick={() => setForwardingMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: sfSub, display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                             </div>
-                            {/* Preview original message */}
-                            <div style={{ borderLeft: `3px solid #6366f1`, paddingLeft: 10, borderRadius: 2 }}>
-                                <div style={{ fontSize: 12, fontWeight: 600, color: '#6366f1', marginBottom: 2 }}>
-                                    {forwardingMessage.sender_name || usersById.get(forwardingMessage.sender_id)?.username || (lang === 'en' ? 'Unknown' : 'Неизвестно')}
-                                </div>
-                                <div style={{ fontSize: 12, color: dm ? '#9090b0' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 280 }}>
-                                    {forwardingMessage.message_text || (forwardingMessage.filename ? `📎 ${forwardingMessage.filename}` : `📎 ${lang === 'en' ? 'attachment' : 'вложение'}`)}
-                                </div>
+                            <div style={{ background: isOled ? '#0a0a14' : dm ? '#1e1e38' : '#f5f3ff', borderRadius: 10, padding: '8px 12px', borderLeft: `3px solid ${isOled ? '#7c3aed' : '#6366f1'}` }}>
+                                <div style={{ fontSize: 11, fontWeight: 600, color: isOled ? '#a78bfa' : '#6366f1', marginBottom: 2 }}>{forwardingMessage.sender_name || usersById.get(forwardingMessage.sender_id)?.username || (lang === 'en' ? 'Unknown' : 'Неизвестно')}</div>
+                                <div style={{ fontSize: 12, color: sfSub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{forwardingMessage.message_text || (forwardingMessage.filename ? `📎 ${forwardingMessage.filename}` : `📎 ${lang === 'en' ? 'attachment' : 'вложение'}`)}</div>
                             </div>
                         </div>
-                        <div style={{ overflowY: 'auto', flex: 1, padding: '8px 0' }}>
-                            {/* Favorites entry */}
-                            <div onClick={() => {
-                                const msg = forwardingMessage!;
-                                const senderName = msg.sender_name || users.find((u: any) => u.id === msg.sender_id)?.username || (lang === 'en' ? 'Unknown' : 'Неизвестно');
-                                const fwdPrefix = `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${senderName}\n`;
-                                const fwdText = msg.message_text ? fwdPrefix + msg.message_text : fwdPrefix + (msg.filename ? `📎 ${msg.filename}` : '');
-                                const filesRaw = msg.files;
-                                const filesArr = filesRaw ? (typeof filesRaw === 'string' ? (() => { try { return JSON.parse(filesRaw); } catch { return []; } })() : filesRaw) : null;
-                                if (filesArr?.length) wsService.sendMessage(currentUserId, fwdText, undefined, undefined, undefined, undefined, undefined, undefined, filesArr);
-                                else wsService.sendMessage(currentUserId, fwdText, msg.file_path, msg.filename, msg.file_size);
-                                setForwardingMessage(null);
-                            }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', cursor: 'pointer' }}
-                                className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
-                                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#f59e0b,#f97316)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'white' }}><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
-                                <span style={{ fontSize: 14, color: dm ? '#e2e8f0' : '#1e1b4b', fontWeight: 600 }}>{lang === 'en' ? 'Favorites' : 'Избранное'}</span>
-                            </div>
-                            {groups.filter(g => !g.is_channel || g.my_role === 'admin' || g.creator_id === currentUserId).map(g => (
-                                <div key={`fg-${g.id}`} onClick={() => {
-                                    const msg = forwardingMessage;
-                                    const senderName = msg.sender_name || users.find((u: any) => u.id === msg.sender_id)?.username || (lang === 'en' ? 'Unknown' : 'Неизвестно');
-                                    const fwdPrefix = `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${senderName}\n`;
-                                    const fwdText = msg.message_text ? fwdPrefix + msg.message_text : fwdPrefix + (msg.filename ? `📎 ${msg.filename}` : '');
-                                    const filesRaw = msg.files;
-                                    const filesArr = filesRaw ? (typeof filesRaw === 'string' ? (() => { try { return JSON.parse(filesRaw); } catch { return []; } })() : filesRaw) : null;
-                                    if (filesArr?.length) {
-                                        wsService.sendGroupMessage(g.id, fwdText, undefined, undefined, undefined, undefined, undefined, undefined, filesArr);
-                                    } else {
-                                        wsService.sendGroupMessage(g.id, fwdText, msg.file_path, msg.filename, msg.file_size);
-                                    }
-                                    setForwardingMessage(null);
-                                }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', cursor: 'pointer' }}
-                                    className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
-                                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: g.avatar ? (dm ? C.bg2 : 'white') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700 }}>
-                                        {g.avatar ? <img src={config.fileUrl(g.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : g.name[0]?.toUpperCase()}
-                                    </div>
-                                    <span style={{ fontSize: 14, color: dm ? '#e2e8f0' : '#1e1b4b' }}>{g.name}</span>
-                                </div>
-                            ))}
-                            {users.map(u => (
-                                <div key={`fu-${u.id}`} onClick={() => {
-                                    const msg = forwardingMessage;
-                                    const senderName = msg.sender_name || users.find((uu: any) => uu.id === msg.sender_id)?.username || (lang === 'en' ? 'Unknown' : 'Неизвестно');
-                                    const fwdPrefix = `↪️ ${lang === 'en' ? 'Forwarded from' : 'Переслано от'} ${senderName}\n`;
-                                    const fwdText = msg.message_text ? fwdPrefix + msg.message_text : fwdPrefix + (msg.filename ? `📎 ${msg.filename}` : '');
-                                    const filesRaw = msg.files;
-                                    const filesArr = filesRaw ? (typeof filesRaw === 'string' ? (() => { try { return JSON.parse(filesRaw); } catch { return []; } })() : filesRaw) : null;
-                                    if (filesArr?.length) {
-                                        wsService.sendMessage(u.id, fwdText, undefined, undefined, undefined, undefined, undefined, undefined, filesArr);
-                                    } else {
-                                        wsService.sendMessage(u.id, fwdText, msg.file_path, msg.filename, msg.file_size);
-                                    }
-                                    setForwardingMessage(null);
-                                }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', cursor: 'pointer' }}
-                                    className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
-                                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: u.avatar ? (dm ? C.bg2 : 'white') : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700 }}>
-                                        {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
-                                    </div>
-                                    <span style={{ fontSize: 14, color: dm ? '#e2e8f0' : '#1e1b4b' }}>{u.username}</span>
-                                </div>
-                            ))}
+                        <div style={{ overflowY: 'auto', flex: 1, padding: '10px 14px' }}>
+                            <span style={sfSecLabel}>Избранное</span>
+                            {sfItem(() => doFwd((ft, fp, fn, fs, fa) => { if (fa) wsService.sendMessage(currentUserId, ft, undefined, undefined, undefined, undefined, undefined, undefined, fa); else wsService.sendMessage(currentUserId, ft, fp, fn, fs); }), 'fav', <div style={{ width: 38, height: 38, borderRadius: 10, background: 'linear-gradient(135deg,#f59e0b,#f97316)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'white' }}><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>, lang === 'en' ? 'Favorites' : 'Избранное')}
+                            {groups.filter(g => !g.is_channel || g.my_role === 'admin' || g.creator_id === currentUserId).length > 0 && <span style={sfSecLabel}>Группы</span>}
+                            {groups.filter(g => !g.is_channel || g.my_role === 'admin' || g.creator_id === currentUserId).map(g => sfItem(() => doFwd((ft, fp, fn, fs, fa) => { if (fa) wsService.sendGroupMessage(g.id, ft, undefined, undefined, undefined, undefined, undefined, undefined, fa); else wsService.sendGroupMessage(g.id, ft, fp, fn, fs); }), `fg-${g.id}`, <div style={{ width: 38, height: 38, borderRadius: 10, background: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700 }}>{g.avatar ? <img src={config.fileUrl(g.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : g.name[0]?.toUpperCase()}</div>, g.name, g.is_channel ? '📢 Канал' : '👥 Группа'))}
+                            {users.filter(u => !(u as any).is_deleted && u.username !== 'Удалённый пользователь').length > 0 && <span style={sfSecLabel}>Люди</span>}
+                            {users.filter(u => !(u as any).is_deleted && u.username !== 'Удалённый пользователь').map(u => sfItem(() => doFwd((ft, fp, fn, fs, fa) => { if (fa) wsService.sendMessage(u.id, ft, undefined, undefined, undefined, undefined, undefined, undefined, fa); else wsService.sendMessage(u.id, ft, fp, fn, fs); }), `fu-${u.id}`, <div style={{ width: 38, height: 38, borderRadius: 10, background: (u as any).avatar_color || '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700 }}>{u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}</div>, u.username, u.tag ? `@${u.tag}` : undefined))}
                         </div>
                     </div>
                 </div>
-            )}
+                );
+            })()}
 
             {/* Chat context menu (right-click on sidebar item) */}
             {pinMenu && (
@@ -6810,11 +6931,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         return (
                             <>
                                 <button onClick={() => togglePin(key)} style={btnStyle}><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg> {pinnedChats.has(key) ? t('Unpin') : t('Pin')}</button>
-                                <button onClick={() => toggleMute(key)} style={btnStyle}>{isMuted ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> {lang === 'en' ? 'Unmute' : 'Включить уведомления'}</> : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg> {lang === 'en' ? 'Mute' : 'Выключить уведомления'}</>}</button>
-                                <button onClick={() => { toggleArchive(key); }} style={btnStyle}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg> {archivedChats.has(key) ? (lang === 'en' ? 'Unarchive' : 'Разархивировать') : (lang === 'en' ? 'Archive' : 'Архивировать')}</button>
-                                <button onClick={() => { setAddToFolderKey(key); }} style={btnStyle}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> {lang === 'en' ? 'Add to folder' : 'Добавить в папку'}</button>
+                                {key !== `private-${currentUserId}` && <button onClick={() => toggleMute(key)} style={btnStyle}>{isMuted ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> {lang === 'en' ? 'Unmute' : 'Включить уведомления'}</> : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg> {lang === 'en' ? 'Mute' : 'Выключить уведомления'}</>}</button>}
+                                {key !== `private-${currentUserId}` && <button onClick={() => { toggleArchive(key); }} style={btnStyle}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg> {archivedChats.has(key) ? (lang === 'en' ? 'Unarchive' : 'Разархивировать') : (lang === 'en' ? 'Archive' : 'Архивировать')}</button>}
+                                {key !== `private-${currentUserId}` && <button onClick={() => { setAddToFolderKey(key); }} style={btnStyle}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> {lang === 'en' ? 'Add to folder' : 'Добавить в папку'}</button>}
                                 <div style={{ height: 1, background: dm ? C.bg6 : '#f0f0f0', margin: '4px 0' }} />
-                                {isPrivate && privateUserId !== null && (
+                                {isPrivate && privateUserId !== null && privateUserId !== currentUserId && (
                                     <button
                                         onClick={() => isBlocked ? handleUnblockUser(privateUserId) : handleBlockUser(privateUserId)}
                                         style={{ ...btnStyle, color: isBlocked ? '#22c55e' : '#f97316' }}
@@ -6824,7 +6945,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg> {lang === 'en' ? 'Block user' : 'Заблокировать'}</>}
                                     </button>
                                 )}
-                                <button onClick={() => handleDeleteChat(key)} style={{ ...btnStyle, color: '#ef4444' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> {lang === 'en' ? 'Delete chat' : 'Удалить чат'}</button>
+                                {key !== `private-${currentUserId}` && (
+                                    <button onClick={() => handleDeleteChat(key)} style={{ ...btnStyle, color: '#ef4444' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> {lang === 'en' ? 'Delete chat' : 'Удалить чат'}</button>
+                                )}
                             </>
                         );
                     })()}
@@ -7067,49 +7190,59 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 };
                 return (
                     <div style={{ position: 'fixed', inset: 0, zIndex: 5500, background: isOled ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setPlaylistToShare(null)}>
-                        <div style={{ background: isOled ? '#000' : dm ? '#13132a' : '#fff', borderRadius: 20, width: 380, maxHeight: '75vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 24px 80px rgba(0,0,0,0.95), 0 0 0 1px rgba(167,139,250,0.14)' : '0 24px 80px rgba(0,0,0,0.3)', border: isOled ? '1px solid rgba(167,139,250,0.15)' : dm ? '1px solid rgba(99,102,241,0.2)' : '1px solid #ede9fe' }} onClick={e => e.stopPropagation()}>
-                            <div style={{ padding: '16px 18px 12px', borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.15)' : '#ede9fe'}` }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                        {(() => {
+                        const mBg = isOled ? '#000000' : dm ? '#0d0d1a' : '#f7f6ff';
+                        const cBg = isOled ? '#050508' : dm ? '#13131f' : 'white';
+                        const cShadow = isOled ? '0 2px 16px rgba(0,0,0,0.9),0 0 0 1px rgba(167,139,250,0.07)' : dm ? '0 2px 12px rgba(0,0,0,0.4),0 0 0 1px rgba(99,102,241,0.08)' : '0 2px 8px rgba(99,102,241,0.07),0 0 0 1px rgba(99,102,241,0.05)';
+                        const col = dm ? '#e2e8f0' : '#1e1b4b';
+                        const sub = isOled ? '#7c6aaa' : dm ? '#5a5a8a' : '#9ca3af';
+                        const secLabel: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: sub, textTransform: 'uppercase', letterSpacing: '0.8px', margin: '8px 4px 6px', display: 'block' };
+                        return (
+                        <div style={{ background: mBg, borderRadius: 20, width: 380, maxHeight: '75vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 24px 70px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 20px 60px rgba(0,0,0,0.15)' }} onClick={e => e.stopPropagation()}>
+                            <div style={{ padding: '16px 18px 12px', background: isOled ? '#050508' : dm ? '#13131f' : 'white', boxShadow: `0 1px 0 ${isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}` }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                                     <div>
-                                        <div style={{ fontWeight: 700, fontSize: 15, color: dm ? '#e2e8f0' : '#1e1b4b' }}>Поделиться плейлистом</div>
-                                        <div style={{ fontSize: 12, color: dm ? '#5a5a8a' : '#9ca3af', marginTop: 2 }}>«{playlistToShare.name}»</div>
+                                        <div style={{ fontWeight: 700, fontSize: 15, color: col }}>Поделиться плейлистом</div>
+                                        <div style={{ fontSize: 12, color: sub, marginTop: 2 }}>«{playlistToShare.name}»</div>
                                     </div>
-                                    <button onClick={() => setPlaylistToShare(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#9ca3af', display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                                    <button onClick={() => setPlaylistToShare(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: sub, display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                                 </div>
-                                <input autoFocus value={playlistShareSearch} onChange={e => setPlaylistShareSearch(e.target.value)} placeholder="🔍 Поиск чата..." style={{ width: '100%', padding: '8px 12px', borderRadius: 10, border: 'none', background: isOled ? '#0a0a14' : dm ? '#1e1e38' : '#f5f3ff', color: dm ? '#e2e8f0' : '#1e1b4b', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const }} />
+                                <input autoFocus value={playlistShareSearch} onChange={e => setPlaylistShareSearch(e.target.value)} placeholder="🔍 Поиск чата..." style={{ width: '100%', padding: '8px 12px', borderRadius: 10, border: 'none', background: isOled ? '#0a0a14' : dm ? '#1e1e38' : '#f5f3ff', color: col, fontSize: 13, outline: 'none', boxSizing: 'border-box' as const }} />
                             </div>
-                            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+                            <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px' }}>
+                                {filteredUsers.length > 0 && <span style={secLabel}>Люди</span>}
                                 {filteredUsers.map(u => (
-                                    <div key={u.id} onClick={() => sendPlaylistMsg('private', u.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', cursor: 'pointer', transition: 'background 0.12s' }}
-                                        onMouseEnter={e => (e.currentTarget.style.background = isOled ? 'rgba(167,139,250,0.07)' : dm ? 'rgba(99,102,241,0.08)' : '#f5f3ff')}
-                                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                                        <div style={{ width: 38, height: 38, borderRadius: '50%', background: u.avatar_color || '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 15, flexShrink: 0, overflow: 'hidden' }}>
+                                    <div key={u.id} onClick={() => sendPlaylistMsg('private', u.id)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', cursor: 'pointer', background: cBg, borderRadius: 12, boxShadow: cShadow, marginBottom: 6 }}
+                                        onMouseEnter={e => (e.currentTarget.style.opacity = '0.85')} onMouseLeave={e => (e.currentTarget.style.opacity = '1')}>
+                                        <div style={{ width: 38, height: 38, borderRadius: 10, background: u.avatar_color || '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 15, flexShrink: 0, overflow: 'hidden' }}>
                                             {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
                                         </div>
                                         <div style={{ minWidth: 0 }}>
-                                            <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e2e8f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
-                                            {u.tag && <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>@{u.tag}</div>}
+                                            <div style={{ fontSize: 14, color: col, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</div>
+                                            {u.tag && <div style={{ fontSize: 11, color: sub }}>@{u.tag}</div>}
                                         </div>
                                     </div>
                                 ))}
+                                {filteredGroups.length > 0 && <span style={{ ...secLabel, marginTop: filteredUsers.length > 0 ? 12 : 8 }}>Группы и каналы</span>}
                                 {filteredGroups.map(g => (
-                                    <div key={g.id} onClick={() => sendPlaylistMsg('group', g.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', cursor: 'pointer', transition: 'background 0.12s' }}
-                                        onMouseEnter={e => (e.currentTarget.style.background = isOled ? 'rgba(167,139,250,0.07)' : dm ? 'rgba(99,102,241,0.08)' : '#f5f3ff')}
-                                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                                        <div style={{ width: 38, height: 38, borderRadius: '50%', background: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 15, flexShrink: 0, overflow: 'hidden' }}>
+                                    <div key={g.id} onClick={() => sendPlaylistMsg('group', g.id)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', cursor: 'pointer', background: cBg, borderRadius: 12, boxShadow: cShadow, marginBottom: 6 }}
+                                        onMouseEnter={e => (e.currentTarget.style.opacity = '0.85')} onMouseLeave={e => (e.currentTarget.style.opacity = '1')}>
+                                        <div style={{ width: 38, height: 38, borderRadius: 10, background: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 15, flexShrink: 0, overflow: 'hidden' }}>
                                             {g.avatar ? <img src={config.fileUrl(g.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : g.name[0]?.toUpperCase()}
                                         </div>
                                         <div style={{ minWidth: 0 }}>
-                                            <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e2e8f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</div>
-                                            <div style={{ fontSize: 11, color: dm ? '#5a5a8a' : '#9ca3af' }}>{g.is_channel ? '📢 Канал' : '👥 Группа'}</div>
+                                            <div style={{ fontSize: 14, color: col, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</div>
+                                            <div style={{ fontSize: 11, color: sub }}>{g.is_channel ? '📢 Канал' : '👥 Группа'}</div>
                                         </div>
                                     </div>
                                 ))}
                                 {filteredUsers.length === 0 && filteredGroups.length === 0 && (
-                                    <div style={{ textAlign: 'center', color: dm ? '#5a5a8a' : '#9ca3af', padding: '32px 0', fontSize: 14 }}>Ничего не найдено</div>
+                                    <div style={{ textAlign: 'center', color: sub, padding: '32px 0', fontSize: 14 }}>Ничего не найдено</div>
                                 )}
                             </div>
                         </div>
+                        );
+                    })()}
                     </div>
                 );
             })()}
@@ -7123,6 +7256,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     try {
                         const newPl = await api.createPlaylist(token, playlistPreview.name);
                         if (newPl.id) {
+                            // Set cover if exists
+                            if (playlistPreview.cover) {
+                                await api.setPlaylistCoverPath(token, newPl.id, playlistPreview.cover);
+                            }
                             for (const t of playlistPreview.tracks) {
                                 if (!t.file_path) continue;
                                 await api.addTrack(token, { playlist_id: newPl.id, title: t.title, artist: t.artist, file_path: t.file_path, cover_path: t.cover_path, duration: t.duration });

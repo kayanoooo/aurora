@@ -53,10 +53,15 @@ export const api = {
 
     async login(email: string, password: string) {
         try {
+            let deviceId = localStorage.getItem('aurora_device_id');
+            if (!deviceId) {
+                deviceId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
+                localStorage.setItem('aurora_device_id', deviceId);
+            }
             const response = await fetch(`${API_URL}/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, password }),
+                body: JSON.stringify({ email, password, device_id: deviceId }),
             });
             if (!response.ok) {
                 let detail: any = 'Ошибка входа';
@@ -326,6 +331,15 @@ export const api = {
 
     async getProfile(token: string) {
         const response = await fetch(`${API_URL}/profile?token=${token}`);
+        if (!response.ok) {
+            let detail: any = null;
+            try { detail = (await response.json()).detail; } catch {}
+            if (detail && typeof detail === 'object') {
+                if (detail.code === 'banned') return { success: false, banned: true, ban_reason: detail.reason || '', ban_expires_at: detail.expires_at || null };
+                if (detail.code === 'deleted') return { success: false, deleted: true };
+            }
+            return { success: false };
+        }
         return response.json();
     },
 
@@ -694,6 +708,10 @@ export const api = {
     },
     async getSharedPlaylist(token: string, code: string) {
         const r = await fetch(`${API_URL}/playlists/shared/${code}?token=${token}`);
+        return r.json();
+    },
+    async setPlaylistCoverPath(token: string, playlistId: number, coverPath: string) {
+        const r = await fetch(`${API_URL}/playlists/${playlistId}/cover-path?token=${encodeURIComponent(token)}&cover=${encodeURIComponent(coverPath)}`, { method: 'PATCH' });
         return r.json();
     },
     async updatePlaylistCover(token: string, playlistId: number, file: File) {

@@ -105,7 +105,7 @@ const Auth: React.FC<AuthProps> = ({ onAuth }) => {
                         startCooldown();
                         if (res.dev_code) {
                             setRegDevCode(res.dev_code);
-                            setSuccess(lang === 'en' ? `Dev mode — SMTP not configured. Code: ${res.dev_code}` : `Dev mode — SMTP не настроен. Код: ${res.dev_code}`);
+                            setSuccess(lang === 'en' ? `Email couldn't be delivered. Your code: ${res.dev_code}` : `Письмо не доставлено. Ваш код: ${res.dev_code}`);
                         } else {
                             setSuccess(lang === 'en' ? `Code sent to ${email}. Check your inbox.` : `Код отправлен на ${email}. Проверьте почту.`);
                         }
@@ -139,7 +139,7 @@ const Auth: React.FC<AuthProps> = ({ onAuth }) => {
                         startCooldown();
                         if (res.dev_code) {
                             setResetDevCode(res.dev_code);
-                            setSuccess(lang === 'en' ? `Dev mode: code ${res.dev_code} (SMTP not configured)` : `Dev mode: код ${res.dev_code} (SMTP не настроен)`);
+                            setSuccess(lang === 'en' ? `Email couldn't be delivered. Your code: ${res.dev_code}` : `Письмо не доставлено. Ваш код: ${res.dev_code}`);
                         } else if (res.email_sent) {
                             setSuccess(lang === 'en' ? `Code sent to ${email}. Check your inbox.` : `Код отправлен на ${email}. Проверьте почту.`);
                         } else {
@@ -263,7 +263,7 @@ const Auth: React.FC<AuthProps> = ({ onAuth }) => {
                 <form onSubmit={handleSubmit} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
 
                     {/* ── Email field ── */}
-                    {(screen === 'login' || screen === 'register' && regStep === 1 || screen === 'reset' && resetStep === 1) && (
+                    {(screen === 'login' || (screen === 'register' && regStep === 1) || (screen === 'reset' && resetStep === 1)) && (
                         <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                             <span style={{ position: 'absolute', left: 12, fontSize: 16, pointerEvents: 'none', zIndex: 1 }}>📧</span>
                             <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)}

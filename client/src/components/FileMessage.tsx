@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { config } from '../config';
 
@@ -9,6 +9,7 @@ interface FileMessageProps {
     isOwn: boolean;
     messageId?: number;
     isGroup?: boolean;
+    token?: string;
     isDark?: boolean;
     inBubble?: boolean;
     hasCaption?: boolean;
@@ -22,9 +23,10 @@ interface FileMessageProps {
     onGlobalSeek?: (e: React.MouseEvent<HTMLDivElement>) => void;
     onGlobalToggle?: () => void;
     onDurationKnown?: (src: string, duration: number) => void;
+    knownDuration?: number;
 }
 
-const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize, isOwn, messageId, isGroup, isDark = false, inBubble = false, hasCaption = false, hasAboveContent = false, onPlay, onPlayVideo, nowPlayingSrc, globalPlaying, globalCurrentTime, globalDuration, onGlobalSeek, onGlobalToggle, onDurationKnown }) => {
+const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize, isOwn, messageId, isGroup, isDark = false, inBubble = false, hasCaption = false, hasAboveContent = false, onPlay, onPlayVideo, nowPlayingSrc, globalPlaying, globalCurrentTime, globalDuration, onGlobalSeek, onGlobalToggle, onDurationKnown, knownDuration, token }) => {
     const dm = isDark;
     const displayName = filename || 'file';
     const isImage = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(displayName);
@@ -48,10 +50,11 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
     const fileUrl = getFileUrl();
 
     const downloadFile = async () => {
+        const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
         const downloadUrl = messageId
             ? (isGroup
-                ? `${config.BASE_URL}/files/group/download/${messageId}`
-                : `${config.BASE_URL}/files/download/${messageId}`)
+                ? `${config.BASE_URL}/files/group/download/${messageId}${tokenParam}`
+                : `${config.BASE_URL}/files/download/${messageId}${tokenParam}`)
             : fileUrl;
         try {
             const res = await fetch(downloadUrl);
@@ -177,7 +180,7 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
 
     // ── AUDIO ──
     if (isAudio) {
-        return <AudioPlayer url={fileUrl} name={displayName} fileSize={fileSize} isOwn={isOwn} isDark={dm} onDownload={downloadFile} onPlay={onPlay} nowPlayingSrc={nowPlayingSrc} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} globalDuration={globalDuration} onGlobalSeek={onGlobalSeek} onGlobalToggle={onGlobalToggle} onDurationKnown={onDurationKnown} />;
+        return <AudioPlayer url={fileUrl} name={displayName} fileSize={fileSize} isOwn={isOwn} isDark={dm} onDownload={downloadFile} onPlay={onPlay} nowPlayingSrc={nowPlayingSrc} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} globalDuration={globalDuration} onGlobalSeek={onGlobalSeek} onGlobalToggle={onGlobalToggle} onDurationKnown={onDurationKnown} knownDuration={knownDuration} />;
     }
 
     // ── FILE ──
@@ -225,60 +228,120 @@ interface AudioPlayerProps {
     onGlobalSeek?: (e: React.MouseEvent<HTMLDivElement>) => void;
     onGlobalToggle?: () => void;
     onDurationKnown?: (src: string, duration: number) => void;
+    knownDuration?: number;
 }
 
-const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSize, isOwn, isDark: dm, onDownload, onPlay, nowPlayingSrc, globalPlaying, globalCurrentTime, globalDuration, onGlobalSeek, onGlobalToggle, onDurationKnown }) => {
+const safeDur = (d?: number) => (d != null && isFinite(d) && d > 0 ? d : 0);
+
+const AudioPlayer: React.FC<AudioPlayerProps> = ({
+    url, name, fileSize: _fileSize, isOwn, isDark: dm, onDownload,
+    onPlay, nowPlayingSrc, globalPlaying, globalCurrentTime, globalDuration,
+    onGlobalSeek, onGlobalToggle, onDurationKnown, knownDuration,
+}) => {
     const audioRef = useRef<HTMLAudioElement>(null);
+    const durationDoneRef = useRef(false);
+    // Always-current ref so async detection never calls a stale onDurationKnown
+    const onDurationKnownRef = useRef(onDurationKnown);
+    useEffect(() => { onDurationKnownRef.current = onDurationKnown; }, [onDurationKnown]);
+
     const [playing, setPlaying] = useState(false);
-    const [localDuration, setLocalDuration] = useState(0);
+    const [localDuration, setLocalDuration] = useState(() => safeDur(knownDuration));
     const [localCurrentTime, setLocalCurrentTime] = useState(0);
 
     const isVoice = /^voice_/i.test(name) || /\.weba$/i.test(name);
-    const voiceDisplayName = 'Голосовое сообщение';
     const isActive = !!onPlay && url === nowPlayingSrc;
 
+    // Guard against Infinity — the MediaRecorder webm bug makes duration === Infinity
+    const globalDurSafe = safeDur(globalDuration);
     const dispPlaying = isActive ? (globalPlaying ?? false) : playing;
     const dispCurrentTime = isActive ? (globalCurrentTime ?? 0) : localCurrentTime;
-    const dispDuration = isActive ? (globalDuration && globalDuration > 0 ? globalDuration : localDuration) : localDuration;
-    const dispProgress = dispDuration > 0 ? dispCurrentTime / dispDuration : 0;
+    // When globalDuration is Infinity/0, fall back to our locally-detected duration
+    const dispDuration = isActive ? (globalDurSafe > 0 ? globalDurSafe : localDuration) : localDuration;
+    const dispProgress = dispDuration > 0 ? Math.min(1, dispCurrentTime / dispDuration) : 0;
 
-    const formatTime = (s: number) => {
+    const formatTime = (s: number): string => {
         if (!isFinite(s) || s <= 0) return '0:00';
         const m = Math.floor(s / 60);
         const sec = Math.floor(s % 60);
         return `${m}:${sec.toString().padStart(2, '0')}`;
     };
 
+    // Called whenever we successfully resolve the real duration.
+    // Uses onDurationKnownRef so async callers always reach the current Chat.tsx callback
+    // (avoids stale closure where nowPlaying?.src was null at detection start but set by play time).
+    const reportDuration = useCallback((dur: number) => {
+        if (!isFinite(dur) || dur <= 0) return;
+        if (durationDoneRef.current) return;
+        durationDoneRef.current = true;
+        setLocalDuration(dur);
+        onDurationKnownRef.current?.(url, dur);
+    }, [url]);
+
+    // Duration detection via Web Audio API — decodes the audio buffer, always returns exact duration
+    // regardless of the MediaRecorder webm Infinity-duration bug. Falls back to metadata if decode fails.
     useEffect(() => {
-        const a = audioRef.current;
-        if (!a) return;
-        a.load();
-        const reportDuration = (dur: number) => {
-            setLocalDuration(dur);
-            onDurationKnown?.(url, dur);
-        };
-        const tryFixDuration = () => {
-            if (isFinite(a.duration) && a.duration > 0) {
+        durationDoneRef.current = false;
+
+        if (knownDuration && isFinite(knownDuration) && knownDuration > 0) {
+            durationDoneRef.current = true;
+            setLocalDuration(knownDuration);
+            return;
+        }
+
+        setLocalDuration(0);
+
+        let cancelled = false;
+
+        const detect = async () => {
+            // Fast path: audio element already has finite duration (mp3, m4a, aac, etc.)
+            const a = audioRef.current;
+            if (a && a.readyState >= 1 && isFinite(a.duration) && a.duration > 0) {
                 reportDuration(a.duration);
                 return;
             }
-            const onSeeked = () => {
-                a.removeEventListener('seeked', onSeeked);
-                if (isFinite(a.duration) && a.duration > 0) {
-                    reportDuration(a.duration);
-                    a.currentTime = 0;
+
+            // Reliable path: fetch and decode via Web Audio API
+            // This always gives correct duration for webm/ogg/MediaRecorder files
+            try {
+                const res = await fetch(url, { credentials: 'include' });
+                if (!res.ok || cancelled) return;
+                const arrayBuffer = await res.arrayBuffer();
+                if (cancelled) return;
+
+                const ctx = new AudioContext();
+                try {
+                    const decoded = await ctx.decodeAudioData(arrayBuffer);
+                    if (!cancelled && decoded.duration > 0) {
+                        reportDuration(decoded.duration);
+                    }
+                } catch {
+                    // decodeAudioData failed (unsupported codec?) — fall back to metadata duration
+                    if (!cancelled && a && isFinite(a.duration) && a.duration > 0) {
+                        reportDuration(a.duration);
+                    }
+                } finally {
+                    ctx.close();
                 }
-            };
-            a.addEventListener('seeked', onSeeked);
-            a.currentTime = 1e101;
+            } catch { /* network error, leave duration as unknown */ }
         };
-        a.addEventListener('loadedmetadata', tryFixDuration);
-        a.addEventListener('durationchange', tryFixDuration);
-        return () => {
-            a.removeEventListener('loadedmetadata', tryFixDuration);
-            a.removeEventListener('durationchange', tryFixDuration);
-        };
-    }, [url, onDurationKnown]);
+
+        detect();
+
+        return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [url, knownDuration]);
+
+    // Handle metadata events from the hidden audio element (secondary fast-path for non-webm files)
+    const handleMetadata = useCallback((e: React.SyntheticEvent<HTMLAudioElement>) => {
+        const a = e.target as HTMLAudioElement;
+        if (isFinite(a.duration) && a.duration > 0) reportDuration(a.duration);
+    }, [reportDuration]);
+
+    const handleTimeUpdate = (e: React.SyntheticEvent<HTMLAudioElement>) => {
+        const a = e.target as HTMLAudioElement;
+        setLocalCurrentTime(a.currentTime);
+        if (isFinite(a.duration) && a.duration > 0) reportDuration(a.duration);
+    };
 
     const handleEnded = () => {
         setPlaying(false);
@@ -286,52 +349,40 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
         if (audioRef.current) audioRef.current.currentTime = 0;
     };
 
-    const handleDurationChange = (e: React.SyntheticEvent<HTMLAudioElement>) => {
-        const a = e.target as HTMLAudioElement;
-        if (isFinite(a.duration) && a.duration > 0) setLocalDuration(a.duration);
-    };
-
-    const handleTimeUpdate = (e: React.SyntheticEvent<HTMLAudioElement>) => {
-        const a = e.target as HTMLAudioElement;
-        setLocalCurrentTime(a.currentTime);
-        if (isFinite(a.duration) && a.duration > 0) setLocalDuration(a.duration);
-    };
-
     const toggle = () => {
         if (onPlay) {
-            if (isActive) { onGlobalToggle?.(); }
-            else { onPlay(url, name); }
+            if (isActive) onGlobalToggle?.();
+            else onPlay(url, name);
             return;
         }
         const a = audioRef.current;
         if (!a) return;
-        if (playing) { a.pause(); } else { a.play().catch(() => {}); }
+        if (playing) a.pause();
+        else a.play().catch(() => {});
     };
 
     const seek = (e: React.MouseEvent<HTMLDivElement>) => {
         if (isActive && onGlobalSeek) { onGlobalSeek(e); return; }
         const a = audioRef.current;
-        if (!a) return;
-        const dur = isFinite(a.duration) ? a.duration : 0;
-        if (!dur) return;
+        if (!a || localDuration <= 0) return;
         const rect = e.currentTarget.getBoundingClientRect();
-        a.currentTime = ((e.clientX - rect.left) / rect.width) * dur;
+        a.currentTime = ((e.clientX - rect.left) / rect.width) * localDuration;
     };
 
-    // Always render a hidden audio element to load metadata (duration), even in global-player mode.
-    // When onPlay is provided the element is muted/inert — it never actually plays.
-    const localAudioEl = (
+    // Hidden audio — for local playback (no onPlay) and as fallback for non-webm metadata.
+    // For webm voice messages, duration comes from Web Audio API decode (see useEffect above).
+    const hiddenAudio = (
         <audio
             ref={audioRef}
             src={url}
             preload="metadata"
             muted={!!onPlay}
+            style={{ display: 'none' }}
             onPlay={() => { if (!onPlay) setPlaying(true); }}
             onPause={() => { if (!onPlay) setPlaying(false); }}
             onEnded={!onPlay ? handleEnded : undefined}
-            onLoadedMetadata={handleDurationChange}
-            onDurationChange={handleDurationChange}
-            onCanPlay={handleDurationChange}
+            onLoadedMetadata={handleMetadata}
+            onDurationChange={handleMetadata}
             onTimeUpdate={!onPlay ? handleTimeUpdate : undefined}
         />
     );
@@ -339,7 +390,6 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
     // ── Voice message layout ──
     if (isVoice) {
         const waveHeights = [4, 8, 14, 20, 16, 10, 18, 24, 16, 12, 8, 14, 20, 15, 10, 7, 12, 18, 13, 9];
-        const safeDispDuration = dispDuration > 0 && isFinite(dispDuration) ? dispDuration : 0;
         const isOledVoice = dm && document.body.classList.contains('oled-theme');
         const filledColor = isOwn ? 'rgba(255,255,255,0.9)' : isOledVoice ? '#a78bfa' : '#6366f1';
         const emptyColor = isOwn ? 'rgba(255,255,255,0.3)' : dm ? '#5a5a8a' : '#c4b5fd';
@@ -347,9 +397,13 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
         const btnColor = isOwn || dm ? 'white' : '#6366f1';
         const timeColor = isOwn ? 'rgba(255,255,255,0.6)' : dm ? '#7c7caa' : '#9ca3af';
 
+        const timeLabel = (dispPlaying || dispCurrentTime > 0)
+            ? `${formatTime(dispCurrentTime)} / ${formatTime(dispDuration)}`
+            : formatTime(dispDuration);
+
         return (
             <>
-                {localAudioEl}
+                {hiddenAudio}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 200 }}>
                     <button onClick={toggle} style={{
                         width: 40, height: 40, borderRadius: '50%',
@@ -369,11 +423,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
                                 }} />
                             ))}
                         </div>
-                        <div style={{ fontSize: 11, color: timeColor }}>
-                            {dispPlaying || dispCurrentTime > 0
-                                ? `${formatTime(dispCurrentTime)} / ${formatTime(safeDispDuration)}`
-                                : formatTime(safeDispDuration)}
-                        </div>
+                        <div style={{ fontSize: 11, color: timeColor }}>{timeLabel}</div>
                     </div>
                 </div>
             </>
@@ -388,27 +438,28 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, name, fileSize: _fileSiz
     const subColor = isOwn ? 'rgba(255,255,255,0.55)' : dm ? '#7c7caa' : '#9ca3af';
     const trackBg = isOwn ? 'rgba(255,255,255,0.25)' : dm ? '#3a3a55' : '#ddd9f7';
     const fillColor = isOwn ? 'rgba(255,255,255,0.85)' : isOled ? '#a78bfa' : '#6366f1';
-    const btnBg = isOwn ? 'rgba(255,255,255,0.32)' : isOled ? 'rgba(167,139,250,0.25)' : dm ? 'rgba(99,102,241,0.28)' : '#ddd6fe';
-    const btnColor = isOwn || dm ? 'white' : '#4f46e5';
+    const btnBg2 = isOwn ? 'rgba(255,255,255,0.32)' : isOled ? 'rgba(167,139,250,0.25)' : dm ? 'rgba(99,102,241,0.28)' : '#ddd6fe';
+    const btnColor2 = isOwn || dm ? 'white' : '#4f46e5';
+    const durLabel = safeDur(dispDuration) > 0 ? formatTime(dispDuration) : '0:00';
 
     return (
         <div style={{ width: '100%', maxWidth: 260, minWidth: 180, background: bg, border: `1px solid ${border}`, borderRadius: 14, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8, boxSizing: 'border-box' }}>
-            {localAudioEl}
+            {hiddenAudio}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <button onClick={toggle} style={{ width: 36, height: 36, borderRadius: '50%', background: btnBg, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: btnColor, flexShrink: 0 }}>
+                <button onClick={toggle} style={{ width: 36, height: 36, borderRadius: '50%', background: btnBg2, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: btnColor2, flexShrink: 0 }}>
                     {dispPlaying
                         ? <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="4" height="16" rx="1"/><rect x="15" y="4" width="4" height="16" rx="1"/></svg>
                         : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,3 20,12 6,21"/></svg>}
                 </button>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: textColor, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{isVoice ? voiceDisplayName : name}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: textColor, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
                     <div style={{ fontSize: 11, color: subColor, marginTop: 1 }}>
                         {(dispPlaying || dispCurrentTime > 0)
-                            ? `${formatTime(dispCurrentTime)} / ${formatTime(dispDuration > 0 && isFinite(dispDuration) ? dispDuration : 0)}`
-                            : formatTime(dispDuration > 0 && isFinite(dispDuration) ? dispDuration : 0)}
+                            ? `${formatTime(dispCurrentTime)} / ${durLabel}`
+                            : durLabel}
                     </div>
                 </div>
-                <button onClick={onDownload} style={{ background: btnBg, border: 'none', borderRadius: 8, padding: '5px 8px', cursor: 'pointer', fontSize: 13, color: btnColor, flexShrink: 0 }} title="Скачать">
+                <button onClick={onDownload} style={{ background: btnBg2, border: 'none', borderRadius: 8, padding: '5px 8px', cursor: 'pointer', fontSize: 13, color: btnColor2, flexShrink: 0 }} title="Скачать">
                     💾
                 </button>
             </div>
@@ -768,4 +819,4 @@ export const ImageGrid: React.FC<{ images: GridImage[] }> = ({ images }) => {
     );
 };
 
-export default FileMessage;
+export default React.memo(FileMessage);

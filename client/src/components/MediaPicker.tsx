@@ -22,7 +22,7 @@ interface SavedGif { id: string; url: string; previewUrl: string; }
 const LS_PACKS = 'aurora_sticker_packs';
 const LS_GIFS = 'aurora_saved_gifs';
 const LS_GIPHY_KEY = 'aurora_giphy_key';
-const DEFAULT_GIPHY_KEY = 'dc6zaTOxFJmzC';
+const DEFAULT_GIPHY_KEY = process.env.REACT_APP_GIPHY_KEY || 'dc6zaTOxFJmzC';
 
 const loadPacks = (): StickerPack[] => {
     try { return JSON.parse(localStorage.getItem(LS_PACKS) || '[]'); } catch { return []; }

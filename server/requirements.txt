@@ -9,6 +9,7 @@ cryptography==46.0.5
 fastapi==0.104.1
 h11==0.16.0
 httptools==0.7.1
+httpx==0.24.1
 idna==3.11
 pycparser==3.0
 pydantic==2.12.5

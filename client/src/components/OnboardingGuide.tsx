@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import ReactDOM from 'react-dom';
 import { useLang } from '../i18n';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 interface OnboardingGuideProps {
     isDark?: boolean;
@@ -114,7 +115,7 @@ const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ isDark = false, onClo
     const total = steps.length;
     const current = steps[step];
     const isLast = step === total - 1;
-    const isMobile = window.innerWidth <= 600;
+    const isMobile = useIsMobile(600);
 
     const handleClose = () => {
         localStorage.setItem(LS_KEY, '1');
@@ -136,7 +137,7 @@ const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ isDark = false, onClo
             onClick={handleClose}
         >
             <div
-                className={exiting ? 'modal-exit' : 'modal-enter'}
+                className={`${isMobile ? 'mobile-fullscreen ' : ''}${exiting ? 'modal-exit' : 'modal-enter'}`}
                 style={{ backgroundColor: bg, borderRadius: isMobile ? '20px 20px 0 0' : 24, width: isMobile ? '100%' : 440, maxWidth: '95vw', maxHeight: isMobile ? '88svh' : '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.3), 0 30px 80px rgba(0,0,0,0.95)' : dm ? '0 0 50px rgba(99,102,241,0.25), 0 30px 80px rgba(0,0,0,0.7)' : '0 0 40px rgba(99,102,241,0.15), 0 20px 60px rgba(0,0,0,0.15)', paddingBottom: isMobile ? 'env(safe-area-inset-bottom, 0px)' : 0 }}
                 onClick={e => e.stopPropagation()}
             >

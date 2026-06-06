@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../services/api';
 import { config } from '../config';
 import { useLang } from '../i18n';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 // ─── Emoji data ──────────────────────────────────────────────────────────────
 export const EMOJI_CATEGORIES = [
@@ -63,6 +64,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
 }) => {
     const { t } = useLang();
     const dm = isDark;
+    const isMobileView = useIsMobile(639);
     const ref = useRef<HTMLDivElement>(null);
     const [closing, setClosing] = useState(false);
 
@@ -213,19 +215,21 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
     const subtext = dm ? '#888' : '#9ca3af';
     const accent = '#6366f1';
 
-    const isMobileView = typeof window !== 'undefined' && window.innerWidth < 640;
     const mobileInputH = isMobileView ? (() => { const el = document.querySelector('.chat-input-area'); return el ? el.getBoundingClientRect().height : 60; })() : 0;
     const panelStyle: React.CSSProperties = isMobileView ? {
         position: 'fixed',
-        bottom: mobileInputH,
-        left: 0,
-        right: 0,
-        width: '100vw',
-        height: 380,
-        backgroundColor: bg,
-        borderRadius: '16px 16px 0 0',
-        boxShadow: '0 -4px 32px rgba(0,0,0,0.4)',
-        border: `1px solid ${border}`,
+        bottom: mobileInputH + 8,
+        left: 10,
+        right: 10,
+        width: 'auto',
+        height: 'min(430px, 56dvh)',
+        maxHeight: 'calc(100dvh - 92px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+        background: isOled ? 'rgba(0,0,0,0.94)' : (dm ? 'rgba(10,10,22,0.94)' : 'rgba(255,255,255,0.96)'),
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        borderRadius: 24,
+        boxShadow: isOled ? '0 20px 70px rgba(0,0,0,0.95), 0 0 0 1px rgba(167,139,250,0.12)' : dm ? '0 20px 60px rgba(0,0,0,0.62)' : '0 20px 60px rgba(76,61,135,0.2)',
+        border: `1px solid ${isOled ? 'rgba(167,139,250,0.14)' : dm ? 'rgba(167,139,250,0.16)' : 'rgba(139,92,246,0.16)'}`,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -253,7 +257,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
 
     const tabBtnStyle = (active: boolean): React.CSSProperties => ({
         flex: 1,
-        padding: '10px 0',
+        padding: isMobileView ? '12px 0 10px' : '10px 0',
         background: 'none',
         border: 'none',
         borderBottom: active ? `2px solid ${accent}` : '2px solid transparent',
@@ -271,21 +275,21 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
     const renderEmojiTab = () => (
         <>
             {/* Category tabs */}
-            <div style={{ display: 'flex', overflowX: 'auto', padding: '6px 8px', gap: 2, flexShrink: 0 }}>
+            <div style={{ display: 'flex', overflowX: 'auto', padding: isMobileView ? '8px 10px 6px' : '6px 8px', gap: isMobileView ? 5 : 2, flexShrink: 0 }}>
                 {EMOJI_CATEGORIES.map((cat, i) => (
-                    <button key={i} onClick={() => setEmojiCat(i)} className="emoji-btn" style={{ background: emojiCat === i ? (dm ? '#2d3a5a' : '#e8f0fe') : 'none', border: 'none', fontSize: 20, cursor: 'pointer', padding: 0, borderRadius: 6, flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={cat.name}>
+                    <button key={i} onClick={() => setEmojiCat(i)} className="emoji-btn" style={{ background: emojiCat === i ? (dm ? 'rgba(99,102,241,0.24)' : '#ede9fe') : (isMobileView ? (dm ? 'rgba(255,255,255,0.04)' : 'rgba(245,243,255,0.8)') : 'none'), border: 'none', fontSize: isMobileView ? 21 : 20, cursor: 'pointer', padding: 0, borderRadius: isMobileView ? 12 : 6, flexShrink: 0, width: isMobileView ? 40 : 34, height: isMobileView ? 40 : 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={cat.name}>
                         {cat.label}
                     </button>
                 ))}
             </div>
             {/* Category name */}
-            <div style={{ padding: '4px 12px', fontSize: 11, color: subtext, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', backgroundColor: sidebarBg, flexShrink: 0 }}>
+            <div style={{ padding: isMobileView ? '5px 14px' : '4px 12px', fontSize: 11, color: subtext, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', backgroundColor: isMobileView ? 'transparent' : sidebarBg, flexShrink: 0 }}>
                 {EMOJI_CATEGORIES[emojiCat].name}
             </div>
             {/* Grid */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', padding: 8, overflowY: 'auto', flex: 1 }}>
+            <div style={isMobileView ? { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(42px, 1fr))', gap: 4, padding: '8px 10px 12px', overflowY: 'auto', flex: 1, alignContent: 'start' } : { display: 'flex', flexWrap: 'wrap', padding: 8, overflowY: 'auto', flex: 1 }}>
                 {EMOJI_CATEGORIES[emojiCat].emojis.map((emoji, i) => (
-                    <button key={i} onClick={() => onSelectEmoji(emoji)} className="emoji-btn" style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', padding: 0, borderRadius: 6, lineHeight: 1, width: isMobileView ? 44 : 36, height: isMobileView ? 44 : 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={emoji}>
+                    <button key={i} onClick={() => onSelectEmoji(emoji)} className="emoji-btn" style={{ background: 'none', border: 'none', fontSize: isMobileView ? 25 : 22, cursor: 'pointer', padding: 0, borderRadius: isMobileView ? 12 : 6, lineHeight: 1, width: isMobileView ? '100%' : 36, height: isMobileView ? 42 : 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={emoji}>
                         {emoji}
                     </button>
                 ))}
@@ -295,14 +299,14 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
 
     // ─── Stickers tab ──────────────────────────────────────────────────────────
     const renderStickersTab = () => (
-        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', flexDirection: isMobileView ? 'column' : 'row', flex: 1, overflow: 'hidden' }}>
             {/* Pack sidebar */}
-            <div style={{ width: 52, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '8px 0', gap: 4, overflowY: 'auto', flexShrink: 0, backgroundColor: sidebarBg }}>
+            <div style={{ width: isMobileView ? 'auto' : 52, height: isMobileView ? 58 : 'auto', display: 'flex', flexDirection: isMobileView ? 'row' : 'column', alignItems: 'center', padding: isMobileView ? '8px 10px' : '8px 0', gap: isMobileView ? 7 : 4, overflowX: isMobileView ? 'auto' : 'hidden', overflowY: isMobileView ? 'hidden' : 'auto', flexShrink: 0, backgroundColor: isMobileView ? 'transparent' : sidebarBg }}>
                 {/* Recent stickers button */}
                 <button
                     title={t('Recent')}
                     onClick={() => setSelectedPackId(RECENT_PACK_ID)}
-                    style={{ width: isMobileView ? 44 : 38, height: isMobileView ? 44 : 38, borderRadius: 10, border: `2px solid ${selectedPackId === RECENT_PACK_ID ? accent : 'transparent'}`, background: selectedPackId === RECENT_PACK_ID ? (dm ? 'rgba(99,102,241,0.2)' : '#ede9fe') : 'none', fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.12s' }}
+                    style={{ width: isMobileView ? 42 : 38, height: isMobileView ? 42 : 38, borderRadius: isMobileView ? 13 : 10, border: `2px solid ${selectedPackId === RECENT_PACK_ID ? accent : 'transparent'}`, background: selectedPackId === RECENT_PACK_ID ? (dm ? 'rgba(99,102,241,0.2)' : '#ede9fe') : (isMobileView ? (dm ? 'rgba(255,255,255,0.04)' : 'rgba(245,243,255,0.8)') : 'none'), fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.12s' }}
                 >
                     🕐
                 </button>
@@ -312,7 +316,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
                         title={pack.name}
                         onContextMenu={e => { e.preventDefault(); setPackCtxMenu({ id: pack.id, x: e.clientX, y: e.clientY }); }}
                         onClick={() => setSelectedPackId(pack.id)}
-                        style={{ width: isMobileView ? 44 : 38, height: isMobileView ? 44 : 38, borderRadius: 10, border: `2px solid ${selectedPackId === pack.id ? accent : 'transparent'}`, background: selectedPackId === pack.id ? (dm ? 'rgba(99,102,241,0.2)' : '#ede9fe') : 'none', fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.12s' }}
+                        style={{ width: isMobileView ? 42 : 38, height: isMobileView ? 42 : 38, borderRadius: isMobileView ? 13 : 10, border: `2px solid ${selectedPackId === pack.id ? accent : 'transparent'}`, background: selectedPackId === pack.id ? (dm ? 'rgba(99,102,241,0.2)' : '#ede9fe') : (isMobileView ? (dm ? 'rgba(255,255,255,0.04)' : 'rgba(245,243,255,0.8)') : 'none'), fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.12s' }}
                     >
                         {pack.emoji}
                     </button>
@@ -321,7 +325,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
                 <button
                     title={t('Create pack')}
                     onClick={() => setCreatePackOpen(true)}
-                    style={{ width: isMobileView ? 44 : 38, height: isMobileView ? 44 : 38, borderRadius: 10, border: `2px dashed ${dm ? '#3a3a5a' : '#c4b5fd'}`, background: 'none', fontSize: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: subtext, transition: 'all 0.12s', marginTop: 4 }}
+                    style={{ width: isMobileView ? 42 : 38, height: isMobileView ? 42 : 38, borderRadius: isMobileView ? 13 : 10, border: `2px dashed ${dm ? '#3a3a5a' : '#c4b5fd'}`, background: 'none', fontSize: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: subtext, transition: 'all 0.12s', marginTop: isMobileView ? 0 : 4 }}
                 >
                     +
                 </button>
@@ -476,6 +480,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
                             isSaved={id => isGifSaved(id)}
                             onSend={url => { onSendGif(url); close(); }}
                             onToggleSave={(gif) => removeSavedGif(gif.id)}
+                            columns={isMobileView ? 2 : 3}
                         />
                     )
                 ) : gifLoading ? (
@@ -497,6 +502,7 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
                         isSaved={id => isGifSaved(id)}
                         onSend={url => { onSendGif(url); close(); }}
                         onToggleSave={gif => toggleSavedGif(gif)}
+                        columns={isMobileView ? 2 : 3}
                     />
                 )}
             </div>
@@ -528,7 +534,15 @@ const MediaPicker: React.FC<MediaPickerProps> = ({
 
     return (
         <>
+            {isMobileView && (
+                <div
+                    className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'}
+                    onMouseDown={close}
+                    style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: mobileInputH, zIndex: 590, background: dm ? 'rgba(0,0,0,0.34)' : 'rgba(18,12,46,0.16)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
+                />
+            )}
             <div ref={ref} style={panelStyle} className={closing ? 'floating-exit' : 'floating-enter'} onClick={e => e.stopPropagation()}>
+                {isMobileView && <div style={{ width: 38, height: 4, borderRadius: 999, background: dm ? 'rgba(255,255,255,0.16)' : 'rgba(76,61,135,0.16)', margin: '8px auto 0', flexShrink: 0 }} />}
                 {/* Tab bar */}
                 <div style={tabBarStyle}>
                     <button style={tabBtnStyle(tab === 0)} onClick={() => setTab(0)}>😀 {t('Emoji')}</button>
@@ -558,14 +572,16 @@ const StickerThumb: React.FC<{
     onSend: () => void;
     onDelete: () => void;
 }> = ({ sticker, dm, thumbBg, onSend, onDelete }) => {
+    const isMobile = useIsMobile(639);
     const [hovered, setHovered] = useState(false);
+    const size = isMobile ? 72 : 80;
     return (
         <div
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => setHovered(false)}
             onTouchStart={() => setHovered(true)}
             onTouchEnd={() => setTimeout(() => setHovered(false), 400)}
-            style={{ position: 'relative', width: 80, height: 80, borderRadius: 10, overflow: 'hidden', cursor: 'pointer', border: `2px solid ${hovered ? '#6366f1' : 'transparent'}`, transition: 'border-color 0.1s', backgroundColor: thumbBg }}
+            style={{ position: 'relative', width: size, height: size, borderRadius: isMobile ? 16 : 10, overflow: 'hidden', cursor: 'pointer', border: `2px solid ${hovered ? '#6366f1' : 'transparent'}`, transition: 'border-color 0.1s', backgroundColor: thumbBg }}
         >
             <img
                 src={sticker.url}
@@ -595,10 +611,10 @@ const GifGrid: React.FC<{
     isSaved: (id: string) => boolean;
     onSend: (url: string) => void;
     onToggleSave: (gif: GifEntry) => void;
-}> = ({ gifs, dm, gifBg, isSaved, onSend, onToggleSave }) => {
-    // 3-column masonry layout
-    const cols: GifEntry[][] = [[], [], []];
-    gifs.forEach((g, i) => cols[i % 3].push(g));
+    columns?: number;
+}> = ({ gifs, dm, gifBg, isSaved, onSend, onToggleSave, columns = 3 }) => {
+    const cols: GifEntry[][] = Array.from({ length: columns }, () => []);
+    gifs.forEach((g, i) => cols[i % columns].push(g));
 
     return (
         <div style={{ display: 'flex', gap: 4 }}>

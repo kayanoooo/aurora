@@ -1,0 +1,51 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam sequenceArrowThickness 1.5
+
+title Диаграмма последовательности: двухэтапная регистрация и аутентификация
+
+actor "Клиент" as C
+participant "FastAPI\nmain.py" as API #LightBlue
+participant "auth.py\n(bcrypt + PyJWT)" as Auth #LightGreen
+participant "UserModel\n(aiomysql)" as Model #LightYellow
+participant "MySQL 5.7" as DB #Wheat
+
+== Регистрация (этап 1) ==
+C -> API : POST /api/register\n{email, password}
+API -> Auth : hash_password(password)\nbcrypt 12 rounds + salt
+Auth --> API : password_hash
+API -> Model : create_user(email, password_hash)
+Model -> DB : INSERT INTO users\n(email, password_hash)
+DB --> Model : user_id
+API -> Auth : create_jwt_token(user_id)
+Auth --> API : JWT (HS256, exp=24h)
+API --> C : {token, user_id}
+
+== Регистрация (этап 2) ==
+C -> API : POST /api/setup\n{tag, username}\nAuthorization: Bearer <JWT>
+API -> Auth : decode_jwt_token(token)
+Auth --> API : {user_id, exp}
+API -> Model : check_tag_unique(tag)
+Model -> DB : SELECT FROM user_tags\nWHERE tag=?
+DB --> Model : пусто → тег свободен
+API -> Model : save_user_tag(user_id, tag)
+Model -> DB : INSERT INTO user_tags\n(user_id, tag)
+API --> C : {status: "ok"}
+
+== Вход ==
+C -> API : POST /api/login\n{email, password}
+API -> Model : get_user_by_email(email)
+Model -> DB : SELECT * FROM users\nWHERE email=?
+DB --> Model : {user_id, password_hash}
+API -> Auth : verify_password(\npassword, password_hash)
+Auth --> API : True / False
+alt Пароль верный
+  API -> Auth : create_jwt_token(user_id)
+  Auth --> API : JWT
+  API --> C : {token, user_id, username}
+else Пароль неверный
+  API --> C : HTTP 401 Unauthorized
+end
+@enduml

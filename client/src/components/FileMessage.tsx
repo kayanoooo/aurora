@@ -2,6 +2,13 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { config } from '../config';
 
+const isMobileScreen = () => {
+    if (typeof window === 'undefined') return false;
+    const coarsePointer = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+    return window.innerWidth <= 768
+        || (coarsePointer && Math.min(window.innerWidth, window.innerHeight) <= 768 && Math.max(window.innerWidth, window.innerHeight) <= 1180);
+};
+
 interface FileMessageProps {
     filePath: string;
     filename: string;
@@ -28,6 +35,7 @@ interface FileMessageProps {
 
 const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize, isOwn, messageId, isGroup, isDark = false, inBubble = false, hasCaption = false, hasAboveContent = false, onPlay, onPlayVideo, nowPlayingSrc, globalPlaying, globalCurrentTime, globalDuration, onGlobalSeek, onGlobalToggle, onDurationKnown, knownDuration, token }) => {
     const dm = isDark;
+    const isMobileViewport = isMobileScreen();
     const displayName = filename || 'file';
     const isImage = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(displayName);
     const isVideo = /\.(mp4|webm|ogg|mov|avi|mkv)$/i.test(displayName);
@@ -43,8 +51,7 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
     };
 
     const getFileUrl = () => {
-        if (filePath.startsWith('http')) return filePath;
-        return `${config.BASE_URL}${filePath}`;
+        return config.fileUrl(filePath) ?? filePath;
     };
 
     const fileUrl = getFileUrl();
@@ -99,15 +106,21 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
         const topRadius = isOwn ? '18px 4px 0 0' : '4px 18px 0 0';
         const allRadius = isOwn ? '18px 4px 18px 18px' : '4px 18px 18px 18px';
         const topM = hasAboveContent ? '6px' : '-10px';
+        const bubblePadX = isMobileViewport ? 12 : 14;
+        const bubbleMediaX = `-${bubblePadX}px`;
+        const bubbleMediaW = `calc(100% + ${bubblePadX * 2}px)`;
         const imgWrap: React.CSSProperties = inBubble ? {
-            margin: hasCaption ? `${topM} -14px 8px` : `${topM} -14px -10px`,
-            width: 'calc(100% + 28px)',
+            margin: hasCaption ? `${topM} ${bubbleMediaX} 8px` : `${topM} ${bubbleMediaX} -10px`,
+            width: bubbleMediaW,
+            maxWidth: bubbleMediaW,
+            boxSizing: 'border-box',
             display: 'block',
             borderRadius: hasCaption ? (hasAboveContent ? allRadius : topRadius) : allRadius,
         } : {
             borderRadius: 18,
             display: 'inline-block',
-            maxWidth: 320,
+            width: isMobileViewport ? '100%' : undefined,
+            maxWidth: isMobileViewport ? '100%' : 320,
         };
         return (
             <>
@@ -118,7 +131,7 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
                     <img
                         src={fileUrl}
                         alt=""
-                        style={{ display: 'block', width: '100%', height: 'auto', maxHeight: 360, objectFit: 'cover' }}
+                        style={{ display: 'block', width: '100%', height: 'auto', maxHeight: isMobileViewport ? 320 : 360, objectFit: 'cover' }}
                         onError={e => { e.currentTarget.style.display = 'none'; }}
                     />
                 </div>
@@ -134,14 +147,20 @@ const FileMessage: React.FC<FileMessageProps> = ({ filePath, filename, fileSize,
         const vidTopRadius = isOwn ? '18px 4px 0 0' : '4px 18px 0 0';
         const vidAllRadius = isOwn ? '18px 4px 18px 18px' : '4px 18px 18px 18px';
         const vidTopM = hasAboveContent ? '6px' : '-10px';
+        const bubblePadX = isMobileViewport ? 12 : 14;
+        const bubbleMediaX = `-${bubblePadX}px`;
+        const bubbleMediaW = `calc(100% + ${bubblePadX * 2}px)`;
         const vidWrap: React.CSSProperties = inBubble ? {
-            margin: hasCaption ? `${vidTopM} -14px 8px` : `${vidTopM} -14px -10px`,
-            width: 'calc(100% + 28px)',
+            margin: hasCaption ? `${vidTopM} ${bubbleMediaX} 8px` : `${vidTopM} ${bubbleMediaX} -10px`,
+            width: bubbleMediaW,
+            maxWidth: bubbleMediaW,
+            boxSizing: 'border-box',
             display: 'block',
             borderRadius: hasCaption ? (hasAboveContent ? vidAllRadius : vidTopRadius) : vidAllRadius,
         } : {
             borderRadius: 18,
-            maxWidth: 360,
+            width: isMobileViewport ? '100%' : undefined,
+            maxWidth: isMobileViewport ? '100%' : 360,
         };
         return (
             <>
@@ -480,12 +499,15 @@ interface LightboxProps {
 }
 
 const Lightbox: React.FC<LightboxProps> = ({ url, type, name, onClose, onDownload }) => {
+    const isMobile = isMobileScreen();
+    const mobileMediaMaxHeight = 'calc(100dvh - 150px)';
     return ReactDOM.createPortal(
         <div
             style={{
                 position: 'fixed', inset: 0, zIndex: 9999,
-                background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(8px)',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(0,0,0,0.94)', backdropFilter: 'blur(8px)',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: isMobile ? 'stretch' : 'center',
+                overflow: 'hidden',
             }}
             onClick={onClose}
         >
@@ -493,24 +515,27 @@ const Lightbox: React.FC<LightboxProps> = ({ url, type, name, onClose, onDownloa
             <div
                 style={{
                     position: 'absolute', top: 0, left: 0, right: 0,
-                    padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: isMobile ? 'calc(env(safe-area-inset-top, 0px) + 10px) 12px 12px' : '14px 20px',
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
                     background: 'linear-gradient(rgba(0,0,0,0.6), transparent)',
+                    zIndex: 3,
+                    boxSizing: 'border-box',
                 }}
                 onClick={e => e.stopPropagation()}
             >
-                <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14, fontWeight: 500, maxWidth: '70%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: isMobile ? 13 : 14, fontWeight: 500, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {name}
                 </span>
-                <div style={{ display: 'flex', gap: 10 }}>
+                <div style={{ display: 'flex', gap: isMobile ? 8 : 10, flexShrink: 0 }}>
                     <button
                         onClick={onDownload}
-                        style={{ padding: '8px 16px', background: 'rgba(99,102,241,0.85)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backdropFilter: 'blur(4px)' }}
+                        style={{ padding: isMobile ? '9px 12px' : '8px 16px', background: 'rgba(99,102,241,0.85)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backdropFilter: 'blur(4px)', whiteSpace: 'nowrap' }}
                     >
                         💾 Скачать
                     </button>
                     <button
                         onClick={onClose}
-                        style={{ width: 36, height: 36, background: 'rgba(255,255,255,0.12)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                        style={{ width: isMobile ? 40 : 36, height: isMobile ? 40 : 36, background: 'rgba(255,255,255,0.12)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                     >
                         ✕
                     </button>
@@ -518,27 +543,33 @@ const Lightbox: React.FC<LightboxProps> = ({ url, type, name, onClose, onDownloa
             </div>
 
             {/* Media */}
-            <div onClick={e => e.stopPropagation()} style={{ maxWidth: '92vw', maxHeight: '84vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div
+                onClick={e => e.stopPropagation()}
+                style={isMobile
+                    ? { width: '100vw', height: '100dvh', padding: 'calc(env(safe-area-inset-top, 0px) + 70px) 12px calc(env(safe-area-inset-bottom, 0px) + 44px)', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }
+                    : { maxWidth: '92vw', maxHeight: '84vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
                 {type === 'image' ? (
                     <img
                         src={url}
                         alt=""
-                        style={{ maxWidth: '92vw', maxHeight: '84vh', borderRadius: 12, objectFit: 'contain', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
+                        style={isMobile
+                            ? { maxWidth: 'calc(100vw - 24px)', maxHeight: mobileMediaMaxHeight, width: 'auto', height: 'auto', borderRadius: 14, objectFit: 'contain', boxShadow: '0 16px 60px rgba(0,0,0,0.45)', display: 'block' }
+                            : { maxWidth: '92vw', maxHeight: '84vh', borderRadius: 12, objectFit: 'contain', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
                     />
                 ) : (
                     <video
                         src={url}
                         controls
                         autoPlay
-                        style={{ maxWidth: '92vw', maxHeight: '84vh', borderRadius: 12, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
+                        playsInline
+                        style={isMobile
+                            ? { width: 'calc(100vw - 24px)', maxWidth: 'calc(100vw - 24px)', maxHeight: mobileMediaMaxHeight, height: 'auto', borderRadius: 14, boxShadow: '0 16px 60px rgba(0,0,0,0.45)', background: '#000' }
+                            : { maxWidth: '92vw', maxHeight: '84vh', borderRadius: 12, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
                     />
                 )}
             </div>
 
-            {/* Hint */}
-            <div style={{ position: 'absolute', bottom: 20, color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>
-                Нажмите вне изображения или Esc чтобы закрыть
-            </div>
         </div>,
         document.body
     );
@@ -552,6 +583,8 @@ const LightboxGallery: React.FC<{ images: GalleryImage[]; initialIndex: number; 
     const img = images[index];
     const hasPrev = index > 0;
     const hasNext = index < images.length - 1;
+    const isMobile = isMobileScreen();
+    const mobileMediaMaxHeight = images.length > 1 ? 'calc(100dvh - 188px)' : 'calc(100dvh - 150px)';
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
@@ -579,7 +612,7 @@ const LightboxGallery: React.FC<{ images: GalleryImage[]; initialIndex: number; 
 
     const navBtnStyle: React.CSSProperties = {
         position: 'absolute', top: '50%', transform: 'translateY(-50%)',
-        width: 44, height: 44, borderRadius: '50%', border: 'none', cursor: 'pointer',
+        width: isMobile ? 42 : 44, height: isMobile ? 42 : 44, borderRadius: '50%', border: 'none', cursor: 'pointer',
         background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 22,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         backdropFilter: 'blur(4px)', transition: 'background 0.15s',
@@ -588,27 +621,27 @@ const LightboxGallery: React.FC<{ images: GalleryImage[]; initialIndex: number; 
 
     return ReactDOM.createPortal(
         <div
-            style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}
+            style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: isMobile ? 'stretch' : 'center', overflow: 'hidden' }}
             onClick={onClose}
         >
             {/* Toolbar */}
             <div
-                style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(rgba(0,0,0,0.6), transparent)' }}
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: isMobile ? 'calc(env(safe-area-inset-top, 0px) + 10px) 12px 12px' : '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, background: 'linear-gradient(rgba(0,0,0,0.6), transparent)', zIndex: 4, boxSizing: 'border-box' }}
                 onClick={e => e.stopPropagation()}
             >
-                <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14, fontWeight: 500, maxWidth: '55%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: isMobile ? 13 : 14, fontWeight: 500, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {img.name}
                 </span>
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: isMobile ? 8 : 10, alignItems: 'center', flexShrink: 0 }}>
                     {images.length > 1 && (
                         <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, fontWeight: 600 }}>
                             {index + 1} / {images.length}
                         </span>
                     )}
-                    <button onClick={downloadCurrent} style={{ padding: '8px 16px', background: 'rgba(99,102,241,0.85)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                    <button onClick={downloadCurrent} style={{ padding: isMobile ? '9px 12px' : '8px 16px', background: 'rgba(99,102,241,0.85)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>
                         💾 Скачать
                     </button>
-                    <button onClick={onClose} style={{ width: 36, height: 36, background: 'rgba(255,255,255,0.12)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <button onClick={onClose} style={{ width: isMobile ? 40 : 36, height: isMobile ? 40 : 36, background: 'rgba(255,255,255,0.12)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         ✕
                     </button>
                 </div>
@@ -620,12 +653,19 @@ const LightboxGallery: React.FC<{ images: GalleryImage[]; initialIndex: number; 
             )}
 
             {/* Image */}
-            <div onClick={e => e.stopPropagation()} style={{ maxWidth: '84vw', maxHeight: '84vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div
+                onClick={e => e.stopPropagation()}
+                style={isMobile
+                    ? { width: '100vw', height: '100dvh', padding: 'calc(env(safe-area-inset-top, 0px) + 70px) 12px calc(env(safe-area-inset-bottom, 0px) + 92px)', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }
+                    : { maxWidth: '84vw', maxHeight: '84vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
                 <img
                     key={img.url}
                     src={img.url}
                     alt=""
-                    style={{ maxWidth: '84vw', maxHeight: '84vh', borderRadius: 12, objectFit: 'contain', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
+                    style={isMobile
+                        ? { maxWidth: 'calc(100vw - 24px)', maxHeight: mobileMediaMaxHeight, width: 'auto', height: 'auto', borderRadius: 14, objectFit: 'contain', boxShadow: '0 16px 60px rgba(0,0,0,0.45)', display: 'block' }
+                        : { maxWidth: '84vw', maxHeight: '84vh', borderRadius: 12, objectFit: 'contain', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
                 />
             </div>
 
@@ -637,7 +677,7 @@ const LightboxGallery: React.FC<{ images: GalleryImage[]; initialIndex: number; 
             {/* Thumbnail strip */}
             {images.length > 1 && (
                 <div
-                    style={{ position: 'absolute', bottom: 16, display: 'flex', gap: 6, maxWidth: '80vw', overflowX: 'auto', padding: '4px 8px' }}
+                    style={{ position: 'absolute', bottom: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 14px)' : 16, display: 'flex', gap: 6, maxWidth: isMobile ? 'calc(100vw - 20px)' : '80vw', overflowX: 'auto', padding: '4px 8px', zIndex: 3, boxSizing: 'border-box' }}
                     onClick={e => e.stopPropagation()}
                 >
                     {images.map((im, i) => (
@@ -652,10 +692,6 @@ const LightboxGallery: React.FC<{ images: GalleryImage[]; initialIndex: number; 
                 </div>
             )}
 
-            {/* Hint */}
-            <div style={{ position: 'absolute', bottom: images.length > 1 ? 68 : 20, color: 'rgba(255,255,255,0.25)', fontSize: 11 }}>
-                Esc — закрыть{images.length > 1 ? ' • ← → — навигация' : ''}
-            </div>
         </div>,
         document.body
     );
@@ -715,6 +751,7 @@ const buildCells = (count: number, MAX: number): { cells: CellDef[]; cols: strin
 export const MediaGrid: React.FC<{ items: MediaGridItem[] }> = ({ items }) => {
     const [lightboxImgIndex, setLightboxImgIndex] = useState<number | null>(null);
     const [lightboxVideo, setLightboxVideo] = useState<{ url: string; name: string } | null>(null);
+    const isMobile = isMobileScreen();
     const imgItems: GridImage[] = items.filter(i => i.type === 'image').map(i => ({ url: i.url, name: i.name }));
     const count = items.length;
     const MAX = 9;
@@ -735,7 +772,7 @@ export const MediaGrid: React.FC<{ items: MediaGridItem[] }> = ({ items }) => {
 
     return (
         <>
-            <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 2, width: gridW, borderRadius: 12, overflow: 'hidden' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 2, width: isMobile ? '100%' : gridW, maxWidth: '100%', borderRadius: 12, overflow: 'hidden' }}>
                 {cells.map(({ index, col, row, h }) => {
                     const item = items[index];
                     if (!item) return null;
@@ -785,6 +822,7 @@ export const MediaGrid: React.FC<{ items: MediaGridItem[] }> = ({ items }) => {
 
 export const ImageGrid: React.FC<{ images: GridImage[] }> = ({ images }) => {
     const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+    const isMobile = isMobileScreen();
     const count = images.length;
     const MAX = 9;
     const hiddenCount = Math.max(0, count - MAX);
@@ -792,7 +830,7 @@ export const ImageGrid: React.FC<{ images: GridImage[] }> = ({ images }) => {
 
     return (
         <>
-            <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 2, width: gridW, borderRadius: 12, overflow: 'hidden' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 2, width: isMobile ? '100%' : gridW, maxWidth: '100%', borderRadius: 12, overflow: 'hidden' }}>
                 {cells.map(({ index, col, row, h }) => {
                     const img = images[index];
                     const isLast = index === cells.length - 1 && hiddenCount > 0;

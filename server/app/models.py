@@ -357,7 +357,7 @@ class MessageModel:
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
-                    "SELECT id, sender_id, receiver_id, message_text, file_path, filename, file_size FROM messages WHERE id = %s",
+                    "SELECT id, sender_id, receiver_id, message_text, file_path, filename, file_size, files FROM messages WHERE id = %s",
                     (message_id,)
                 )
                 return await cur.fetchone()
@@ -900,8 +900,8 @@ class GroupMessageModel:
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
-                    """SELECT id, group_id, sender_id, message_text, file_path, 
-                            filename, file_size, reply_to_id, timestamp
+                    """SELECT id, group_id, sender_id, message_text, file_path,
+                            filename, file_size, reply_to_id, timestamp, files
                     FROM group_messages WHERE id = %s""",
                     (message_id,)
                 )

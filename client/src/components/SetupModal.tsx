@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { api } from '../services/api';
-import PolicyModal from './PolicyModal';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 interface SetupModalProps {
     token: string;
@@ -56,10 +56,8 @@ const SetupModal: React.FC<SetupModalProps> = ({ token, onComplete }) => {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const [exiting, setExiting] = useState(false);
-    const [agreedToTerms, setAgreedToTerms] = useState(false);
-    const [policyTab, setPolicyTab] = useState<'license' | 'privacy' | null>(null);
 
-    const isMobile = window.innerWidth <= 600;
+    const isMobile = useIsMobile(600);
     const theme = THEMES.find(t => t.id === selectedId) ?? THEMES[1];
     const isStep2 = step === 2;
 
@@ -102,8 +100,8 @@ const SetupModal: React.FC<SetupModalProps> = ({ token, onComplete }) => {
     return (
         <div style={{
             position: 'fixed', inset: 0, zIndex: 9999, background: overlayBg, transition: T,
-            display: 'flex', alignItems: isMobile ? 'flex-start' : 'center', justifyContent: 'center',
-            overflow: 'auto', padding: isMobile ? '20px 16px env(safe-area-inset-bottom, 16px)' : '32px 16px',
+            display: 'flex', alignItems: isMobile ? 'center' : 'center', justifyContent: 'center',
+            overflow: 'auto', padding: isMobile ? 'max(16px, env(safe-area-inset-top, 16px)) 16px max(16px, env(safe-area-inset-bottom, 16px))' : '32px 16px',
             boxSizing: 'border-box',
         }}>
             {/* Blobs for step 1 (desktop only) */}
@@ -114,12 +112,14 @@ const SetupModal: React.FC<SetupModalProps> = ({ token, onComplete }) => {
 
             {/* Card */}
             <div
-                className={!isStep2 ? 'auth-card-fadein' : ''}
+                className={`${!isStep2 ? 'auth-card-fadein ' : ''}setup-modal-card`}
                 style={{
                     borderRadius: isMobile ? 20 : 24,
                     padding: isMobile ? '24px 18px 20px' : '36px 36px 28px',
                     width: '100%',
                     maxWidth: 440,
+                    maxHeight: isMobile ? 'calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))' : undefined,
+                    overflowY: isMobile ? 'auto' : undefined,
                     backgroundColor: cardBg,
                     border: `1px solid ${cardBorder}`,
                     boxShadow: isStep2
@@ -132,7 +132,7 @@ const SetupModal: React.FC<SetupModalProps> = ({ token, onComplete }) => {
                 }}
             >
                 {/* Logo */}
-                <img src="/logo192.png" alt="Aurora" style={{ width: isMobile ? 52 : 64, height: isMobile ? 52 : 64, borderRadius: isMobile ? 14 : 16, boxShadow: '0 8px 24px rgba(255,107,0,0.4)', marginBottom: 10 }} />
+                <img className="setup-logo-img" src="/logo192.png" alt="Aurora" style={{ width: isMobile ? 52 : 64, height: isMobile ? 52 : 64, borderRadius: isMobile ? 14 : 16, boxShadow: '0 8px 24px rgba(255,107,0,0.4)', marginBottom: 10, objectFit: 'cover', display: 'block' }} />
 
                 <h2 style={{ fontSize: isMobile ? 18 : 22, fontWeight: 800, marginBottom: 4, textAlign: 'center', background: 'linear-gradient(90deg,#FF6B00,#ff9a3c)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
                     Добро пожаловать в Aurora!
@@ -180,24 +180,9 @@ const SetupModal: React.FC<SetupModalProps> = ({ token, onComplete }) => {
                         <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>Может быть на любом языке</p>
                     </div>
 
-                    {/* Terms */}
-                    <div style={{ width: '100%', marginBottom: 12 }}>
-                        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
-                            <div onClick={() => setAgreedToTerms(v => !v)} style={{ width: 20, height: 20, borderRadius: 5, border: `2px solid ${agreedToTerms ? '#6366f1' : '#d1d5db'}`, background: agreedToTerms ? '#6366f1' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1, transition: 'all 0.15s', cursor: 'pointer' }}>
-                                {agreedToTerms && <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
-                            </div>
-                            <span style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.6 }}>
-                                Я принимаю{' '}
-                                <button type="button" onClick={e => { e.stopPropagation(); setPolicyTab('license'); }} style={{ background: 'none', border: 'none', padding: 0, color: '#6366f1', cursor: 'pointer', fontSize: 12, textDecoration: 'underline', fontFamily: 'inherit' }}>Лицензионное соглашение</button>
-                                {' '}и{' '}
-                                <button type="button" onClick={e => { e.stopPropagation(); setPolicyTab('privacy'); }} style={{ background: 'none', border: 'none', padding: 0, color: '#6366f1', cursor: 'pointer', fontSize: 12, textDecoration: 'underline', fontFamily: 'inherit' }}>Политику конфиденциальности</button>
-                            </span>
-                        </label>
-                    </div>
-
                     {error && <div style={{ width: '100%', backgroundColor: '#fff0f0', border: '1px solid #ffcdd2', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#c62828', marginBottom: 10 }}>⚠️ {error}</div>}
 
-                    <button onClick={handleNext} disabled={!agreedToTerms} style={{ width: '100%', padding: '14px', background: agreedToTerms ? 'linear-gradient(135deg,#6366f1,#8b5cf6)' : '#e5e7eb', color: agreedToTerms ? 'white' : '#9ca3af', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: agreedToTerms ? 'pointer' : 'not-allowed', transition: 'all 0.2s', fontFamily: 'inherit', minHeight: 48 }}>
+                    <button onClick={handleNext} style={{ width: '100%', padding: '14px', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: 'white', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s', fontFamily: 'inherit', minHeight: 48 }}>
                         Далее →
                     </button>
                 </>)}
@@ -230,11 +215,11 @@ const SetupModal: React.FC<SetupModalProps> = ({ token, onComplete }) => {
                     )}
 
                     {/* Theme cards */}
-                    <div style={{ display: 'flex', gap: isMobile ? 8 : 10, width: '100%', marginBottom: isMobile ? 14 : 16 }}>
+                    <div className="setup-theme-grid" style={{ display: 'flex', gap: isMobile ? 8 : 10, width: '100%', marginBottom: isMobile ? 14 : 16 }}>
                         {THEMES.map(th => {
                             const active = th.id === selectedId;
                             return (
-                                <button key={th.id} onClick={() => setSelectedId(th.id)} style={{
+                                <button className="setup-theme-card" key={th.id} onClick={() => setSelectedId(th.id)} style={{
                                     flex: 1, borderRadius: 12, padding: isMobile ? '10px 6px 8px' : '10px 8px 8px',
                                     cursor: 'pointer',
                                     border: `2px solid ${active ? th.accent : theme.inputBorder}`,
@@ -274,8 +259,6 @@ const SetupModal: React.FC<SetupModalProps> = ({ token, onComplete }) => {
                     </div>
                 </>)}
             </div>
-
-            {policyTab && <PolicyModal initialTab={policyTab} isDark={false} onClose={() => setPolicyTab(null)} />}
 
             {exiting && (
                 <div style={{ position: 'fixed', inset: 0, zIndex: 10000, background: theme.pageBg, animation: 'setupExitFill 0.55s cubic-bezier(0.4,0,0.2,1) forwards', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

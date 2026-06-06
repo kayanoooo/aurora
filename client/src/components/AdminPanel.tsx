@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { config } from '../config';
 import { useLang } from '../i18n';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 const isImgFile = (filename?: string | null, path?: string | null) =>
     /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(filename || path?.split('/').pop() || '');
@@ -53,7 +54,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
     const { t, lang } = useLang();
     const [tab, setTab] = useState<'stats' | 'users' | 'support' | 'reports'>('stats');
     const [closing, setClosing] = useState(false);
-    const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
+    const isMobile = useIsMobile(639);
 
     // Stats
     const [stats, setStats] = useState<Stats | null>(null);
@@ -354,7 +355,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ token, isDark = false, onClose,
         >
             <div
                 style={{ background: bg, borderRadius: isMobile ? '20px 20px 0 0' : 22, width: isMobile ? '100%' : 780, maxWidth: isMobile ? '100%' : '96vw', height: isMobile ? '92svh' : '88vh', maxHeight: isMobile ? '92svh' : 760, display: 'flex', flexDirection: 'column', overflow: 'hidden', paddingBottom: isMobile ? 'env(safe-area-inset-bottom, 0px)' : 0, boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.28), 0 30px 80px rgba(0,0,0,0.98)' : (dm ? '0 0 50px rgba(99,102,241,0.22), 0 30px 80px rgba(0,0,0,0.7)' : '0 0 40px rgba(99,102,241,0.13), 0 20px 60px rgba(0,0,0,0.15)') }}
-                className={(closing ? 'modal-exit' : 'modal-enter') + (isMobile ? ' mobile-bottom-sheet' : '')}
+                className={(closing ? 'modal-exit' : 'modal-enter') + (isMobile ? ' mobile-fullscreen' : '')}
                 onClick={e => e.stopPropagation()}
             >
                 {isMobile && <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px', flexShrink: 0 }}><div style={{ width: 36, height: 4, borderRadius: 2, background: dm ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)' }} /></div>}

@@ -1,14 +1,16 @@
 {
   "name": "Aurora Messenger",
   "short_name": "Aurora",
+  "id": "/",
   "description": "Современный мессенджер с открытым исходным кодом",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui", "browser"],
-  "orientation": "portrait",
+  "orientation": "portrait-primary",
   "background_color": "#0f0f1a",
   "theme_color": "#6366f1",
+  "lang": "ru-RU",
   "categories": ["social", "communication"],
   "prefer_related_applications": false,
   "icons": [

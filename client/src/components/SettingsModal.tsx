@@ -2,17 +2,29 @@ import React, { useState, useRef, useEffect, useCallback, useSyncExternalStore }
 import ReactDOM from 'react-dom';
 import { api } from '../services/api';
 import { ThemeSettings, AccountEntry } from '../types';
-import { config } from '../config';
+import { config, normalizeServerAddress } from '../config';
 import EmojiPicker from './EmojiPicker';
 import type { StickerPack } from './MediaPicker';
 import { setLang as setGlobalLang, useLang } from '../i18n';
 import AvatarCropper from './AvatarCropper';
 import PolicyModal from './PolicyModal';
+import { ensureAuroraNotificationPermission } from '../services/mobileApp';
 
-const getIsMobile = () => window.innerWidth < 600;
+const getIsMobile = () => {
+    const coarsePointer = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+    return window.innerWidth < 600
+        || (coarsePointer && Math.min(window.innerWidth, window.innerHeight) < 600 && Math.max(window.innerWidth, window.innerHeight) <= 1180);
+};
 const subscribeResize = (cb: () => void) => {
+    const pointerMedia = typeof window.matchMedia === 'function' ? window.matchMedia('(pointer: coarse)') : null;
     window.addEventListener('resize', cb);
-    return () => window.removeEventListener('resize', cb);
+    window.visualViewport?.addEventListener('resize', cb);
+    pointerMedia?.addEventListener('change', cb);
+    return () => {
+        window.removeEventListener('resize', cb);
+        window.visualViewport?.removeEventListener('resize', cb);
+        pointerMedia?.removeEventListener('change', cb);
+    };
 };
 const useIsMobile = () => useSyncExternalStore(subscribeResize, getIsMobile, () => false);
 
@@ -75,14 +87,14 @@ const SubModal: React.FC<SubModalProps> = ({ title, onBack, dm, children }) => {
 
     const panelContent = (
         <>
-            {isMobile && <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px' }}><div style={{ width: 36, height: 4, borderRadius: 2, background: dm ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)' }} /></div>}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: isMobile ? '8px 16px 12px' : '16px 20px', background: dmC(dm, '#1a1a2e', '#f5f3ff', '#050508'), boxShadow: `0 1px 0 ${borderCol}` }}>
+            {/* drag handle removed — submodal is fullscreen on mobile */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: isMobile ? 'calc(env(safe-area-inset-top, 0px) + 10px) 16px 12px' : '16px 20px', background: dmC(dm, '#1a1a2e', '#f5f3ff', '#050508'), boxShadow: `0 1px 0 ${borderCol}` }}>
                 <button onClick={close} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6366f1', padding: 4, lineHeight: 1 }}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
                 </button>
                 <span style={{ fontSize: isMobile ? 17 : 16, fontWeight: 700, color: col }}>{title}</span>
             </div>
-            <div style={{ overflowY: 'auto', padding: isMobile ? '16px 16px 20px' : '20px 20px 16px' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '16px 16px 20px' : '20px 20px 16px', paddingBottom: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 20px)' : '16px' }}>
                 {children}
             </div>
         </>
@@ -90,18 +102,11 @@ const SubModal: React.FC<SubModalProps> = ({ title, onBack, dm, children }) => {
 
     if (isMobile) {
         return ReactDOM.createPortal(
-            <>
-                {/* Blur overlay — separate from panel so backdrop-filter doesn't create a containing block */}
-                <div className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'}
-                    style={{ position: 'fixed', inset: 0, zIndex: 4499, backgroundColor: getIsOled() ? 'rgba(0,0,0,0.88)' : 'rgba(15,10,40,0.6)', backdropFilter: 'blur(10px)' }}
-                    onClick={close} />
-                {/* Panel — sibling of overlay, not child */}
-                <div className={`submodal-panel ${closing ? 'modal-exit' : 'modal-enter'}`}
-                    style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 4500, backgroundColor: bg, borderRadius: '20px 20px 0 0', maxHeight: '92svh', display: 'flex', flexDirection: 'column', overflow: 'hidden', paddingBottom: 'env(safe-area-inset-bottom, 0px)', boxShadow: getIsOled() ? '0 0 60px rgba(124,58,237,0.25), 0 -4px 40px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 -4px 40px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 -4px 30px rgba(0,0,0,0.15)' }}
-                    onClick={e => e.stopPropagation()}>
-                    {panelContent}
-                </div>
-            </>,
+            <div className={`submodal-panel ${closing ? 'modal-exit' : 'modal-enter'}`}
+                style={{ position: 'fixed', inset: 0, zIndex: 4500, backgroundColor: bg, borderRadius: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+                onClick={e => e.stopPropagation()}>
+                {panelContent}
+            </div>,
             document.body
         );
     }
@@ -118,8 +123,8 @@ const SubModal: React.FC<SubModalProps> = ({ title, onBack, dm, children }) => {
 
 // ─── Profile sub-modal ────────────────────────────────────────────────────────
 
-interface ProfileSubProps { token: string; currentUsername: string; currentAvatar?: string; currentStatus?: string; theme: ThemeSettings; onProfileUpdate: (u: string, a?: string, s?: string, tag?: string) => void; onBack: () => void; }
-const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, currentAvatar, currentStatus, theme, onProfileUpdate, onBack }) => {
+export interface ProfileSubProps { token: string; currentUsername: string; currentAvatar?: string; currentStatus?: string; theme: ThemeSettings; onProfileUpdate: (u: string, a?: string, s?: string, tag?: string) => void; onBack: () => void; }
+export const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, currentAvatar, currentStatus, theme, onProfileUpdate, onBack }) => {
     const { t } = useLang();
     const dm = theme.darkMode;
     const isMobile = useIsMobile();
@@ -217,13 +222,13 @@ const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, cu
     return (
         <SubModal title={t('Profile')} onBack={onBack} dm={dm}>
             {/* Avatar */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px', backgroundColor: dmC(dm, '#1a1a2e', '#f5f3ff', '#050508'), borderRadius: 16, marginBottom: 4 }}>
-                <div style={{ width: 72, height: 72, borderRadius: '50%', backgroundColor: avatarUrl ? 'transparent' : avatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, cursor: 'pointer', boxShadow: '0 4px 14px rgba(99,102,241,0.3)', position: 'relative' }} onClick={() => fileRef.current?.click()}>
+            <div className="profile-sub-avatar-card" style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px', backgroundColor: dmC(dm, '#1a1a2e', '#f5f3ff', '#050508'), borderRadius: 16, marginBottom: 4, width: '100%', maxWidth: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
+                <div className="profile-sub-avatar" style={{ width: 72, height: 72, borderRadius: '50%', backgroundColor: avatarUrl ? 'transparent' : avatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, cursor: 'pointer', boxShadow: '0 4px 14px rgba(99,102,241,0.3)', position: 'relative' }} onClick={() => fileRef.current?.click()}>
                     {avatarUrl ? <img src={avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ color: 'white', fontSize: 26, fontWeight: 800 }}>{initials}</span>}
                     <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, borderRadius: '50%', opacity: isMobile ? 0.75 : 0, transition: 'opacity 0.2s' }}
                         onMouseEnter={e => (e.currentTarget.style.opacity = '1')} onMouseLeave={e => (e.currentTarget.style.opacity = isMobile ? '0.75' : '0')}>📷</div>
                 </div>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ marginBottom: 8 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span style={{ fontWeight: 700, fontSize: 16, color: dm ? '#e2e8f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{username || currentUsername}</span>
@@ -231,7 +236,7 @@ const ProfileSubModal: React.FC<ProfileSubProps> = ({ token, currentUsername, cu
                         </div>
                         {tag && <div style={{ fontSize: 12, color: '#6366f1', fontWeight: 600, marginTop: 2 }}>@{tag}</div>}
                     </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
+                    <div className="profile-sub-actions" style={{ display: 'flex', gap: 8 }}>
                         <button onClick={() => fileRef.current?.click()} style={{ flex: 1, padding: '8px', background: primaryGrad(), color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>{t('Change photo')}</button>
                         {(avatarUrl || currentAvatar) && !confirmRemove && (
                             <button onClick={() => setConfirmRemove(true)} style={{ flex: 1, padding: '8px', background: !dm ? '#fff0f0' : (getIsOled() ? '#0d0005' : '#2a1a1a'), color: '#ef4444', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>{t('Delete')}</button>
@@ -1231,7 +1236,7 @@ const AboutSubModal: React.FC<AboutSubProps> = ({ theme, onBack }) => {
                 <img src="/logo192.png" alt="Aurora" style={{ width: 80, height: 80, borderRadius: 22, boxShadow: '0 8px 28px rgba(99,102,241,0.3)' }} />
                 <div style={{ textAlign: 'center' }}>
                     <div style={{ fontSize: 32, fontWeight: 900, color: col, letterSpacing: -1 }}>Aurora</div>
-                    <div style={{ marginTop: 6, display: 'inline-block', padding: '3px 14px', borderRadius: 20, background: dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.1)'), color: '#a78bfa', fontSize: 13, fontWeight: 700, border: dm && getIsOled() ? '1px solid rgba(167,139,250,0.2)' : 'none' }}>v1.0.0</div>
+                    <div style={{ marginTop: 6, display: 'inline-block', padding: '3px 14px', borderRadius: 20, background: dmC(dm, '#2a2a3d', '#ede9fe', 'rgba(167,139,250,0.1)'), color: '#a78bfa', fontSize: 13, fontWeight: 700, border: dm && getIsOled() ? '1px solid rgba(167,139,250,0.2)' : 'none' }}>v1.0.0 build 2</div>
                 </div>
                 <div style={{ fontSize: 13, color: subCol, textAlign: 'center', lineHeight: 1.6 }}>{lang === 'en' ? 'Modern open-source messenger' : 'Современный мессенджер с открытым исходным кодом'}</div>
 
@@ -1286,7 +1291,7 @@ const ServerSubModal: React.FC<ServerSubProps> = ({ theme, onBack }) => {
     const [saved, setSaved] = useState(false);
 
     const save = () => {
-        const h = host.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+        const h = normalizeServerAddress(host);
         if (!h) return;
         config.setServerHost(h);
         setSaved(true);
@@ -1325,7 +1330,7 @@ const ServerSubModal: React.FC<ServerSubProps> = ({ theme, onBack }) => {
                         </button>
                     </div>
                     <div style={{ fontSize: 11, color: subCol, marginTop: 6 }}>
-                        {lang === 'en' ? 'Current: ' : 'Текущий: '}<code style={{ color: accent }}>{config.SERVER_IP}:8000</code>
+                        {lang === 'en' ? 'Current: ' : 'Текущий: '}<code style={{ color: accent }}>{config.BASE_URL}</code>
                     </div>
                 </div>
             </div>
@@ -1357,6 +1362,7 @@ const defaultNotif = (): NotifSettings => {
 const saveNotif = (s: NotifSettings) => localStorage.setItem(NOTIF_KEY, JSON.stringify(s));
 
 interface NotifSubProps { theme: ThemeSettings; onBack: () => void; }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const NotificationsSubModal: React.FC<NotifSubProps> = ({ theme, onBack }) => {
     const dm = theme.darkMode;
     const col = dm ? '#e2e8f0' : '#1e1b4b';
@@ -1366,10 +1372,10 @@ const NotificationsSubModal: React.FC<NotifSubProps> = ({ theme, onBack }) => {
     const { lang } = useLang();
 
     const [settings, setSettings] = useState<NotifSettings>(defaultNotif);
-    const [permState, setPermState] = useState<NotificationPermission>('default');
+    const [permState, setPermState] = useState<NotificationPermission | 'unsupported'>('default');
 
     useEffect(() => {
-        if ('Notification' in window) setPermState(Notification.permission);
+        ensureAuroraNotificationPermission(false).then(setPermState);
     }, []);
 
     const update = (patch: Partial<NotifSettings>) => {
@@ -1379,8 +1385,7 @@ const NotificationsSubModal: React.FC<NotifSubProps> = ({ theme, onBack }) => {
     };
 
     const requestPermission = async () => {
-        if (!('Notification' in window)) return;
-        const p = await Notification.requestPermission();
+        const p = await ensureAuroraNotificationPermission(true);
         setPermState(p);
         if (p === 'granted') update({ enabled: true });
     };
@@ -1480,6 +1485,8 @@ interface SettingsModalProps {
     currentUserId?: number;
     onSwitchAccount?: (acc: AccountEntry) => void;
     onClose: () => void;
+    inline?: boolean; // render without portal/backdrop (for mobile tab)
+    initialSub?: 'profile' | 'privacy' | 'chat' | 'emoji' | 'language' | 'notifications' | 'audio';
 }
 
 // ─── Audio & Camera Sub-Modal ─────────────────────────────────────────────────
@@ -1659,10 +1666,19 @@ type SubSection = 'profile' | 'privacy' | 'chat' | 'emoji' | 'language' | 'patch
 const SettingsModal: React.FC<SettingsModalProps> = ({
     token, currentUsername, currentUserTag, currentAvatar, currentStatus, isOnline,
     theme, onThemeChange, onProfileUpdate, onLogout, onOpenFolders, onOpenFavorites, onOpenArchive, onOpenSupport, onOpenAdmin, onShowOnboarding, onClose,
-    accounts, currentUserId, onSwitchAccount,
+    accounts, currentUserId, onSwitchAccount, inline, initialSub,
 }) => {
-    const [activeSub, setActiveSub] = useState<SubSection>(null);
+    const [activeSub, setActiveSub] = useState<SubSection>(initialSub ?? null);
     const [closing, setClosing] = useState(false);
+
+    // When opened with a specific sub-section (e.g. profile edit from Profile tab),
+    // auto-close the overlay once the user navigates back to the root panel.
+    useEffect(() => {
+        if (inline && initialSub && activeSub === null) {
+            onClose();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeSub]);
 
     const { t, lang } = useLang();
     const dm = theme.darkMode;
@@ -1679,6 +1695,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         if (activeSub) { setActiveSub(null); return; }
         setClosing(true); setTimeout(onClose, 220);
     }, [activeSub, onClose]);
+
+    const openExternal = useCallback((action: () => void) => {
+        if (inline) {
+            action();
+            return;
+        }
+        setClosing(true);
+        setTimeout(() => {
+            onClose();
+            action();
+        }, 200);
+    }, [inline, onClose]);
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
@@ -1707,7 +1735,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             ? `0 0 12px ${accent}44, 0 2px 16px rgba(0,0,0,0.9), inset 0 1px 0 ${accent}22`
             : dm ? `0 2px 12px rgba(0,0,0,0.5), 0 0 8px ${accent}22` : `0 2px 10px ${accent}30`;
         return (
-            <div onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+            <div className="settings-menu-item" onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
                 style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '10px 14px', cursor: onClick ? 'pointer' : 'default', borderRadius: 12, margin: '1px 8px', backgroundColor: hover && onClick ? hoverBg : 'transparent', transition: 'background 0.12s' }}>
                 <div style={{ width: 38, height: 38, borderRadius: 11, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: iconShadow, border: iconBorder, transition: 'all 0.15s' }}>
                     {typeof icon === 'string'
@@ -1729,33 +1757,30 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
     );
 
-    return ReactDOM.createPortal(
-        <>
-            {/* Overlay */}
-            <div
-                onClick={() => { setClosing(true); setTimeout(onClose, 220); }}
-                className={closing ? 'modal-backdrop-exit' : 'settings-overlay-enter'}
-                style={{ position: 'fixed', inset: 0, zIndex: 3000, backgroundColor: 'rgba(15,10,40,0.45)', pointerEvents: closing ? 'none' : undefined }}
-            />
-
-            {/* Panel */}
-            <div style={{
+    const panelContent = (
+        <div style={{
+            ...(inline ? {
+                position: 'absolute', inset: 0,
+                display: 'flex', flexDirection: 'column', overflow: 'hidden',
+                backgroundColor: panelBg,
+            } : {
                 position: 'fixed', top: 0, left: 0, bottom: 0, zIndex: 3100,
                 width: 'min(340px, 100vw)', backgroundColor: panelBg,
                 boxShadow: getIsOled() ? '8px 0 40px rgba(0,0,0,0.95), 2px 0 0 rgba(167,139,250,0.07)' : dm ? '8px 0 40px rgba(0,0,0,0.6), 2px 0 0 rgba(99,102,241,0.06)' : '8px 0 32px rgba(99,102,241,0.1), 2px 0 0 rgba(99,102,241,0.04)',
                 display: 'flex', flexDirection: 'column', overflow: 'hidden',
                 transform: closing ? 'translateX(-100%)' : undefined,
                 transition: closing ? 'transform 0.22s cubic-bezier(0.4,0,0.2,1)' : undefined,
-            }}
-                className={`settings-main-panel${closing ? '' : ' settings-panel-enter'}`}
-            >
+            }),
+        }}
+            className={inline ? 'mobile-settings-panel' : `settings-main-panel${closing ? '' : ' settings-panel-enter'}`}
+        >
                 {/* Header / User profile */}
-                <div style={{ background: !dm ? 'linear-gradient(160deg,#5b4fcf 0%,#7c3aed 60%,#6366f1 100%)' : (getIsOled() ? 'linear-gradient(160deg,#0a0014 0%,#150030 60%,#000000 100%)' : 'linear-gradient(160deg,#1e1840 0%,#2d1f6e 60%,#1a1a3e 100%)'), padding: '32px 20px 16px', position: 'relative', overflow: 'hidden' }}>
+                <div className="settings-profile-hero" style={{ background: !dm ? 'linear-gradient(160deg,#5b4fcf 0%,#7c3aed 60%,#6366f1 100%)' : (getIsOled() ? 'linear-gradient(160deg,#0a0014 0%,#150030 60%,#000000 100%)' : 'linear-gradient(160deg,#1e1840 0%,#2d1f6e 60%,#1a1a3e 100%)'), padding: '32px 20px 16px', position: 'relative', overflow: 'hidden' }}>
                     {/* Background decoration */}
                     <div style={{ position: 'absolute', top: -30, right: -30, width: 130, height: 130, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
                     <div style={{ position: 'absolute', bottom: -20, left: -20, width: 80, height: 80, borderRadius: '50%', background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
 
-                    <button onClick={() => { setClosing(true); setTimeout(onClose, 220); }} style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.2)', width: 30, height: 30, borderRadius: 8, cursor: 'pointer', color: 'rgba(255,255,255,0.85)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>✕</button>
+                    {!inline && <button onClick={() => { setClosing(true); setTimeout(onClose, 220); }} style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.2)', width: 30, height: 30, borderRadius: 8, cursor: 'pointer', color: 'rgba(255,255,255,0.85)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>✕</button>}
 
                     {/* Avatar */}
                     <div style={{ position: 'relative', width: 70, height: 70, marginBottom: 14 }}>
@@ -1773,28 +1798,25 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     {currentUserTag && <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)', marginBottom: 6 }}>@{currentUserTag}</div>}
                     <div style={{ fontSize: 12, color: isOnline ? '#86efac' : 'rgba(255,255,255,0.45)', fontWeight: 500 }}>{isOnline ? `● ${t('Online')}` : `○ ${t('Offline')}`}</div>
 
-                    {/* Quick actions */}
-                    <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-                        <button onClick={() => { setClosing(true); setTimeout(() => { onClose(); onOpenFavorites(); }, 200); }} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: 'rgba(255,255,255,0.13)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 20, cursor: 'pointer', color: 'white', fontSize: 12, fontWeight: 600, backdropFilter: 'blur(4px)' }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="#f59e0b" stroke="#f59e0b" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                            {t('Favorites')}
-                        </button>
-                        <button onClick={() => { setClosing(true); setTimeout(() => { onClose(); onOpenArchive(); }, 200); }} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: 'rgba(255,255,255,0.13)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 20, cursor: 'pointer', color: 'white', fontSize: 12, fontWeight: 600, backdropFilter: 'blur(4px)' }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
-                            {t('Archive')}
-                        </button>
-                    </div>
+                    {/* Quick actions — only on desktop */}
+                    {!inline && (
+                        <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+                            <button onClick={() => openExternal(onOpenFavorites)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: 'rgba(255,255,255,0.13)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 20, cursor: 'pointer', color: 'white', fontSize: 12, fontWeight: 600, backdropFilter: 'blur(4px)' }}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="#f59e0b" stroke="#f59e0b" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                                {t('Favorites')}
+                            </button>
+                            <button onClick={() => openExternal(onOpenArchive)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: 'rgba(255,255,255,0.13)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 20, cursor: 'pointer', color: 'white', fontSize: 12, fontWeight: 600, backdropFilter: 'blur(4px)' }}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+                                {t('Archive')}
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Menu */}
-                <div style={{ flex: 1, paddingTop: 10, paddingBottom: 16, overflowY: 'auto' }}>
-                    <SectionDivider label={t('Account')} />
-                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>} label={t('Profile')} hint={t('Name, tag, photo, about')} color="linear-gradient(135deg,#f59e0b,#f97316)" onClick={() => setActiveSub('profile')} />
-                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} label={t('Privacy')} hint={t('What others see')} color="linear-gradient(135deg,#10b981,#059669)" onClick={() => setActiveSub('privacy')} />
-                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>} label={lang === 'en' ? 'Notifications' : 'Уведомления'} hint={lang === 'en' ? 'Sound, alerts, per-chat settings' : 'Звук, оповещения, настройки чатов'} color="linear-gradient(135deg,#8b5cf6,#a78bfa)" onClick={() => setActiveSub('notifications')} />
-                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} label={lang === 'en' ? 'Sound & Camera' : 'Звук и камера'} hint={lang === 'en' ? 'Microphone, speakers, calls' : 'Микрофон, колонки, звонки'} color="linear-gradient(135deg,#0ea5e9,#2563eb)" onClick={() => setActiveSub('audio')} />
+                <div style={{ flex: 1, paddingTop: 10, paddingBottom: inline ? 80 : 16, overflowY: 'auto' }}>
 
-                    {/* Accounts section */}
+                    {/* Accounts section — always shown */}
                     <>
                         <SectionDivider label={lang === 'en' ? 'Accounts' : 'Аккаунты'} />
                         {(accounts || []).filter(a => a.userId !== currentUserId).map(acc => {
@@ -1817,10 +1839,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                 </div>
                             );
                         })}
-                        <div style={{ margin: '4px 22px 10px', fontSize: 11, color: subCol, lineHeight: 1.5 }}>
-                            {lang === 'en' ? 'To add another account — log out and sign in with a different one.' : 'Чтобы добавить аккаунт — выйдите и войдите с другого.'}
-                        </div>
+                        {(accounts || []).filter(a => a.userId !== currentUserId).length === 0 && (
+                            <div style={{ margin: '4px 22px 10px', fontSize: 11, color: subCol, lineHeight: 1.5 }}>
+                                {lang === 'en' ? 'To add another account — log out and sign in with a different one.' : 'Чтобы добавить аккаунт — выйдите и войдите с другого.'}
+                            </div>
+                        )}
                     </>
+
+                    <SectionDivider label={t('Account')} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>} label={t('Profile')} hint={t('Name, tag, photo, about')} color="linear-gradient(135deg,#f59e0b,#f97316)" onClick={() => setActiveSub('profile')} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} label={t('Privacy')} hint={t('What others see')} color="linear-gradient(135deg,#10b981,#059669)" onClick={() => setActiveSub('privacy')} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} label={lang === 'en' ? 'Sound & Camera' : 'Звук и камера'} hint={lang === 'en' ? 'Microphone, speakers, calls' : 'Микрофон, колонки, звонки'} color="linear-gradient(135deg,#0ea5e9,#2563eb)" onClick={() => setActiveSub('audio')} />
 
                     <SectionDivider label={t('Appearance')} />
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.437-.652-.437-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>} label={t('Chat settings')} hint={t('Themes, wallpapers, animations')} color="linear-gradient(135deg,#3b82f6,#6366f1)" onClick={() => setActiveSub('chat')} />
@@ -1828,42 +1857,44 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>} label={t('Language')} hint={lang === 'en' ? 'English' : 'Русский'} color="linear-gradient(135deg,#06b6d4,#0891b2)" onClick={() => setActiveSub('language')} />
 
                     <SectionDivider label={t('Chats')} />
-                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>} label={t('Chat folders')} hint={t('Manage folders')} color="linear-gradient(135deg,#f59e0b,#eab308)" onClick={() => { onClose(); setTimeout(onOpenFolders, 100); }} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>} label={t('Chat folders')} hint={t('Manage folders')} color="linear-gradient(135deg,#f59e0b,#eab308)" onClick={() => openExternal(onOpenFolders)} />
 
                     <SectionDivider label={lang === 'en' ? 'Help' : 'Помощь'} />
-                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>} label={lang === 'en' ? 'Support' : 'Поддержка'} hint={lang === 'en' ? 'Chat with support team' : 'Написать в поддержку'} color="linear-gradient(135deg,#06b6d4,#0284c7)" onClick={() => { setClosing(true); setTimeout(() => { onClose(); onOpenSupport(); }, 200); }} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>} label={lang === 'en' ? 'Support' : 'Поддержка'} hint={lang === 'en' ? 'Chat with support team' : 'Написать в поддержку'} color="linear-gradient(135deg,#06b6d4,#0284c7)" onClick={() => openExternal(onOpenSupport)} />
                     {(currentUserTag === 'kayano' || currentUserTag === 'durov') && (
-                        <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>} label={lang === 'en' ? 'Admin panel' : 'Панель администратора'} hint={lang === 'en' ? 'Stats, users, support inbox' : 'Статистика, пользователи, поддержка'} color="linear-gradient(135deg,#ef4444,#dc2626)" onClick={() => { setClosing(true); setTimeout(() => { onClose(); onOpenAdmin(); }, 200); }} />
+                        <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>} label={lang === 'en' ? 'Admin panel' : 'Панель администратора'} hint={lang === 'en' ? 'Stats, users, support inbox' : 'Статистика, пользователи, поддержка'} color="linear-gradient(135deg,#ef4444,#dc2626)" onClick={() => openExternal(onOpenAdmin)} />
                     )}
 
                     <SectionDivider />
                     <MenuItem icon={dm ? <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg> : <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>} label={t('Night mode')} color={dm ? 'linear-gradient(135deg,#4f46e5,#312e81)' : 'linear-gradient(135deg,#f59e0b,#f97316)'} right={<Toggle value={dm} onChange={v => onThemeChange({ ...theme, darkMode: v, chatBg: v ? '#0f0f1a' : '#f8f9ff', bubbleOtherColor: v ? '#2a2a3d' : '#e8e8e8', bubbleOwnColor: '#6366f1' })} />} />
                     {onShowOnboarding && (
-                        <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17" strokeWidth="3"/></svg>} label={lang === 'en' ? 'Beginner guide' : 'Гид для новичков'} hint={lang === 'en' ? 'Quick tour of Aurora features' : 'Быстрое знакомство с возможностями'} color="linear-gradient(135deg,#06b6d4,#6366f1)" onClick={() => { setClosing(true); setTimeout(() => { onClose(); onShowOnboarding!(); }, 200); }} />
+                        <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17" strokeWidth="3"/></svg>} label={lang === 'en' ? 'Beginner guide' : 'Гид для новичков'} hint={lang === 'en' ? 'Quick tour of Aurora features' : 'Быстрое знакомство с возможностями'} color="linear-gradient(135deg,#06b6d4,#6366f1)" onClick={() => openExternal(onShowOnboarding!)} />
                     )}
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16" strokeWidth="3"/></svg>} label={t('About')} color="linear-gradient(135deg,#8b5cf6,#7c3aed)" onClick={() => setActiveSub('about')} />
                     {config.isElectron() && (
                         <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>} label={lang === 'en' ? 'Server' : 'Сервер'} hint={lang === 'en' ? 'Connection address' : 'Адрес подключения'} color="linear-gradient(135deg,#0f766e,#0d9488)" onClick={() => setActiveSub('server')} />
                     )}
 
-                    {/* Logout */}
-                    <div style={{ margin: '12px 16px 0' }}>
-                        <button onClick={onLogout} style={{ width: '100%', padding: '12px', backgroundColor: !dm ? '#fff5f5' : (getIsOled() ? '#0d0005' : '#2a1a1a'), color: '#ef4444', border: `1px solid ${!dm ? '#fecaca' : (getIsOled() ? 'rgba(239,68,68,0.2)' : '#5a2020')}`, borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
-                            🚪 {t('Log out')}
-                        </button>
-                    </div>
+                    {/* Logout — hidden in inline/mobile mode (logout accessible from Privacy section) */}
+                    {!inline && (
+                        <div style={{ margin: '12px 16px 0' }}>
+                            <button onClick={onLogout} style={{ width: '100%', padding: '12px', backgroundColor: !dm ? '#fff5f5' : (getIsOled() ? '#0d0005' : '#2a1a1a'), color: '#ef4444', border: `1px solid ${!dm ? '#fecaca' : (getIsOled() ? 'rgba(239,68,68,0.2)' : '#5a2020')}`, borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+                                🚪 {t('Log out')}
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
+    );
 
-            {/* Sub-modals */}
+    // Sub-modals use their own portals so render regardless of inline mode
+    const subModals = (
+        <>
             {activeSub === 'profile' && (
                 <ProfileSubModal token={token} currentUsername={currentUsername} currentAvatar={currentAvatar} currentStatus={currentStatus} theme={theme} onProfileUpdate={onProfileUpdate} onBack={() => setActiveSub(null)} />
             )}
             {activeSub === 'privacy' && (
                 <PrivacySubModal token={token} theme={theme} onBack={() => setActiveSub(null)} onLogout={onLogout} />
-            )}
-            {activeSub === 'notifications' && (
-                <NotificationsSubModal theme={theme} onBack={() => setActiveSub(null)} />
             )}
             {activeSub === 'chat' && (
                 <ChatSettingsSubModal theme={theme} onThemeChange={onThemeChange} onBack={() => setActiveSub(null)} />
@@ -1886,6 +1917,20 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             {activeSub === 'audio' && (
                 <AudioSubModal theme={theme} onBack={() => setActiveSub(null)} />
             )}
+        </>
+    );
+
+    if (inline) return <>{panelContent}{subModals}</>;
+
+    return ReactDOM.createPortal(
+        <>
+            <div
+                onClick={() => { setClosing(true); setTimeout(onClose, 220); }}
+                className={closing ? 'modal-backdrop-exit' : 'settings-overlay-enter'}
+                style={{ position: 'fixed', inset: 0, zIndex: 3000, backgroundColor: 'rgba(15,10,40,0.45)', pointerEvents: closing ? 'none' : undefined }}
+            />
+            {panelContent}
+            {subModals}
         </>,
         document.body
     );

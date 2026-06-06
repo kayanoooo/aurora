@@ -12,7 +12,8 @@
       "Bash(git commit -m ' *)",
       "Bash(python3 /tmp/create_er_diagram.py)",
       "Bash(python3 /tmp/create_usecase.py)",
-      "Bash(python3 /tmp/ch2_final.py)"
+      "Bash(python3 /tmp/ch2_final.py)",
+      "Bash(python3 .claude/skills/docx/scripts/office/unpack.py \"даня диплом.docx\" /tmp/danya_unpacked/)"
     ]
   }
 }

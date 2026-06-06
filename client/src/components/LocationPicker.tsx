@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { useLang } from '../i18n';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 interface Place {
     display_name: string;
@@ -20,7 +21,7 @@ const LocationPicker: React.FC<LocationPickerProps> = ({ isDark = false, onSend,
     const { lang } = useLang();
     const dm = isDark;
     const isOled = dm && document.body.classList.contains('oled-theme');
-    const isMobile = window.innerWidth <= 768;
+    const isMobile = useIsMobile();
 
     const [closing, setClosing] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -114,7 +115,7 @@ const LocationPicker: React.FC<LocationPickerProps> = ({ isDark = false, onSend,
             onClick={close}
         >
             <div
-                className={closing ? 'modal-exit' : 'modal-enter'}
+                className={`${isMobile ? 'mobile-fullscreen ' : ''}${closing ? 'modal-exit' : 'modal-enter'}`}
                 style={{ background: bg, borderRadius: isMobile ? '20px 20px 0 0' : 20, width: isMobile ? '100%' : 420, maxWidth: '96vw', maxHeight: isMobile ? '88svh' : '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,0.35)', paddingBottom: isMobile ? 'env(safe-area-inset-bottom,0px)' : 0 }}
                 onClick={e => e.stopPropagation()}
             >

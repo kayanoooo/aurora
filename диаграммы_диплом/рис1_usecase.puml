@@ -1,0 +1,49 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam ArrowColor #333333
+skinparam ActorStyle awesome
+
+title Рисунок 1 – Диаграмма прецедентов мессенджера Aurora
+
+left to right direction
+
+actor "Гость" as Guest
+actor "Пользователь" as User
+actor "Администратор" as Admin
+
+rectangle "Серверная часть мессенджера Aurora" {
+    usecase "Регистрация\n(POST /api/register\nPOST /api/setup)" as UC1
+    usecase "Вход\n(POST /api/login)" as UC2
+    usecase "Отправка личного сообщения\n(WebSocket: message)" as UC3
+    usecase "Отправка группового сообщения\n(WebSocket: group_message)" as UC4
+    usecase "Загрузка медиафайла\n(POST /api/upload)" as UC5
+    usecase "Поиск пользователей/каналов\n(GET /api/search)" as UC6
+    usecase "Создание группы/канала\n(POST /api/groups)" as UC7
+    usecase "Управление профилем\n(PUT /api/profile)" as UC8
+    usecase "Работа с папками чатов\n(POST /api/folders)" as UC9
+    usecase "Создание опроса\n(POST /api/polls)" as UC10
+    usecase "Обращение в поддержку\n(POST /api/support/send)" as UC11
+    usecase "Просмотр статистики\n(GET /api/admin/stats)" as UC12
+    usecase "Управление пользователями\n(POST /api/admin/users/{id}/ban)" as UC13
+    usecase "Ответ в поддержку\n(POST /api/admin/support/reply)" as UC14
+}
+
+Guest --> UC1
+Guest --> UC2
+User --> UC2
+User --> UC3
+User --> UC4
+User --> UC5
+User --> UC6
+User --> UC7
+User --> UC8
+User --> UC9
+User --> UC10
+User --> UC11
+Admin --> UC12
+Admin --> UC13
+Admin --> UC14
+Admin --|> User
+@enduml

@@ -198,38 +198,40 @@ _MAX_CODE_ATTEMPTS = 5  # максимум попыток перед инвал�
 _reg_codes: dict = {}
 _REG_CODE_TTL = 600  # 10 минут
 
-def _send_email(to: str, subject: str, body: str) -> bool:
-    """Отправить письмо через SMTP. Возвращает True если успешно."""
+def _send_email(to: str, subject: str, body: str) -> tuple[bool, Optional[str]]:
+    """Отправить письмо через SMTP. Возвращает статус и диагностическое сообщение."""
     smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
     smtp_port_env = os.getenv("SMTP_PORT", "")
     smtp_user = os.getenv("SMTP_USER", "")
     smtp_pass = os.getenv("SMTP_PASS", "")
+    smtp_from = os.getenv("SMTP_FROM", smtp_user)
+    smtp_from_name = os.getenv("SMTP_FROM_NAME", "Aurora Messenger")
     if not smtp_user or not smtp_pass:
-        return False
+        return False, "SMTP_USER or SMTP_PASS is empty"
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = f"Aurora Messenger <{smtp_user}>"
+        msg["From"] = f"{smtp_from_name} <{smtp_from}>"
         msg["To"] = to
         msg.attach(MIMEText(body, "html", "utf-8"))
-        # Try SSL (port 465) first, fall back to STARTTLS (port 587)
-        ssl_port = int(smtp_port_env) if smtp_port_env and int(smtp_port_env) != 587 else 465
-        try:
-            with smtplib.SMTP_SSL(smtp_host, ssl_port, timeout=10) as server:
+
+        port = int(smtp_port_env) if smtp_port_env else 465
+        if port == 465:
+            with smtplib.SMTP_SSL(smtp_host, port, timeout=15) as server:
                 server.login(smtp_user, smtp_pass)
-                server.sendmail(smtp_user, to, msg.as_string())
-            return True
-        except Exception:
-            starttls_port = int(smtp_port_env) if smtp_port_env else 587
-            with smtplib.SMTP(smtp_host, starttls_port, timeout=10) as server:
+                server.sendmail(smtp_from, to, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_host, port, timeout=15) as server:
                 server.ehlo()
-                server.starttls()
+                if port != 25:
+                    server.starttls()
+                    server.ehlo()
                 server.login(smtp_user, smtp_pass)
-                server.sendmail(smtp_user, to, msg.as_string())
-            return True
+                server.sendmail(smtp_from, to, msg.as_string())
+        return True, None
     except Exception as e:
         print(f"❌ Email send error: {e}")
-        return False
+        return False, str(e)
 
 class CreateGroupRequest(BaseModel):
     name: str
@@ -625,12 +627,12 @@ async def send_register_code(request: SendRegisterCodeRequest):
             <p style="color:#9ca3af;font-size:12px;text-align:center;margin-top:16px">Если вы не регистрировались в Aurora — проигнорируйте это письмо.</p>
         </div>
         """
-        sent = await asyncio.get_event_loop().run_in_executor(
+        sent, email_error = await asyncio.get_event_loop().run_in_executor(
             None, lambda: _send_email(request.email, "Подтверждение email — Aurora", body)
         )
         if not sent:
-            print(f"⚠️  Email failed. Register code for {request.email}: {code}")
-            return {"success": True, "email_sent": False, "smtp_configured": True, "dev_code": code}
+            print(f"⚠️  Email failed. Register code for {request.email}: {code}. Error: {email_error}")
+            return {"success": True, "email_sent": False, "smtp_configured": True, "dev_code": code, "email_error": email_error}
         return {"success": True, "email_sent": sent, "smtp_configured": True}
     else:
         print(f"⚠️  SMTP not configured. Register code for {request.email}: {code}")
@@ -930,12 +932,12 @@ async def send_reset_code(request: SendResetCodeRequest):
             <p style="color:#9ca3af;font-size:12px;text-align:center;margin-top:16px">Если вы не запрашивали сброс пароля — проигнорируйте это письмо.</p>
         </div>
         """
-        sent = await asyncio.get_event_loop().run_in_executor(
+        sent, email_error = await asyncio.get_event_loop().run_in_executor(
             None, lambda: _send_email(request.email, "Код сброса пароля Aurora", body)
         )
         if not sent:
-            print(f"⚠️  Email failed. Reset code for {request.email}: {code}")
-            return {"success": True, "email_sent": False, "smtp_configured": True, "dev_code": code}
+            print(f"⚠️  Email failed. Reset code for {request.email}: {code}. Error: {email_error}")
+            return {"success": True, "email_sent": False, "smtp_configured": True, "dev_code": code, "email_error": email_error}
         return {"success": True, "email_sent": sent, "smtp_configured": True}
     else:
         # SMTP не настроен — возвращаем код в ответе для разработки
@@ -4673,9 +4675,15 @@ async def set_now_playing(req: NowPlayingUpdate):
 # ========== Статика ==========
 
 # Подключаем статические файлы клиента (если есть)
-client_build_path = os.path.join(os.path.dirname(__file__), "../../client/build")
-if os.path.exists(client_build_path):
+client_build_candidates = [
+    PROJECT_ROOT / "client" / "build",
+    Path("/app/client/build"),
+    Path("/app/server/../client/build").resolve(),
+    Path.cwd() / "client" / "build",
+]
+client_build_path = next((path for path in client_build_candidates if path.exists()), None)
+if client_build_path:
     app.mount("/", StaticFiles(directory=client_build_path, html=True), name="client")
     print(f"📁 Serving static files from {client_build_path}")
 else:
-    print(f"⚠️ Client build not found at {client_build_path}")
+    print(f"⚠️ Client build not found. Checked: {', '.join(str(path) for path in client_build_candidates)}")

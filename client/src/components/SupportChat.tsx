@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { config } from '../config';
 import { useLang } from '../i18n';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 const isImage = (filename?: string | null, path?: string | null) =>
     /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(filename || path?.split('/').pop() || '');
@@ -51,6 +52,7 @@ const SupportChat: React.FC<SupportChatProps> = ({ token, currentUserId, isDark 
     const [lightboxType, setLightboxType] = useState<'image' | 'video'>('image');
     const fileInputRef = useRef<HTMLInputElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
+    const isMobile = useIsMobile(599);
 
     const close = () => { setClosing(true); setTimeout(onClose, 180); };
 
@@ -152,19 +154,17 @@ const SupportChat: React.FC<SupportChatProps> = ({ token, currentUserId, isDark 
         : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)';
     const overlayBg = isOled ? 'rgba(0,0,0,0.88)' : dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)';
 
-    const isMobile = window.innerWidth < 600;
     return (
         <div
-            style={{ position: 'fixed', inset: 0, zIndex: 2000, backgroundColor: overlayBg, backdropFilter: 'blur(10px)', display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center' }}
+            style={{ position: 'fixed', inset: 0, zIndex: 2000, backgroundColor: overlayBg, backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'}
             onClick={close}
         >
             <div
-                style={{ backgroundColor: bg, borderRadius: isMobile ? '20px 20px 0 0' : 22, width: isMobile ? '100%' : 480, maxWidth: isMobile ? '100%' : '95vw', height: isMobile ? '92svh' : '82vh', maxHeight: isMobile ? '92svh' : 680, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: shadow, border: 'none', position: 'relative', paddingBottom: isMobile ? 'env(safe-area-inset-bottom, 0px)' : 0 }}
-                className={(closing ? 'modal-exit' : 'modal-enter') + (isMobile ? ' mobile-bottom-sheet' : '')}
+                style={{ backgroundColor: bg, borderRadius: isMobile ? 0 : 22, width: isMobile ? '100%' : 480, maxWidth: isMobile ? '100%' : '95vw', height: isMobile ? '100dvh' : '82vh', maxHeight: isMobile ? '100dvh' : 680, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: shadow, border: 'none', position: 'relative', paddingTop: isMobile ? 'env(safe-area-inset-top, 0px)' : 0, paddingBottom: isMobile ? 'env(safe-area-inset-bottom, 0px)' : 0 }}
+                className={isMobile ? `mobile-fullscreen submodal-panel ${closing ? 'modal-exit' : 'modal-enter'}` : (closing ? 'modal-exit' : 'modal-enter')}
                 onClick={e => e.stopPropagation()}
             >
-                {isMobile && <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px' }}><div style={{ width: 36, height: 4, borderRadius: 2, background: dm ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)' }} /></div>}
                 {/* Header */}
                 <div style={{ background: bg, padding: isMobile ? '8px 16px 10px' : '14px 18px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.06)' : dm ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}` }}>
                     {isMobile && (

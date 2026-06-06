@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { config } from '../config';
 import { useLang } from '../i18n';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 interface MediaFile {
     messageId: number;
@@ -17,8 +18,6 @@ interface ChatMediaPanelProps {
     onClose: () => void;
     onGoToMessage: (messageId: number) => void;
 }
-
-const BASE_URL = config.BASE_URL;
 
 const isImage = (name: string) => /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(name);
 const isVideo = (name: string) => /\.(mp4|webm|ogg|mov|avi|mkv)$/i.test(name);
@@ -96,6 +95,7 @@ const Lightbox: React.FC<{ src: string; filename: string; isVideo: boolean; onCl
 
 const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, onClose, onGoToMessage }) => {
     const { t, lang } = useLang();
+    const isMobile = useIsMobile();
     const [tab, setTab] = useState<'media' | 'audio' | 'files'>('media');
     const [lightbox, setLightbox] = useState<{ src: string; filename: string; isVideo: boolean } | null>(null);
 
@@ -141,9 +141,10 @@ const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, o
     const downloadTitle = lang === 'en' ? 'Download' : 'Скачать';
 
     return (
-        <div style={{
-            position: 'absolute', top: 0, right: 0, bottom: 0, width: 320,
-            background: bg, borderLeft: `1px solid ${border}`,
+        <div className={isMobile ? 'mobile-fullscreen' : undefined} style={{
+            position: isMobile ? 'fixed' : 'absolute', top: 0, right: 0, bottom: 0, left: isMobile ? 0 : undefined, width: isMobile ? '100%' : 320,
+            paddingTop: isMobile ? 'env(safe-area-inset-top)' : undefined, paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : undefined,
+            boxSizing: 'border-box', background: bg, borderLeft: isMobile ? 'none' : `1px solid ${border}`,
             display: 'flex', flexDirection: 'column', zIndex: 50,
             boxShadow: '-4px 0 20px rgba(0,0,0,0.12)',
             animation: 'slideInRight 0.18s ease',
@@ -174,7 +175,7 @@ const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, o
                         ? <div style={{ padding: 32, textAlign: 'center', color: sub, fontSize: 13 }}>{t('No media')}</div>
                         : <div style={{ padding: 10, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
                             {mediaFiles.map((f, i) => {
-                                const src = f.filePath.startsWith('http') ? f.filePath : `${BASE_URL}${f.filePath}`;
+                                const src = config.fileUrl(f.filePath) ?? f.filePath;
                                 const vid = isVideo(f.filename);
                                 return (
                                     <div key={i} style={{ position: 'relative', aspectRatio: '1', borderRadius: 8, overflow: 'hidden', cursor: 'pointer', background: dm ? '#252540' : '#f0f0f8' }}
@@ -206,7 +207,7 @@ const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, o
                         ? <div style={{ padding: 32, textAlign: 'center', color: sub, fontSize: 13 }}>{lang === 'en' ? 'No audio files' : 'Нет аудиофайлов'}</div>
                         : <div style={{ padding: '4px 0' }}>
                             {audioFiles.map((f, i) => {
-                                const src = f.filePath.startsWith('http') ? f.filePath : `${BASE_URL}${f.filePath}`;
+                                const src = config.fileUrl(f.filePath) ?? f.filePath;
                                 return (
                                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: `1px solid ${border}` }}>
                                         <div style={{ width: 38, height: 38, borderRadius: 10, background: dm ? '#252540' : '#ede9fe', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 18, color: '#6366f1' }}>
@@ -233,7 +234,7 @@ const ChatMediaPanel: React.FC<ChatMediaPanelProps> = ({ messages, isDark: dm, o
                         ? <div style={{ padding: 32, textAlign: 'center', color: sub, fontSize: 13 }}>{t('No files')}</div>
                         : <div style={{ padding: '4px 0' }}>
                             {otherFiles.map((f, i) => {
-                                const src = f.filePath.startsWith('http') ? f.filePath : `${BASE_URL}${f.filePath}`;
+                                const src = config.fileUrl(f.filePath) ?? f.filePath;
                                 const ext = f.filename.split('.').pop()?.toUpperCase() || 'FILE';
                                 return (
                                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: `1px solid ${border}` }}>

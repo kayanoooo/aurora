@@ -1,0 +1,34 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+
+title Схема развёртывания мессенджера Aurora (Docker Compose)
+
+node "Сервер (Linux / VDS)" #LightBlue {
+  node "Docker Engine" {
+    package "aurora-server\n(контейнер)" #FFF9E6 {
+      component "Uvicorn ASGI\n:8000" as UV
+      component "FastAPI\nприложение" as FA
+      folder "/app/uploads\n(volume)" as UP
+    }
+    package "aurora-mysql\n(контейнер)" #E8F4E8 {
+      database "MySQL 5.7\n:3306" as DB
+      folder "/var/lib/mysql\n(named volume)" as VOL
+    }
+  }
+  note "docker-compose.yml:\nservices: server, mysql\nnetwork: aurora_net (bridge)" as N
+}
+
+cloud "Internet" {
+  [Клиентские\nприложения] as CLI
+  cloud "Cloudinary CDN" as CDN
+}
+
+CLI --> UV : HTTPS :443\n(reverse proxy)\nWebSocket wss://
+UV --> FA : ASGI
+FA --> DB : aiomysql\npool 5–20 conn
+DB --> VOL : персистентность
+FA --> CDN : cloudinary.uploader\n.upload()
+FA --> UP : fallback\nfs.write()
+@enduml

@@ -5,8 +5,7 @@ import { Group, GroupMember, User } from '../types';
 import { config } from '../config';
 import { useLang } from '../i18n';
 import AvatarCropper from './AvatarCropper';
-
-const BASE_URL = config.BASE_URL;
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 const formatMembers = (n: number, type: 'member' | 'subscriber' = 'member', lang = 'ru'): string => {
     if (lang === 'en') {
@@ -76,6 +75,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
     const [confirm, setConfirm] = useState<{ message: string; onConfirm: () => void } | null>(null);
     const [saveError, setSaveError] = useState('');
     const fileRef = useRef<HTMLInputElement>(null);
+    const isMobile = useIsMobile();
 
     // Channel-specific state
     const [showMembersModal, setShowMembersModal] = useState(false);
@@ -277,7 +277,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
     const { imgs, vids, auds, files } = useMemo(() => {
         const i: any[] = [], v: any[] = [], a: any[] = [], f: any[] = [];
         const add = (fp: string, fn: string, fs: number | undefined, mid: number) => {
-            const src = fp.startsWith('http') ? fp : `${BASE_URL}${fp}`;
+            const src = config.fileUrl(fp) ?? fp;
             const item = { src, filename: fn, fileSize: fs, messageId: mid };
             if (isImg(fn)) i.push(item);
             else if (isVid(fn)) v.push(item);
@@ -376,8 +376,8 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
     );
 
     const channelSubModal = (title: string, onCloseModal: () => void, children: React.ReactNode) => ReactDOM.createPortal(
-        <div onClick={onCloseModal} className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 1500, backgroundColor: isOled ? 'rgba(0,0,0,0.88)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.45)'), backdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div onClick={e => e.stopPropagation()} className="modal-enter" style={{ background: isOled ? '#08080f' : bg, borderRadius: 22, width: 440, maxWidth: '94vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.12), 0 24px 60px rgba(0,0,0,0.98)' : dm ? '0 0 60px rgba(99,102,241,0.2), 0 24px 80px rgba(0,0,0,0.8)' : '0 0 40px rgba(99,102,241,0.1), 0 20px 60px rgba(0,0,0,0.12)', border: isOled ? '1px solid rgba(167,139,250,0.12)' : `1px solid ${border}`, overflow: 'hidden' }}>
+        <div onClick={onCloseModal} className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 4500, backgroundColor: isOled ? 'rgba(0,0,0,0.88)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.45)'), backdropFilter: 'blur(12px)', display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center' }}>
+            <div onClick={e => e.stopPropagation()} className={`modal-enter${isMobile ? ' mobile-fullscreen' : ''}`} style={{ background: isOled ? '#000000' : bg, borderRadius: isMobile ? 0 : 22, width: isMobile ? '100%' : 440, maxWidth: isMobile ? 'none' : '94vw', height: isMobile ? '100dvh' : undefined, maxHeight: isMobile ? '100dvh' : '85vh', paddingTop: isMobile ? 'env(safe-area-inset-top)' : undefined, paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : undefined, display: 'flex', flexDirection: 'column', boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.12), 0 24px 60px rgba(0,0,0,0.98)' : dm ? '0 0 60px rgba(99,102,241,0.2), 0 24px 80px rgba(0,0,0,0.8)' : '0 0 40px rgba(99,102,241,0.1), 0 20px 60px rgba(0,0,0,0.12)', border: isMobile ? 'none' : isOled ? '1px solid rgba(167,139,250,0.12)' : `1px solid ${border}`, overflow: 'hidden' }}>
                 <div style={{ padding: '16px 20px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span style={{ fontSize: 17, fontWeight: 700, color: dm ? '#f1f5f9' : '#1e1b4b', letterSpacing: '-0.2px' }}>{title}</span>
                     <button onClick={onCloseModal} style={{ width: 28, height: 28, background: isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', border: 'none', borderRadius: '50%', cursor: 'pointer', color: dm ? '#6060a0' : '#9ca3af', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15 }}>✕</button>
@@ -390,8 +390,6 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
         document.body
     );
 
-    const isMobile = window.innerWidth <= 768;
-
     // ── Mobile fullscreen layout ────────────────────────────────────────────────
     if (isMobile) {
         const collapseMedia = () => { setMediaClosing(true); setTimeout(() => { setMediaExpanded(false); setMediaClosing(false); }, 220); };
@@ -403,8 +401,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
                 className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'} onClick={close} />
 
             {/* Profile screen */}
-            <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, top: 0, zIndex: 3001, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-                className={closing ? 'mobile-profile-exit' : 'mobile-profile-enter'}
+            <div className={`mobile-safe-screen ${closing ? 'mobile-profile-exit' : 'mobile-profile-enter'}`} style={{ position: 'fixed', left: 0, right: 0, bottom: 0, top: 0, zIndex: 3001, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
                 onClick={e => e.stopPropagation()}>
                 {/* Top bar */}
                 <div style={{ display: 'flex', alignItems: 'center', padding: "14px 16px 10px", gap: 10, flexShrink: 0 }}>
@@ -467,8 +464,8 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
 
             {/* Settings / edit panel — slides from right */}
             {editing && (
-                <div style={{ position: 'fixed', inset: 0, zIndex: 3002, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-                    className="mobile-media-enter" onClick={e => e.stopPropagation()}>
+                <div className="mobile-safe-screen mobile-media-enter" style={{ position: 'fixed', inset: 0, zIndex: 3002, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+                    onClick={e => e.stopPropagation()}>
                     <div style={{ display: 'flex', alignItems: 'center', padding: "14px 16px 10px", gap: 10, flexShrink: 0 }}>
                         <button onClick={() => setEditing(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: 4, display: 'flex', alignItems: 'center' }}>
                             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -569,8 +566,8 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
 
             {/* Group settings panel — slides from right */}
             {groupSettings && !isChannel && (
-                <div style={{ position: 'fixed', inset: 0, zIndex: 3002, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-                    className="mobile-media-enter" onClick={e => e.stopPropagation()}>
+                <div className="mobile-safe-screen mobile-media-enter" style={{ position: 'fixed', inset: 0, zIndex: 3002, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+                    onClick={e => e.stopPropagation()}>
                     <div style={{ display: 'flex', alignItems: 'center', padding: '14px 16px 10px', gap: 10, flexShrink: 0 }}>
                         <button onClick={() => setGroupSettings(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: 4, display: 'flex', alignItems: 'center' }}>
                             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -632,8 +629,8 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
 
             {/* Stats panel */}
             {showStats && (
-                <div style={{ position: 'fixed', inset: 0, zIndex: 3003, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-                    className="mobile-media-enter" onClick={e => e.stopPropagation()}>
+                <div className="mobile-safe-screen mobile-media-enter" style={{ position: 'fixed', inset: 0, zIndex: 3003, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+                    onClick={e => e.stopPropagation()}>
                     {/* Header */}
                     <div style={{ display: 'flex', alignItems: 'center', padding: '14px 16px 10px', gap: 10, flexShrink: 0, borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.08)'}` }}>
                         <button onClick={() => setShowStats(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: 4, display: 'flex', alignItems: 'center' }}>
@@ -731,8 +728,8 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
 
             {/* Participants slide */}
             {membersSlide && (
-                <div style={{ position: 'fixed', inset: 0, zIndex: 3003, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-                    className="mobile-media-enter" onClick={e => e.stopPropagation()}>
+                <div className="mobile-safe-screen mobile-media-enter" style={{ position: 'fixed', inset: 0, zIndex: 3003, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+                    onClick={e => e.stopPropagation()}>
                     <div style={{ display: 'flex', alignItems: 'center', padding: "14px 16px 10px", gap: 10, flexShrink: 0 }}>
                         <button onClick={() => setMembersSlide(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: 4, display: 'flex', alignItems: 'center' }}>
                             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -790,8 +787,7 @@ const GroupInfo: React.FC<GroupInfoProps> = ({
 
             {/* Media panel — fullscreen slide from right */}
             {mediaExpanded && (
-                <div style={{ position: 'fixed', inset: 0, zIndex: 3002, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-                    className={mediaClosing ? 'mobile-media-exit' : 'mobile-media-enter'}
+                <div className={`mobile-safe-screen ${mediaClosing ? 'mobile-media-exit' : 'mobile-media-enter'}`} style={{ position: 'fixed', inset: 0, zIndex: 3002, backgroundColor: bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
                     onClick={e => e.stopPropagation()}>
                     <div style={{ display: 'flex', alignItems: 'center', padding: "14px 16px 10px", gap: 10, flexShrink: 0 }}>
                         <button onClick={collapseMedia} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: 4, display: 'flex', alignItems: 'center' }}>

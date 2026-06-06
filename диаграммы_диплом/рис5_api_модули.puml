@@ -1,0 +1,64 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam defaultFontSize 10
+skinparam classBackgroundColor #F8F9FA
+skinparam classBorderColor #AAAAAA
+
+title Структура REST API и WebSocket мессенджера Aurora
+
+package "Аутентификация и пользователи" #E3F2FD {
+  class "POST /api/register" << (E,#90CAF9) >>
+  class "POST /api/setup" << (E,#90CAF9) >>
+  class "POST /api/login" << (E,#90CAF9) >>
+  class "GET /api/sessions" << (E,#90CAF9) >>
+  class "DELETE /api/sessions/{id}" << (E,#90CAF9) >>
+  class "POST /api/auth/send-register-code" << (E,#90CAF9) >>
+  class "POST /api/auth/send-reset-code" << (E,#90CAF9) >>
+  class "POST /api/auth/confirm-reset" << (E,#90CAF9) >>
+}
+
+package "Профиль и поиск" #E8F5E9 {
+  class "GET /api/profile" << (E,#A5D6A7) >>
+  class "PUT /api/profile" << (E,#A5D6A7) >>
+  class "POST /api/profile/avatar" << (E,#A5D6A7) >>
+  class "GET /api/users/find?tag=" << (E,#A5D6A7) >>
+  class "GET /api/users/search?q=" << (E,#A5D6A7) >>
+  class "GET /api/users/recent" << (E,#A5D6A7) >>
+  class "POST /api/block/{user_id}" << (E,#A5D6A7) >>
+}
+
+package "Группы и каналы" #FFF3E0 {
+  class "POST /api/groups" << (E,#FFCC80) >>
+  class "GET /api/groups/{id}" << (E,#FFCC80) >>
+  class "PUT /api/groups/{id}" << (E,#FFCC80) >>
+  class "POST /api/channels" << (E,#FFCC80) >>
+  class "GET /api/channels/search" << (E,#FFCC80) >>
+  class "POST /api/groups/{id}/invite-link" << (E,#FFCC80) >>
+  class "PUT /api/groups/{id}/members/{uid}/role" << (E,#FFCC80) >>
+}
+
+package "Медиа и файлы" #FCE4EC {
+  class "POST /api/upload" << (E,#F48FB1) >>
+  class "GET /files/{filename}" << (E,#F48FB1) >>
+  class "GET /files/download/{msg_id}" << (E,#F48FB1) >>
+  class "GET /files/group/download/{id}" << (E,#F48FB1) >>
+}
+
+package "Расширенные возможности" #EDE7F6 {
+  class "POST /api/polls" << (E,#CE93D8) >>
+  class "POST /api/messages/schedule" << (E,#CE93D8) >>
+  class "POST /api/playlists" << (E,#CE93D8) >>
+  class "POST /api/support/send" << (E,#CE93D8) >>
+  class "GET /api/admin/stats" << (E,#CE93D8) >>
+}
+
+package "WebSocket /ws" #F1F8E9 {
+  class "message" << (W,#AED581) >>
+  class "group_message" << (W,#AED581) >>
+  class "typing / stop_typing" << (W,#AED581) >>
+  class "read / edit / delete" << (W,#AED581) >>
+  class "react" << (W,#AED581) >>
+  class "call_offer / call_answer" << (W,#AED581) >>
+}
+@enduml

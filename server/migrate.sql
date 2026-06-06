@@ -157,6 +157,24 @@ CREATE TABLE IF NOT EXISTS `user_tags` (
 
 -- -------------------------------------------------------
 
+CREATE TABLE IF NOT EXISTS `push_tokens` (
+    `id`          INT          NOT NULL AUTO_INCREMENT,
+    `user_id`     INT          NOT NULL,
+    `push_token`  VARCHAR(512) NOT NULL,
+    `platform`    VARCHAR(32)  DEFAULT NULL,
+    `device_id`   VARCHAR(64)  DEFAULT NULL,
+    `enabled`     TINYINT(1)   NOT NULL DEFAULT 1,
+    `last_seen`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_push_token` (`push_token`),
+    KEY `idx_push_user` (`user_id`),
+    KEY `idx_push_device` (`user_id`, `device_id`),
+    CONSTRAINT `fk_push_tokens_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS `chat_folders` (
     `id`       INT         NOT NULL AUTO_INCREMENT,
     `user_id`  INT         NOT NULL,

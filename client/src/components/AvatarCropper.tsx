@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useViewportSize } from '../hooks/useMediaQuery';
 
 interface AvatarCropperProps {
     src: string;
@@ -8,11 +9,10 @@ interface AvatarCropperProps {
     outputSize?: number; // size of the output square in px
 }
 
-// display size of the crop area — shrinks on narrow screens
-const CONTAINER = Math.min(300, typeof window !== 'undefined' ? window.innerWidth - 80 : 300);
-
 const AvatarCropper: React.FC<AvatarCropperProps> = ({ src, isDark = false, onApply, onCancel, outputSize = 512 }) => {
     const dm = isDark;
+    const viewport = useViewportSize();
+    const container = Math.max(180, Math.min(300, viewport.width - 80, viewport.height - 300));
     const imgRef = useRef<HTMLImageElement>(null);
     const [scale, setScale] = useState(1);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -24,25 +24,25 @@ const AvatarCropper: React.FC<AvatarCropperProps> = ({ src, isDark = false, onAp
     const minScale = useCallback(() => {
         const img = imgRef.current;
         if (!img || !img.naturalWidth) return 1;
-        return Math.max(CONTAINER / img.naturalWidth, CONTAINER / img.naturalHeight);
-    }, [imgLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+        return Math.max(container / img.naturalWidth, container / img.naturalHeight);
+    }, [imgLoaded, container]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const clamp = useCallback((ox: number, oy: number, sc: number): { x: number; y: number } => {
         const img = imgRef.current;
         if (!img) return { x: ox, y: oy };
         const rendW = img.naturalWidth * sc;
         const rendH = img.naturalHeight * sc;
-        const maxX = Math.max(0, (rendW - CONTAINER) / 2);
-        const maxY = Math.max(0, (rendH - CONTAINER) / 2);
+        const maxX = Math.max(0, (rendW - container) / 2);
+        const maxY = Math.max(0, (rendH - container) / 2);
         return {
             x: Math.min(maxX, Math.max(-maxX, ox)),
             y: Math.min(maxY, Math.max(-maxY, oy)),
         };
-    }, []);
+    }, [container]);
 
     const onImgLoad = () => {
         const img = imgRef.current!;
-        const sc = Math.max(CONTAINER / img.naturalWidth, CONTAINER / img.naturalHeight);
+        const sc = Math.max(container / img.naturalWidth, container / img.naturalHeight);
         setScale(sc);
         setOffset({ x: 0, y: 0 });
         setImgLoaded(true);
@@ -124,8 +124,8 @@ const AvatarCropper: React.FC<AvatarCropperProps> = ({ src, isDark = false, onAp
         // Compute source rect in natural image coords
         // Image is centered in container, shifted by offset
         // offset.x > 0 means image moved right → we see more of the left side
-        const srcW = CONTAINER / scale;
-        const srcH = CONTAINER / scale;
+        const srcW = container / scale;
+        const srcH = container / scale;
         const srcX = img.naturalWidth / 2 - offset.x / scale - srcW / 2;
         const srcY = img.naturalHeight / 2 - offset.y / scale - srcH / 2;
 
@@ -161,7 +161,7 @@ const AvatarCropper: React.FC<AvatarCropperProps> = ({ src, isDark = false, onAp
 
                 {/* Crop viewport */}
                 <div
-                    style={{ width: CONTAINER, height: CONTAINER, borderRadius: '50%', overflow: 'hidden', position: 'relative', cursor: isDragging.current ? 'grabbing' : 'grab', border: `3px solid ${dm ? '#6366f1' : '#a5b4fc'}`, boxShadow: `0 0 0 4px ${dm ? 'rgba(99,102,241,0.2)' : 'rgba(99,102,241,0.12)'}`, flexShrink: 0, background: dm ? '#0f0f1a' : '#f0eeff', userSelect: 'none' }}
+                    style={{ width: container, height: container, borderRadius: '50%', overflow: 'hidden', position: 'relative', cursor: isDragging.current ? 'grabbing' : 'grab', border: `3px solid ${dm ? '#6366f1' : '#a5b4fc'}`, boxShadow: `0 0 0 4px ${dm ? 'rgba(99,102,241,0.2)' : 'rgba(99,102,241,0.12)'}`, flexShrink: 0, background: dm ? '#0f0f1a' : '#f0eeff', userSelect: 'none' }}
                     onMouseDown={handleMouseDown}
                     onWheel={handleWheel}
                     onTouchStart={handleTouchStart}
@@ -187,8 +187,8 @@ const AvatarCropper: React.FC<AvatarCropperProps> = ({ src, isDark = false, onAp
                                 position: 'absolute',
                                 width: imgRef.current.naturalWidth * scale,
                                 height: imgRef.current.naturalHeight * scale,
-                                left: (CONTAINER - imgRef.current.naturalWidth * scale) / 2 + offset.x,
-                                top: (CONTAINER - imgRef.current.naturalHeight * scale) / 2 + offset.y,
+                                left: (container - imgRef.current.naturalWidth * scale) / 2 + offset.x,
+                                top: (container - imgRef.current.naturalHeight * scale) / 2 + offset.y,
                                 pointerEvents: 'none',
                             }}
                         />

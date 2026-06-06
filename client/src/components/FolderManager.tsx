@@ -21,29 +21,43 @@ interface FolderManagerProps {
     onClose: () => void;
     onBack?: () => void;
     onFoldersChange: (folders: ChatFolder[]) => void;
+    initialFolderId?: number | null;
 }
 
 const COLORS = ['#6366f1','#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6'];
 
+const isMobileScreen = () => {
+    const coarsePointer = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+    return window.innerWidth < 600
+        || (coarsePointer && Math.min(window.innerWidth, window.innerHeight) < 600 && Math.max(window.innerWidth, window.innerHeight) <= 1180);
+};
+
 const FolderManager: React.FC<FolderManagerProps> = ({
-    token, folders, users, groups, isDark: dm, baseUrl, onClose, onBack, onFoldersChange,
+    token, folders, users, groups, isDark: dm, baseUrl, onClose, onBack, onFoldersChange, initialFolderId,
 }) => {
     const { t } = useLang();
-    const [selectedId, setSelectedId] = useState<number | null>(folders[0]?.id ?? null);
+    const [selectedId, setSelectedId] = useState<number | null>(initialFolderId ?? folders[0]?.id ?? null);
     const [newName, setNewName] = useState('');
     const [newColor, setNewColor] = useState('#6366f1');
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editingName, setEditingName] = useState('');
     const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
     const [closing, setClosing] = useState(false);
-    const [isMobile, setIsMobile] = useState(window.innerWidth < 600);
-    const [mobileView, setMobileView] = useState<'folders' | 'chats'>('folders');
+    const [isMobile, setIsMobile] = useState(isMobileScreen);
+    const [mobileView, setMobileView] = useState<'folders' | 'chats'>(initialFolderId ? 'chats' : 'folders');
     const nameRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
-        const onResize = () => setIsMobile(window.innerWidth < 600);
+        const onResize = () => setIsMobile(isMobileScreen());
+        const pointerMedia = typeof window.matchMedia === 'function' ? window.matchMedia('(pointer: coarse)') : null;
         window.addEventListener('resize', onResize);
-        return () => window.removeEventListener('resize', onResize);
+        window.visualViewport?.addEventListener('resize', onResize);
+        pointerMedia?.addEventListener('change', onResize);
+        return () => {
+            window.removeEventListener('resize', onResize);
+            window.visualViewport?.removeEventListener('resize', onResize);
+            pointerMedia?.removeEventListener('change', onResize);
+        };
     }, []);
 
     const isOled = dm && document.body.classList.contains('oled-theme');
@@ -151,11 +165,7 @@ const FolderManager: React.FC<FolderManagerProps> = ({
                                 {f.name}
                             </span>
                         )}
-                        {isMobile && <span style={{ fontSize: 11, color: sub }}>{f.chats.length}</span>}
-                        <button
-                            onClick={e => { e.stopPropagation(); setConfirmDeleteId(f.id); }}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: sub, padding: '2px 4px', opacity: 0.5, lineHeight: 1, fontSize: 14 }}
-                        >✕</button>
+                        <span style={{ fontSize: 11, color: sub }}>{f.chats.length}</span>
                     </div>
                 ))}
             </div>
@@ -284,18 +294,15 @@ const FolderManager: React.FC<FolderManagerProps> = ({
     return (
         <>
         <div
-            style={{ position: 'fixed', inset: 0, zIndex: 3000, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center' }}
+            style={{ position: 'fixed', inset: 0, zIndex: 3000, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'}
             onClick={close}
         >
             <div
-                style={{ background: bg, borderRadius: isMobile ? '20px 20px 0 0' : 18, width: isMobile ? '100%' : 560, maxHeight: isMobile ? '92svh' : '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.28), 0 30px 80px rgba(0,0,0,0.95)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 30px 80px rgba(0,0,0,0.65)' : '0 0 40px rgba(99,102,241,0.13), 0 20px 60px rgba(0,0,0,0.12)', paddingBottom: isMobile ? 'env(safe-area-inset-bottom, 0px)' : 0 }}
-                className={(closing ? 'modal-exit' : 'modal-enter') + (isMobile ? ' mobile-bottom-sheet' : '')}
+                style={{ background: bg, borderRadius: isMobile ? 0 : 18, width: isMobile ? '100%' : 560, height: isMobile ? '100dvh' : undefined, maxHeight: isMobile ? '100dvh' : '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.28), 0 30px 80px rgba(0,0,0,0.95)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 30px 80px rgba(0,0,0,0.65)' : '0 0 40px rgba(99,102,241,0.13), 0 20px 60px rgba(0,0,0,0.12)', paddingTop: isMobile ? 'env(safe-area-inset-top, 0px)' : 0, paddingBottom: isMobile ? 'env(safe-area-inset-bottom, 0px)' : 0 }}
+                className={isMobile ? `mobile-fullscreen submodal-panel ${closing ? 'modal-exit' : 'modal-enter'}` : (closing ? 'modal-exit' : 'modal-enter')}
                 onClick={e => e.stopPropagation()}
             >
-                {/* Drag handle */}
-                {isMobile && <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px' }}><div style={{ width: 36, height: 4, borderRadius: 2, background: dm ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.1)' }} /></div>}
-
                 {/* Header — matches SubModal style */}
                 <div style={{ padding: isMobile ? '8px 16px 10px' : '16px 20px', display: 'flex', alignItems: 'center', gap: 8 }}>
                     {isMobile && (

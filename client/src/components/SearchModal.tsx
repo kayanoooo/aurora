@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { config } from '../config';
 import { useLang } from '../i18n';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 interface SearchResult {
     id: number;
@@ -91,7 +92,7 @@ const SearchModal: React.FC<SearchModalProps> = ({
     const textCol = dm ? '#e2e8f0' : '#1e1b4b';
     const subCol = isOled ? '#7c6aaa' : dm ? '#7c7caa' : '#6b7280';
     const accent = isOled ? '#a78bfa' : '#6366f1';
-    const isMobile = window.innerWidth < 600;
+    const isMobile = useIsMobile(599);
     const glow = isOled
         ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)'
         : dm
@@ -117,7 +118,7 @@ const SearchModal: React.FC<SearchModalProps> = ({
         >
             <div
                 style={panelStyle}
-                className={(closing ? 'modal-exit' : 'modal-enter') + (isMobile ? ' mobile-bottom-sheet' : '')}
+                className={(closing ? 'modal-exit' : 'modal-enter') + (isMobile ? ' mobile-fullscreen' : '')}
                 onClick={e => e.stopPropagation()}
             >
                 {isMobile && <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px', flexShrink: 0 }}><div style={{ width: 36, height: 4, borderRadius: 2, background: dm ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)' }} /></div>}

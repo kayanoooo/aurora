@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useLang } from '../i18n';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 interface PollCreatorProps {
     isDark?: boolean;
@@ -10,6 +11,7 @@ interface PollCreatorProps {
 const PollCreator: React.FC<PollCreatorProps> = ({ isDark = false, onClose, onCreate }) => {
     const dm = isDark;
     const { lang } = useLang();
+    const isMobile = useIsMobile();
     const [question, setQuestion] = useState('');
     const [options, setOptions] = useState(['', '']);
     const [isAnonymous, setIsAnonymous] = useState(false);
@@ -17,7 +19,7 @@ const PollCreator: React.FC<PollCreatorProps> = ({ isDark = false, onClose, onCr
     const [closing, setClosing] = useState(false);
 
     const isOled = dm && document.body.classList.contains('oled-theme');
-    const bg = isOled ? '#08080f' : dm ? '#1a1a2e' : 'white';
+    const bg = isOled ? '#000000' : dm ? '#1a1a2e' : 'white';
     const border = isOled ? 'rgba(167,139,250,0.15)' : dm ? 'rgba(99,102,241,0.22)' : '#ede9fe';
     const inputBg = isOled ? '#050508' : dm ? '#12122a' : '#f9fafb';
     const textColor = isOled ? '#e2e0ff' : dm ? '#e2e8f0' : '#1e1b4b';
@@ -47,8 +49,8 @@ const PollCreator: React.FC<PollCreatorProps> = ({ isDark = false, onClose, onCr
     );
 
     return (
-        <div className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 5000, background: isOled ? 'rgba(0,0,0,0.88)' : 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={close}>
-            <div className={closing ? 'modal-exit' : 'modal-enter'} style={{ background: bg, borderRadius: 20, width: 400, maxWidth: '95vw', maxHeight: '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.12), 0 24px 60px rgba(0,0,0,0.98)' : dm ? '0 0 40px rgba(99,102,241,0.25), 0 30px 80px rgba(0,0,0,0.7)' : '0 20px 60px rgba(0,0,0,0.14)', border: `1px solid ${border}` }} onClick={e => e.stopPropagation()}>
+        <div className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 5000, background: isOled ? 'rgba(0,0,0,0.88)' : 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: isMobile ? 'stretch' : 'center', justifyContent: 'center' }} onClick={close}>
+            <div className={`${isMobile ? 'mobile-fullscreen ' : ''}${closing ? 'modal-exit' : 'modal-enter'}`} style={{ background: bg, borderRadius: isMobile ? 0 : 20, width: isMobile ? '100%' : 400, maxWidth: isMobile ? 'none' : '95vw', height: isMobile ? '100dvh' : undefined, maxHeight: isMobile ? '100dvh' : '88vh', paddingTop: isMobile ? 'env(safe-area-inset-top)' : undefined, paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : undefined, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.12), 0 24px 60px rgba(0,0,0,0.98)' : dm ? '0 0 40px rgba(99,102,241,0.25), 0 30px 80px rgba(0,0,0,0.7)' : '0 20px 60px rgba(0,0,0,0.14)', border: isMobile ? 'none' : `1px solid ${border}` }} onClick={e => e.stopPropagation()}>
                 <div style={{ padding: '18px 20px 14px', display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'space-between', flexShrink: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <div style={{ width: 32, height: 32, borderRadius: 10, background: isOled ? 'rgba(167,139,250,0.12)' : dm ? 'rgba(99,102,241,0.12)' : '#ede9fe', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>

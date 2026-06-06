@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { api } from '../services/api';
 import { config } from '../config';
 import { useLang } from '../i18n';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 interface InviteToGroupModalProps {
     token: string;
@@ -14,6 +15,7 @@ interface InviteToGroupModalProps {
 
 const InviteToGroupModal: React.FC<InviteToGroupModalProps> = ({ token, groupId, groupName, isDark = false, onClose, onInvited }) => {
     const { t, lang } = useLang();
+    const isMobile = useIsMobile();
     const dm = isDark;
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<any[]>([]);
@@ -69,8 +71,8 @@ const InviteToGroupModal: React.FC<InviteToGroupModalProps> = ({ token, groupId,
     };
 
     return (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'} onClick={close}>
-            <div style={{ background: bg, borderRadius: 20, width: 420, maxWidth: '92vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 24px 70px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 20px 60px rgba(0,0,0,0.15)' }} className={closing ? 'modal-exit' : 'modal-enter'} onClick={e => e.stopPropagation()}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center' }} className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'} onClick={close}>
+            <div style={{ background: bg, borderRadius: isMobile ? 0 : 20, width: isMobile ? '100%' : 420, maxWidth: isMobile ? 'none' : '92vw', height: isMobile ? '100dvh' : undefined, maxHeight: isMobile ? '100dvh' : '80vh', paddingTop: isMobile ? 'env(safe-area-inset-top)' : undefined, paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : undefined, display: 'flex', flexDirection: 'column', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 24px 70px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 20px 60px rgba(0,0,0,0.15)' }} className={`${isMobile ? 'mobile-fullscreen ' : ''}${closing ? 'modal-exit' : 'modal-enter'}`} onClick={e => e.stopPropagation()}>
                 <div style={{ padding: '18px 20px 14px', background: cardBg, boxShadow: hdrShadow, flexShrink: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                         <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: textColor }}>{t('Invite to group')}</h3>
@@ -80,7 +82,7 @@ const InviteToGroupModal: React.FC<InviteToGroupModalProps> = ({ token, groupId,
                 </div>
                 <div style={{ padding: '12px 16px 14px', background: cardBg, boxShadow: hdrShadow, flexShrink: 0 }}>
                     <input
-                        autoFocus
+                        autoFocus={!isMobile}
                         type="text"
                         placeholder={lang === 'en' ? '@tag of user' : '@тег пользователя'}
                         value={query}

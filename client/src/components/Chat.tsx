@@ -13,24 +13,48 @@ import PollMessage from './PollMessage';
 import { useLang } from '../i18n';
 import { config } from '../config';
 import { getOrCreateKeyPair, getOwnPublicKey, decryptMessage, isEncryptedMessage, cachePublicKey, getCachedPublicKey } from '../services/cryptoService';
+import { setAuroraAppBadge } from '../services/mobileApp';
+import { clearAuroraMediaSession, updateAuroraMediaSession } from '../services/mediaSession';
 import MediaPlayer, { MiniPlayer, Track, MediaStateChange, Playlist, PlaylistBubble, PlaylistShareData, parsePlaylistMsg, PLAYLIST_MSG_PREFIX } from './MediaPlayer';
 import { useCall } from '../hooks/useCall';
+import { useIsMobile } from '../hooks/useMediaQuery';
 import CallOverlay from './CallOverlay';
 
-// Lazily loaded heavy modals — not needed until user opens them
-const GroupInfo      = lazy(() => import('./GroupInfo'));
-const SettingsModal  = lazy(() => import('./SettingsModal'));
-const SearchModal    = lazy(() => import('./SearchModal'));
-const UserProfileModal = lazy(() => import('./UserProfileModal'));
-const FolderManager  = lazy(() => import('./FolderManager'));
-const HelpModal      = lazy(() => import('./HelpModal'));
-const SupportChat    = lazy(() => import('./SupportChat'));
-const AdminPanel     = lazy(() => import('./AdminPanel'));
-const ChatMediaPanel = lazy(() => import('./ChatMediaPanel'));
-const LocationPicker = lazy(() => import('./LocationPicker'));
-const ContactPicker  = lazy(() => import('./ContactPicker'));
+const lazyWithChunkReload = <T extends React.ComponentType<any>>(
+    importer: () => Promise<{ default: T }>,
+    key: string,
+) => lazy(async () => {
+    try {
+        const module = await importer();
+        sessionStorage.removeItem(`aurora_chunk_reload_${key}`);
+        return module;
+    } catch (error) {
+        const reloadKey = `aurora_chunk_reload_${key}`;
+        const isChunkLoadError = error instanceof Error
+            && /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module/i.test(`${error.name} ${error.message}`);
 
-const BASE_URL = config.BASE_URL;
+        if (isChunkLoadError && !sessionStorage.getItem(reloadKey)) {
+            sessionStorage.setItem(reloadKey, '1');
+            window.location.reload();
+            return new Promise<{ default: T }>(() => {});
+        }
+        throw error;
+    }
+});
+
+// Lazily loaded heavy modals — not needed until user opens them
+const GroupInfo       = lazyWithChunkReload(() => import('./GroupInfo'), 'group_info');
+const SettingsModal   = lazyWithChunkReload(() => import('./SettingsModal'), 'settings');
+const ProfileSubModal = lazyWithChunkReload(() => import('./SettingsModal').then(m => ({ default: m.ProfileSubModal })), 'profile_settings');
+const SearchModal     = lazyWithChunkReload(() => import('./SearchModal'), 'search');
+const UserProfileModal = lazyWithChunkReload(() => import('./UserProfileModal'), 'user_profile');
+const FolderManager   = lazyWithChunkReload(() => import('./FolderManager'), 'folders');
+const HelpModal       = lazyWithChunkReload(() => import('./HelpModal'), 'help');
+const SupportChat     = lazyWithChunkReload(() => import('./SupportChat'), 'support');
+const AdminPanel      = lazyWithChunkReload(() => import('./AdminPanel'), 'admin');
+const ChatMediaPanel  = lazyWithChunkReload(() => import('./ChatMediaPanel'), 'chat_media');
+const LocationPicker  = lazyWithChunkReload(() => import('./LocationPicker'), 'location');
+const ContactPicker   = lazyWithChunkReload(() => import('./ContactPicker'), 'contacts');
 
 const formatMembers = (n: number, type: 'member' | 'subscriber' = 'member', lang = 'ru'): string => {
     if (lang === 'en') {
@@ -200,12 +224,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const { callInfo, startCall, acceptCall, rejectCall, endCall, toggleMute: callToggleMute, toggleCamera: callToggleCamera } = useCall();
     const callConnectedAtRef = useRef<number | null>(null);
     const callPeerIdRef = useRef<number | null>(null);
-    const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
-    useEffect(() => {
-        const handler = () => setIsMobile(window.innerWidth <= 768);
-        window.addEventListener('resize', handler);
-        return () => window.removeEventListener('resize', handler);
-    }, []);
+    const isMobile = useIsMobile();
     useEffect(() => { api.getServerInfo().then(r => { if (r) setServerInfo(r); }); }, []);
 
     // Global keyboard shortcuts
@@ -337,6 +356,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [showGroupInfo, setShowGroupInfo] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
+    const [mobileTab, setMobileTab] = useState<'chats' | 'settings' | 'profile'>('chats');
+    const mobileTabRef = useRef(mobileTab);
+    const [mobileEditProfile, setMobileEditProfile] = useState(false);
+    const [currentUserPhone, setCurrentUserPhone] = useState('');
+    const [currentUserBirthday, setCurrentUserBirthday] = useState('');
     const [showHelp, setShowHelp] = useState(false);
     const [showSupportChat, setShowSupportChat] = useState(false);
     const [showAdminPanel, setShowAdminPanel] = useState(false);
@@ -411,8 +435,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
     const [typingChats, setTypingChats] = useState<Record<string, string>>({});
     const typingChatsTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-    const [recentUsers, setRecentUsers] = useState<User[]>([]);
     const [selectionMode, setSelectionMode] = useState(false);
+    const selectionModeRef = useRef(false);
     const [selectedMsgIds, setSelectedMsgIds] = useState<Set<number>>(new Set());
     const [forwardingMessages, setForwardingMessages] = useState<any[] | null>(null);
     const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
@@ -462,7 +486,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [sidebarMsgResults, setSidebarMsgResults] = useState<any[]>([]);
     const [sidebarChannelResults, setSidebarChannelResults] = useState<any[]>([]);
     const [sidebarSearchLoading, setSidebarSearchLoading] = useState(false);
+    const sidebarSearchInputRef = useRef<HTMLInputElement | null>(null);
     const sidebarSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const sidebarSearchBlurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const sidebarSearchDismissUntilRef = useRef(0);
 
     const sidebarLocalMatches = React.useMemo(() => {
         const q = sidebarSearchQuery.trim().toLowerCase();
@@ -483,6 +510,33 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             return next;
         });
     };
+
+    const closeSidebarSearch = useCallback((consumeNextPointer = false) => {
+        if (sidebarSearchBlurTimerRef.current) {
+            clearTimeout(sidebarSearchBlurTimerRef.current);
+            sidebarSearchBlurTimerRef.current = null;
+        }
+        if (sidebarSearchTimerRef.current) {
+            clearTimeout(sidebarSearchTimerRef.current);
+            sidebarSearchTimerRef.current = null;
+        }
+        setSidebarSearchFocused(false);
+        setSidebarSearchLoading(false);
+        if (consumeNextPointer) sidebarSearchDismissUntilRef.current = Date.now() + 320;
+        sidebarSearchInputRef.current?.blur();
+    }, []);
+
+    const stopSearchBackdropEvent = useCallback((e: React.SyntheticEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        (e.nativeEvent as Event & { stopImmediatePropagation?: () => void }).stopImmediatePropagation?.();
+        closeSidebarSearch(true);
+    }, [closeSidebarSearch]);
+
+    useEffect(() => () => {
+        if (sidebarSearchTimerRef.current) clearTimeout(sidebarSearchTimerRef.current);
+        if (sidebarSearchBlurTimerRef.current) clearTimeout(sidebarSearchBlurTimerRef.current);
+    }, []);
 
     // Inline message edit
     const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
@@ -533,8 +587,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const [folders, setFolders] = useState<ChatFolder[]>([]);
     const [activeFolder, setActiveFolder] = useState<number | null>(null); // null = all chats
     const [showFolderManager, setShowFolderManager] = useState(false);
+    const [folderManagerInitialId, setFolderManagerInitialId] = useState<number | null>(null);
+    const [folderManagerReturnTo, setFolderManagerReturnTo] = useState<'chats' | 'mobile-settings' | 'modal-settings'>('chats');
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const _folderTabsRef = useRef<HTMLDivElement>(null);
+    const mobileChatListScrollRef = useRef<HTMLDivElement | null>(null);
+    const mobileChatListScrollTopRef = useRef(0);
 
     // Per-user localStorage key helper
     const lsKey = (name: string) => `aurora_${name}_${currentUserId}`;
@@ -545,6 +603,29 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         catch { return new Set(); }
     });
     const [pinMenu, setPinMenu] = useState<{ x: number; y: number; key: string } | null>(null);
+    const sidebarLongPressRef = useRef<{ timer: ReturnType<typeof setTimeout>; fired: boolean } | null>(null);
+    const startSidebarLongPress = (e: React.TouchEvent, key: string) => {
+        const touch = e.touches[0];
+        const x = touch.clientX;
+        const y = touch.clientY;
+        if (sidebarLongPressRef.current) clearTimeout(sidebarLongPressRef.current.timer);
+        const state = {
+            fired: false,
+            timer: setTimeout(() => {
+                state.fired = true;
+                if ('vibrate' in navigator) navigator.vibrate(8);
+                setPinMenu({ x, y, key });
+            }, 500),
+        };
+        sidebarLongPressRef.current = state;
+    };
+    const cancelSidebarLongPress = (e?: React.TouchEvent) => {
+        const state = sidebarLongPressRef.current;
+        if (!state) return;
+        clearTimeout(state.timer);
+        if (state.fired) e?.preventDefault();
+        sidebarLongPressRef.current = null;
+    };
     const togglePin = (key: string) => {
         setPinnedChats(prev => {
             const next = new Set(prev);
@@ -554,6 +635,43 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         });
         setPinMenu(null);
     };
+
+    useEffect(() => { mobileTabRef.current = mobileTab; }, [mobileTab]);
+    useEffect(() => {
+        if (!isMobile || mobileTab !== 'chats') return;
+        const el = mobileChatListScrollRef.current;
+        if (!el) return;
+        const restore = () => {
+            el.scrollTop = mobileChatListScrollTopRef.current;
+        };
+        requestAnimationFrame(restore);
+        setTimeout(restore, 60);
+    }, [isMobile, mobileTab]);
+    useEffect(() => {
+        if (!isMobile || !showSettings) return;
+        setShowSettings(false);
+        setMobileTab('settings');
+    }, [isMobile, showSettings]);
+    useEffect(() => {
+        if (!isMobile) return;
+        window.history.replaceState({ ...window.history.state, auroraMobileRoot: true }, '');
+        const handlePopState = () => {
+            if (activeChatRef.current) setActiveChat(null);
+            else if (mobileTabRef.current !== 'chats') setMobileTab('chats');
+        };
+        window.addEventListener('popstate', handlePopState);
+        return () => window.removeEventListener('popstate', handlePopState);
+    }, [isMobile]);
+    useEffect(() => {
+        if (isMobile && activeChat && !window.history.state?.auroraChat) {
+            window.history.pushState({ ...window.history.state, auroraChat: true }, '');
+        }
+    }, [isMobile, activeChat]);
+    useEffect(() => {
+        if (isMobile && mobileTab !== 'chats' && !window.history.state?.auroraTab) {
+            window.history.pushState({ ...window.history.state, auroraTab: mobileTab }, '');
+        }
+    }, [isMobile, mobileTab]);
 
     // Muted chats
     const [mutedChats, setMutedChats] = useState<Set<string>>(() => {
@@ -648,6 +766,23 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     // Folder context menu
     const [folderCtxMenu, setFolderCtxMenu] = useState<{ x: number; y: number; folderId: number } | null>(null);
     const [allChatsCtxMenu, setAllChatsCtxMenu] = useState<{ x: number; y: number } | null>(null);
+    const folderLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const folderLongPressTriggered = useRef(false);
+    const startFolderLongPress = (folderId: number) => {
+        folderLongPressTriggered.current = false;
+        if (folderLongPressTimer.current) clearTimeout(folderLongPressTimer.current);
+        folderLongPressTimer.current = setTimeout(() => {
+            folderLongPressTriggered.current = true;
+            navigator.vibrate?.(20);
+            setFolderManagerInitialId(folderId);
+            setFolderManagerReturnTo('chats');
+            setFolderCtxMenu({ x: 12, y: window.innerHeight - 230, folderId });
+        }, 520);
+    };
+    const cancelFolderLongPress = () => {
+        if (folderLongPressTimer.current) clearTimeout(folderLongPressTimer.current);
+        folderLongPressTimer.current = null;
+    };
     // "Add to folder" submenu key within chat context menu
     const [addToFolderKey, setAddToFolderKey] = useState<string | null>(null);
 
@@ -797,8 +932,6 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const usersRef = useRef<User[]>([]);
     const groupsRef = useRef<Group[]>([]);
-    const notificationClickHandlerRef = useRef<((data: any) => void) | null>(null);
-    const notificationReplyHandlerRef = useRef<((data: any) => void) | null>(null);
 
     const menuMessage = menuMessageId !== null
         ? messages.find(m => m.id === menuMessageId) ?? null
@@ -894,7 +1027,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         const list: { src: string; filename: string }[] = [];
         const addFile = (fp: string, fn: string) => {
             if (/\.(mp3|ogg|wav|flac|aac|m4a|opus|weba|mp4|webm|mov|avi|mkv)$/i.test(fn)) {
-                const src = fp.startsWith('http') ? fp : `${BASE_URL}${fp}`;
+                const src = config.fileUrl(fp) ?? fp;
                 if (!list.some(x => x.src === src)) list.push({ src, filename: fn });
             }
         };
@@ -1004,6 +1137,41 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         globalAudioRef.current.currentTime = ((e.clientX - rect.left) / rect.width) * dur;
     };
 
+    useEffect(() => {
+        if (!nowPlaying) {
+            clearAuroraMediaSession('chat-audio');
+            return;
+        }
+        const chat = activeChatRef.current;
+        const artist = chat?.type === 'private'
+            ? (usersRef.current.find(u => u.id === chat.id)?.username || currentUsername)
+            : chat?.type === 'group'
+                ? (groupsRef.current.find(g => g.id === chat.id)?.name || 'Aurora')
+                : 'Aurora';
+        const isVoice = /^voice_/i.test(nowPlaying.filename) || /\.weba$/i.test(nowPlaying.filename);
+        updateAuroraMediaSession('chat-audio', {
+            title: isVoice ? (lang === 'en' ? 'Voice message' : 'Голосовое сообщение') : nowPlaying.filename,
+            artist,
+            album: 'Aurora',
+            duration: globalDuration,
+            position: globalCurrentTime,
+            playbackState: globalPlaying ? 'playing' : 'paused',
+            handlers: {
+                play: () => { if (!globalPlaying) toggleGlobalPlay(); },
+                pause: () => { if (globalPlaying) toggleGlobalPlay(); },
+                stop: stopGlobal,
+                previoustrack: mediaPlaylist.length > 1 && !isVoice ? prevTrack : undefined,
+                nexttrack: mediaPlaylist.length > 1 && !isVoice ? nextTrack : undefined,
+                seekto: time => {
+                    if (!globalAudioRef.current) return;
+                    globalAudioRef.current.currentTime = time;
+                    setGlobalCurrentTime(time);
+                },
+            },
+        });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [nowPlaying, globalPlaying, globalCurrentTime, globalDuration, mediaPlaylist.length, lang, currentUsername]);
+
     // Sticker / GIF / Poll helpers
     const isSticker = (text?: string | null) => !!text?.startsWith('__sticker__');
     const isGif = (text?: string | null) => !!text?.startsWith('__gif__');
@@ -1016,6 +1184,21 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const isContact = (text?: string | null) => !!text?.startsWith('__contact__:');
     const getContact = (text?: string | null) => { try { return JSON.parse(text!.slice(12)); } catch { return null; } };
     const isSpecialMsg = (text?: string | null) => isSticker(text) || isGif(text);
+
+    // Converts raw internal prefixes to human-readable labels for reply previews
+    const formatReplyPreview = (text?: string | null): string => {
+        if (!text) return '';
+        const nl = text.startsWith('↪️ ') ? text.indexOf('\n') : -1;
+        const body = nl !== -1 ? text.slice(nl + 1).trim() : text;
+        if (body.startsWith('__gif__'))        return '🎞 GIF';
+        if (body.startsWith('__sticker__'))    return '🎭 ' + (lang === 'en' ? 'Sticker' : 'Стикер');
+        if (body.startsWith('__call_ended__')) return '📞 ' + (lang === 'en' ? 'Call ended' : 'Звонок завершён');
+        if (body.startsWith('__geo__:'))       return '📍 ' + (lang === 'en' ? 'Location' : 'Геопозиция');
+        if (body.startsWith('__contact__:'))   return '👤 ' + (lang === 'en' ? 'Contact' : 'Контакт');
+        if (body.startsWith('__poll__:'))      return '📊 ' + (lang === 'en' ? 'Poll' : 'Опрос');
+        if (body.startsWith('__playlist__:'))  return '🎵 ' + (lang === 'en' ? 'Playlist' : 'Плейлист');
+        return body;
+    };
 
     // Single emoji detection — renders big
     const isSingleEmoji = (text: string | null | undefined): boolean => {
@@ -1404,24 +1587,19 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     useEffect(() => { usersRef.current = users; }, [users]);
     useEffect(() => { groupsRef.current = groups; }, [groups]);
 
-    // Request browser notification permission once on mount
+    // Keep desktop integration events that are unrelated to notifications.
     useEffect(() => {
-        if ('Notification' in window && (window as any).Notification.permission === 'default') {
-            (window as any).Notification.requestPermission();
-        }
-        const ea = (window as any).electronAPI;
-        if (!ea) return;
-        ea.onNotificationReply?.((data: any) => {
-            notificationReplyHandlerRef.current?.(data);
-        });
-        ea.onNotificationClick?.((data: any) => {
-            notificationClickHandlerRef.current?.(data);
-        });
-
         const handleOpenServerSettings = () => setShowSettings(true);
         window.addEventListener('electron:open-server-settings', handleOpenServerSettings);
-        return () => window.removeEventListener('electron:open-server-settings', handleOpenServerSettings);
+        return () => {
+            window.removeEventListener('electron:open-server-settings', handleOpenServerSettings);
+        };
     }, []);
+
+    useEffect(() => {
+        const count = Object.values(unreadCounts).reduce((sum, value) => sum + (Number(value) || 0), 0);
+        setAuroraAppBadge(count);
+    }, [unreadCounts]);
 
     useEffect(() => {
         if (!menuMessageId) return;
@@ -1465,27 +1643,6 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             if (offlineTimer) clearTimeout(offlineTimer);
         };
     }, []);
-
-    // Keep notification handlers current (runs every render)
-    useEffect(() => {
-        notificationReplyHandlerRef.current = (data: any) => {
-            if (!data.text) return;
-            if (data.chatType === 'private' && data.senderId != null) {
-                wsService.sendMessage(data.senderId, data.text);
-            } else if (data.chatType === 'group' && data.groupId != null) {
-                wsService.sendGroupMessage(data.groupId, data.text);
-            }
-        };
-        notificationClickHandlerRef.current = (data: any) => {
-            if (data.chatType === 'private') {
-                const user = usersRef.current.find((u: User) => u.id === data.chatId);
-                if (user) selectPrivateChat(user);
-            } else if (data.chatType === 'group') {
-                const group = groupsRef.current.find((g: Group) => g.id === data.chatId);
-                if (group) selectGroupChat(group);
-            }
-        };
-    });
 
     // === E2E Encryption init ===
     useEffect(() => {
@@ -1566,19 +1723,6 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             avatarColor: senderUser?.avatar_color || '#1a73e8',
                             avatarSrc: senderUser?.avatar,
                         });
-                        if (!document.hasFocus()) {
-                            const ns = (() => { try { const s = localStorage.getItem('aurora_notif_settings'); return s ? JSON.parse(s) : null; } catch { return null; } })();
-                            if (!ns || ns.enabled !== false) {
-                                if (!ns || ns.privateChats !== false) {
-                                    const title = ns?.showName === false ? (lang === 'en' ? 'New message' : 'Новое сообщение') : senderDisplayName;
-                                    const body = ns?.showText === false ? (lang === 'en' ? 'You have a new message' : 'У вас новое сообщение') : getMsgPreview(data.data);
-                                    (window as any).electronAPI?.showNotification?.(title, body, { chatType: 'private', chatId: data.data.sender_id, senderId: data.data.sender_id });
-                                    if ('Notification' in window && Notification.permission === 'granted' && !(window as any).electronAPI) {
-                                        new Notification(title, { body, icon: '/logo192.png' });
-                                    }
-                                }
-                            }
-                        }
                     }
                 } catch (e) { console.error('toast error:', e); }
 
@@ -1680,21 +1824,6 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             avatarColor: '#6366f1',
                             avatarSrc: groupObj?.avatar,
                         });
-                        if (!document.hasFocus()) {
-                            const ns2 = (() => { try { const s = localStorage.getItem('aurora_notif_settings'); return s ? JSON.parse(s) : null; } catch { return null; } })();
-                            const isChannel = !!(groupsRef.current.find((g: Group) => g.id === data.data.group_id) as any)?.is_channel;
-                            const typeKey = isChannel ? 'channels' : 'groups';
-                            if (!ns2 || ns2.enabled !== false) {
-                                if (!ns2 || ns2[typeKey] !== false) {
-                                    const title = ns2?.showName === false ? (lang === 'en' ? 'New message' : 'Новое сообщение') : groupName;
-                                    const body = ns2?.showText === false ? (lang === 'en' ? 'You have a new message' : 'У вас новое сообщение') : `${senderName}: ${getMsgPreview(data.data)}`;
-                                    (window as any).electronAPI?.showNotification?.(title, body, { chatType: 'group', chatId: data.data.group_id, senderId: data.data.sender_id, groupId: data.data.group_id });
-                                    if ('Notification' in window && Notification.permission === 'granted' && !(window as any).electronAPI) {
-                                        new Notification(title, { body, icon: '/logo192.png' });
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -2080,6 +2209,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         return () => window.removeEventListener('beforeunload', handler);
     }, [saveDraft]);
 
+    // Recalculate textarea height on orientation change (portrait ↔ landscape)
+    useEffect(() => {
+        const handler = () => { if (inputRef.current) autoResize(inputRef.current); };
+        window.addEventListener('resize', handler);
+        return () => window.removeEventListener('resize', handler);
+    }, []);
+
     const pendingDraftKey = useRef<string | null>(null);
 
     const restoreDraft = useCallback((key: string) => {
@@ -2101,6 +2237,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     }, [activeChat]);
 
     const selectPrivateChat = (user: User) => {
+        if (Date.now() < sidebarSearchDismissUntilRef.current) return;
         saveDraft(activeChatRef.current);
         setReplyTo(null);
         setCommentPostId(null);
@@ -2151,6 +2288,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     };
 
     const selectGroupChat = (group: Group) => {
+        if (Date.now() < sidebarSearchDismissUntilRef.current) return;
         saveDraft(activeChatRef.current);
         setReplyTo(null);
         setCommentPostId(null);
@@ -2336,7 +2474,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             currentUploadXHR.current = null;
             if (result.success) {
                 if (knownDuration && knownDuration > 0) {
-                    const src = result.file_path.startsWith('http') ? result.file_path : `${BASE_URL}${result.file_path}`;
+                    const src = config.fileUrl(result.file_path) ?? result.file_path;
                     knownAudioDurations.current.set(src, knownDuration);
                 }
                 const uploaded = [{ file_path: result.file_path, filename: result.filename, file_size: result.file_size }];
@@ -2378,6 +2516,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         } else {
             wsService.sendGroupMessage(activeChat.id, text);
         }
+        requestAnimationFrame(() => {
+            [80, 260].forEach(delay => setTimeout(() => scrollToBottom(true), delay));
+        });
     };
 
     // === Scheduled message ===
@@ -2487,12 +2628,64 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         }
     };
 
+    const preserveMessageAnchor = useCallback((anchorId: number | null | undefined, action: () => void) => {
+        const scrollEl = messagesContainerRef.current;
+        const anchorEl = anchorId ? document.getElementById(`msg-${anchorId}`) : null;
+        const savedScroll = scrollEl?.scrollTop ?? 0;
+        const beforeTop = anchorEl?.getBoundingClientRect().top ?? null;
+
+        action();
+
+        if (!scrollEl) return;
+        const restore = () => {
+            const nextAnchorEl = anchorId ? document.getElementById(`msg-${anchorId}`) : null;
+            if (nextAnchorEl && beforeTop !== null) {
+                scrollEl.scrollTop += nextAnchorEl.getBoundingClientRect().top - beforeTop;
+            } else {
+                scrollEl.scrollTop = savedScroll;
+            }
+        };
+        requestAnimationFrame(() => {
+            restore();
+            requestAnimationFrame(restore);
+        });
+        setTimeout(restore, 80);
+    }, []);
+
+    const toggleMsgSelection = useCallback((id: number) => {
+        preserveMessageAnchor(id, () => {
+            setSelectedMsgIds(prev => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id); else next.add(id);
+                return next;
+            });
+        });
+    }, [preserveMessageAnchor]);
+
+    const enterSelectionMode = useCallback((msg: any) => {
+        preserveMessageAnchor(msg.id, () => {
+            setMenuMessageId(null);
+            selectionModeRef.current = true;
+            setSelectionMode(true);
+            setSelectedMsgIds(new Set([msg.id]));
+        });
+    }, [preserveMessageAnchor]);
+
+    const exitSelectionMode = useCallback(() => {
+        preserveMessageAnchor(Array.from(selectedMsgIds)[0], () => {
+            selectionModeRef.current = false;
+            setSelectionMode(false);
+            setSelectedMsgIds(new Set());
+        });
+    }, [preserveMessageAnchor, selectedMsgIds]);
+
     // === Меню сообщения ===
 
     const handleContextMenu = (e: React.MouseEvent, msg: any) => {
-        if (selectionMode) { toggleMsgSelection(msg.id); return; }
         e.preventDefault();
         e.stopPropagation();
+        if (isMobile) return; // long-press handled via touch events on mobile
+        if (selectionMode) { toggleMsgSelection(msg.id); return; }
         setMenuMessageId(msg.id);
         setMenuPosition({ x: e.clientX, y: e.clientY });
         setMenuClampedPos({ x: e.clientX, y: e.clientY });
@@ -2503,74 +2696,87 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const longPressMoved = useRef(false);
 
     // ── Swipe-to-reply (mobile) ──────────────────────────────────────────────
-    const [swipingMsgId, setSwipingMsgId] = useState<number | null>(null);
-    const [swipeOffset, setSwipeOffset] = useState(0);
+    // Using refs + direct DOM manipulation to avoid re-renders on every touchmove frame
     const swipeTouchRef = useRef<{ id: number; startX: number; startY: number; locked: boolean } | null>(null);
+    const swipeOffsetRef = useRef(0);
+    const lastTouchPosRef = useRef({ x: 0, y: 0 });
 
-    const handleMsgTouchStart = useCallback((e: React.TouchEvent, msgId: number) => {
+    const onMsgTouchStart = useCallback((e: React.TouchEvent) => {
+        const msgId = parseInt((e.currentTarget as HTMLElement).dataset.msgId || '0');
+        if (!msgId) return;
         const t = e.touches[0];
+        lastTouchPosRef.current = { x: t.clientX, y: t.clientY };
+        longPressMoved.current = false;
         swipeTouchRef.current = { id: msgId, startX: t.clientX, startY: t.clientY, locked: false };
-    }, []);
+        longPressTimer.current = setTimeout(() => {
+            if (!longPressMoved.current) {
+                if ('vibrate' in navigator) navigator.vibrate(8);
+                if (selectionModeRef.current) {
+                    // already in selection — toggle this message
+                    toggleMsgSelection(msgId);
+                } else {
+                    const msg = messagesRef.current.find((m: any) => m.id === msgId);
+                    if (msg) {
+                        enterSelectionMode(msg);
+                    } else {
+                        // fallback: show context menu (desktop-style) if message not found
+                        const { x, y } = lastTouchPosRef.current;
+                        setMenuMessageId(msgId);
+                        setMenuPosition({ x, y });
+                        setMenuClampedPos({ x, y });
+                    }
+                }
+            }
+        }, 500);
+    }, [enterSelectionMode, toggleMsgSelection]);
 
-    const handleMsgTouchMove = useCallback((e: React.TouchEvent, msgId: number) => {
+    const onMsgTouchMove = useCallback((e: React.TouchEvent) => {
+        const msgId = parseInt((e.currentTarget as HTMLElement).dataset.msgId || '0');
+        if (!msgId) return;
+        longPressMoved.current = true;
+        if (longPressTimer.current) clearTimeout(longPressTimer.current);
         const ref = swipeTouchRef.current;
         if (!ref || ref.id !== msgId) return;
         const t = e.touches[0];
+        lastTouchPosRef.current = { x: t.clientX, y: t.clientY };
         const dx = t.clientX - ref.startX;
         const dy = Math.abs(t.clientY - ref.startY);
         if (!ref.locked) {
-            if (dy > Math.abs(dx)) { swipeTouchRef.current = null; return; } // vertical scroll
-            if (Math.abs(dx) > 8) ref.locked = true;
+            if (dy > 8) { swipeTouchRef.current = null; return; } // clearly vertical — cancel
+            if (Math.abs(dx) < 6) return; // wait for clearer intent
+            if (dx < 0) { swipeTouchRef.current = null; return; } // left swipe — ignore
+            ref.locked = true;
         }
-        if (!ref.locked) return;
-        const offset = Math.max(0, Math.min(dx, 72)); // right swipe only, cap 72px
-        if (offset > 0) {
-            setSwipingMsgId(msgId);
-            setSwipeOffset(offset);
-        }
+        const offset = Math.max(0, Math.min(dx, 72));
+        swipeOffsetRef.current = offset;
+        const el = document.getElementById(`msg-${msgId}`);
+        if (el) { el.style.transform = `translateX(${offset}px)`; el.style.transition = 'none'; }
     }, []);
 
-    const handleMsgTouchEnd = useCallback((msg: any) => {
+    const onMsgTouchEnd = useCallback((e: React.TouchEvent) => {
+        const msgId = parseInt((e.currentTarget as HTMLElement).dataset.msgId || '0');
+        if (longPressTimer.current) clearTimeout(longPressTimer.current);
         const ref = swipeTouchRef.current;
         swipeTouchRef.current = null;
-        if (!ref) return;
-        if (swipeOffset > 52) {
-            setReplyTo({ id: msg.id, text: msg.message_text || '', sender: (msg as any).sender_name || (lang === 'en' ? 'You' : 'Вы'), file_path: msg.file_path, filename: msg.filename });
+        const offset = swipeOffsetRef.current;
+        swipeOffsetRef.current = 0;
+        const el = document.getElementById(`msg-${msgId}`);
+        if (el) { el.style.transition = 'transform 0.2s cubic-bezier(0.4,0,0.2,1)'; el.style.transform = ''; }
+        if (ref && offset > 52) {
+            const msg = messagesRef.current.find((m: any) => m.id === msgId) as any;
+            if (msg) setReplyTo({ id: msg.id, text: msg.message_text || '', sender: msg.sender_name || (lang === 'en' ? 'You' : 'Вы'), file_path: msg.file_path, filename: msg.filename });
             if ('vibrate' in navigator) navigator.vibrate(10);
         }
-        setSwipingMsgId(null);
-        setSwipeOffset(0);
-    }, [swipeOffset, lang]);
+    }, [lang]);
 
-    const makeLongPressHandlers = (msg: any) => ({
-        onTouchStart: (e: React.TouchEvent) => {
-            longPressMoved.current = false;
-            handleMsgTouchStart(e, msg.id);
-            longPressTimer.current = setTimeout(() => {
-                if (!longPressMoved.current) {
-                    const touch = e.touches[0];
-                    setMenuMessageId(msg.id);
-                    setMenuPosition({ x: touch.clientX, y: touch.clientY });
-                    setMenuClampedPos({ x: touch.clientX, y: touch.clientY });
-                }
-            }, 500);
-        },
-        onTouchMove: (e: React.TouchEvent) => {
-            longPressMoved.current = true;
-            if (longPressTimer.current) clearTimeout(longPressTimer.current);
-            handleMsgTouchMove(e, msg.id);
-        },
-        onTouchEnd: () => {
-            if (longPressTimer.current) clearTimeout(longPressTimer.current);
-            handleMsgTouchEnd(msg);
-        },
-        onTouchCancel: () => {
-            if (longPressTimer.current) clearTimeout(longPressTimer.current);
-            setSwipingMsgId(null);
-            setSwipeOffset(0);
-            swipeTouchRef.current = null;
-        },
-    });
+    const onMsgTouchCancel = useCallback((e: React.TouchEvent) => {
+        if (longPressTimer.current) clearTimeout(longPressTimer.current);
+        const msgId = parseInt((e.currentTarget as HTMLElement).dataset.msgId || '0');
+        swipeTouchRef.current = null;
+        swipeOffsetRef.current = 0;
+        const el = document.getElementById(`msg-${msgId}`);
+        if (el) { el.style.transition = 'transform 0.2s cubic-bezier(0.4,0,0.2,1)'; el.style.transform = ''; }
+    }, []);
 
     // Clamp context menu inside viewport after it renders
     useLayoutEffect(() => {
@@ -2600,19 +2806,47 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
     const handleEditSubmit = (messageId?: number) => {
         const id = messageId ?? editingMessageId;
-        const text = (inputRef.current?.value || editingText).trim();
-        if (!text) return; // block empty edit — server also rejects it
-        if (id) {
-            wsService.sendRaw({
-                type: 'edit_message',
-                message_id: id,
-                new_text: text,
-                is_group: activeChatRef.current?.type === 'group',
-            });
+        if (!id) return;
+        // Use actual input value if mounted (even if empty), fall back to editingText only if ref is null
+        const text = (inputRef.current != null ? inputRef.current.value : editingText).trim();
+
+        const resetEdit = () => {
+            setEditingMessageId(null);
+            setEditingText('');
+            if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; setInputCharCount(0); }
+        };
+
+        if (!text) {
+            const msg = messages.find(m => m.id === id) as any;
+            const hasMedia = !!(
+                msg?.file_path ||
+                (msg?.files && msg.files !== '[]' && msg.files !== null &&
+                    (() => { try { const f = typeof msg.files === 'string' ? JSON.parse(msg.files) : msg.files; return Array.isArray(f) && f.length > 0; } catch { return false; } })())
+            );
+            if (hasMedia) {
+                // Has files — just clear the caption (send empty text)
+                wsService.sendRaw({ type: 'edit_message', message_id: id, new_text: '', is_group: activeChatRef.current?.type === 'group' });
+                resetEdit();
+            } else {
+                // Text-only message — offer to delete instead
+                resetEdit();
+                const isFavorites = activeChat?.type === 'private' && activeChat.id === currentUserId;
+                if (isFavorites) {
+                    wsService.sendRaw({ type: 'delete_message', message_id: id, is_group: false, for_self: false });
+                } else {
+                    setDeleteConfirmId({ id, senderId: msg?.sender_id ?? currentUserId });
+                }
+            }
+            return;
         }
-        setEditingMessageId(null);
-        setEditingText('');
-        if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; setInputCharCount(0); }
+
+        wsService.sendRaw({
+            type: 'edit_message',
+            message_id: id,
+            new_text: text,
+            is_group: activeChatRef.current?.type === 'group',
+        });
+        resetEdit();
     };
 
     const [deleteConfirmId, setDeleteConfirmId] = useState<{ id: number; senderId: number } | null>(null);
@@ -2652,25 +2886,6 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             for_self: forSelf,
         });
         setDeleteConfirmId(null);
-    };
-
-    const toggleMsgSelection = (id: number) => {
-        setSelectedMsgIds(prev => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id); else next.add(id);
-            return next;
-        });
-    };
-
-    const enterSelectionMode = (msg: any) => {
-        setMenuMessageId(null);
-        setSelectionMode(true);
-        setSelectedMsgIds(new Set([msg.id]));
-    };
-
-    const exitSelectionMode = () => {
-        setSelectionMode(false);
-        setSelectedMsgIds(new Set());
     };
 
     const handleBulkDelete = (forSelf: boolean) => {
@@ -2974,8 +3189,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         playNotificationSound();
         setTimeout(() => dismissToast(id), 5000);
     };
-    // Keep ref current so WebSocket handler (stale closure) always fires the latest toast
-    showInAppToastRef.current = showInAppToast;
+    // Incoming-message toast cards are disabled; direct action feedback still uses showInAppToast().
+    showInAppToastRef.current = null;
 
     const replyFromToast = (toast: ToastItem, text: string) => {
         if (!text.trim()) return;
@@ -3040,6 +3255,24 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         status: currentUserStatus || '', is_online: true,
     }), [currentUserId, currentUsername, currentUserAvatar, currentUserTag, currentUserStatus]);
 
+    // Reset mobile tab to chats when a chat is opened
+    useEffect(() => {
+        if (isMobile && activeChat) setMobileTab('chats');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeChat]);
+
+    // Load/refresh phone & birthday when Profile tab is visible and after edits
+    useEffect(() => {
+        if (!isMobile || mobileTab !== 'profile') return;
+        // Re-fetch whenever the edit modal closes or any profile field changes
+        api.getProfile(token).then(res => {
+            if (res.success && res.user) {
+                setCurrentUserPhone(res.user.phone || '');
+                setCurrentUserBirthday(res.user.birthday || '');
+            }
+        }).catch(() => {});
+    }, [mobileTab, isMobile, token, mobileEditProfile, currentUserStatus, currentUserTag, currentUsername]);
+
     const isGroupAdmin = activeGroup ? (activeGroup.my_role === 'admin' || activeGroup.creator_id === currentUserId) : false;
     const isChannelChat = !!(activeGroup?.is_channel);
     const isChannelMember = isChannelChat && groups.some(g => g.id === activeChat?.id);
@@ -3055,15 +3288,20 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
     const dm = theme.darkMode;
     const isOled = dm && theme.chatBg === '#000000';
 
+    // Header button colors — adapt for mobile where background is flat (no gradient)
+    const hdrBtnColor  = (isMobile && !dm) ? '#c026d3' : (dm ? '#c4b5fd' : 'white');
+    const hdrBtnBg     = (isMobile && !dm) ? 'rgba(192,38,211,0.07)' : (isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)'));
+    const hdrBtnBorder = (isMobile && !dm) ? '1px solid rgba(192,38,211,0.18)' : (isOled ? '1px solid rgba(167,139,250,0.3)' : (dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)'));
+
     // OLED-aware color palette — memoized so it only rebuilds when theme changes
     const C = useMemo(() => ({
         bg0:  isOled ? '#000000' : '#0f0f1a',
         bg1:  isOled ? '#000000' : '#13131f',
-        bg2:  isOled ? '#050508' : '#1a1a2e',
-        bg3:  isOled ? '#08080f' : '#1e1e2e',
-        bg4:  isOled ? '#0a0a14' : '#1e1e30',
-        bg5:  isOled ? '#0d0d1a' : '#252540',
-        bg6:  isOled ? '#0d0d12' : '#2a2a3a',
+        bg2:  isOled ? '#000000' : '#1a1a2e',
+        bg3:  isOled ? '#000000' : '#1e1e2e',
+        bg4:  isOled ? '#000000' : '#1e1e30',
+        bg5:  isOled ? '#000000' : '#252540',
+        bg6:  isOled ? '#000000' : '#2a2a3a',
         bdr1: isOled ? 'rgba(167,139,250,0.12)' : '#2a2a3d',
         bdr2: isOled ? 'rgba(167,139,250,0.18)' : '#3a3a5e',
         bdr3: isOled ? 'rgba(167,139,250,0.14)' : '#3a3a55',
@@ -3094,7 +3332,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     ? 'radial-gradient(ellipse 100% 100% at 0% 50%, rgba(99,102,241,0.26) 0%, rgba(99,102,241,0.08) 55%, transparent 80%)'
                     : 'radial-gradient(ellipse 100% 100% at 0% 50%, rgba(99,102,241,0.28) 0%, rgba(139,92,246,0.12) 55%, transparent 85%)',
         },
-        iconBtn: { ...styles.iconBtn, background: isOled ? 'rgba(167,139,250,0.07)' : dm ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.05)', border: 'none', color: dm ? (isOled ? '#c4b5fd' : '#a5b4fc') : '#6366f1', borderRadius: isMobile ? 10 : 12, padding: '0', width: isMobile ? 32 : 36, height: isMobile ? 32 : 36, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.12), 0 2px 10px rgba(139,92,246,0.1)' : dm ? '0 0 0 1px rgba(99,102,241,0.18)' : '0 0 0 1px rgba(99,102,241,0.14)' },
+        iconBtn: { ...styles.iconBtn, background: isOled ? 'rgba(167,139,250,0.07)' : dm ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.05)', border: 'none', color: dm ? (isOled ? '#c4b5fd' : '#a5b4fc') : '#6366f1', borderRadius: isMobile ? 10 : 12, padding: '0', width: isMobile ? 32 : 36, height: isMobile ? 32 : 36, minHeight: 'unset', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.12), 0 2px 10px rgba(139,92,246,0.1)' : dm ? '0 0 0 1px rgba(99,102,241,0.18)' : '0 0 0 1px rgba(99,102,241,0.14)' },
         fileBtn: { ...styles.fileBtn, backgroundColor: dm ? (isOled ? '#0a0a12' : C.bg4) : '#eef0f8', border: 'none', boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.12)' : dm ? '0 0 0 1.5px rgba(99,102,241,0.2)' : '0 0 0 1.5px rgba(99,102,241,0.15)', color: dm ? (isOled ? '#a78bfa' : '#7c7caa') : '#6366f1' },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }), [isOled, dm, isMobile, theme, C]);
@@ -3241,7 +3479,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             )}
 
             {/* Боковая панель */}
-            <div className={isOled ? 'oled-sidebar' : undefined} style={{
+            <div className={`${isOled ? 'oled-sidebar ' : ''}${isMobile ? 'mobile-chat-list-screen' : ''}${isMobile && (miniTrack || nowPlaying) ? ' mobile-has-mini-player' : ''}`.trim() || undefined} style={{
                 ...darkStyles.sidebar,
                 ...(isMobile ? {
                     position: 'absolute' as const,
@@ -3262,7 +3500,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 }),
             }}>
                 {showArchive ? (
-                    <div style={{
+                    <div className={isMobile ? 'mobile-archive-header' : undefined} style={{
                         ...styles.sidebarHeader,
                         background: !dm ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' : (isOled ? 'linear-gradient(90deg, #1a0038 0%, #000000 320px)' : 'linear-gradient(135deg, #1e1a3d 0%, #2d2060 100%)'),
                         backgroundAttachment: (isOled && !isMobile) ? 'fixed' : undefined,
@@ -3279,15 +3517,17 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             </div>
                         )}
                     </div>
-                ) : sidebarMinimal ? null : (
-                <div style={{
+                ) : sidebarMinimal ? null : (isMobile && mobileTab !== 'chats') ? null : (
+                <div className={isMobile ? 'mobile-home-header' : undefined} style={{
                     ...styles.sidebarHeader,
-                    background: !dm ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' : (isOled ? 'linear-gradient(90deg, #1a0038 0%, #000000 320px)' : 'linear-gradient(135deg, #1e1a3d 0%, #2d2060 100%)'),
+                    background: isMobile
+                        ? (isOled ? '#000000' : dm ? C.bg1 : '#f7f8fc')
+                        : (!dm ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' : (isOled ? 'linear-gradient(90deg, #1a0038 0%, #000000 320px)' : 'linear-gradient(135deg, #1e1a3d 0%, #2d2060 100%)')),
                     backgroundAttachment: (isOled && !isMobile) ? 'fixed' : undefined,
                     justifyContent: sidebarCompact ? 'center' : undefined,
-                    padding: sidebarCompact ? '16px 0' : '16px',
+                    padding: sidebarCompact ? '7px 0' : '7px 14px',
                 }}>
-                    <img src={dm ? '/logo-dark.png' : '/logo-light.png'} alt="Aurora" style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, objectFit: 'cover' }} />
+                    {!isMobile && <img src={dm ? '/logo-dark.png' : '/logo-light.png'} alt="Aurora" style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, objectFit: 'cover' }} />}
                     {!sidebarCompact && <>
                         <div style={{ flex: 1, lineHeight: 1.1 }}>
                             {wsConnState !== 'connected' ? (
@@ -3302,35 +3542,58 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     ? { fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px', color: '#d8b4fe' }
                                     : dm
                                         ? { fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px', background: 'linear-gradient(90deg, #e0c4ff 0%, #a78bfa 55%, #818cf8 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }
-                                        : { fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px', color: 'white' }
-                                }>Aurora</span>
+                                        : (isMobile ? { fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px', background: 'linear-gradient(90deg, #f472b6 0%, #c084fc 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' } : { fontWeight: 800, fontSize: 18, letterSpacing: '-0.5px', color: 'white' })
+                                }>{isMobile ? (lang === 'en' ? 'Chats' : 'Чаты') : 'Aurora'}</span>
                             )}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <button
                                 onClick={() => setShowMediaPlayer(v => !v)}
-                                style={{ padding: '6px 7px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: miniTrack ? (isOled ? 'rgba(167,139,250,0.25)' : (dm ? 'rgba(99,102,241,0.3)' : 'rgba(255,255,255,0.3)')) : (isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)')), color: dm ? '#c4b5fd' : 'white', border: isOled ? '1px solid rgba(167,139,250,0.3)' : (dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 4, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none' }}
+                                style={{ width: 30, height: 30, minHeight: 'unset', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: miniTrack ? (isOled ? 'rgba(167,139,250,0.25)' : (dm ? 'rgba(99,102,241,0.3)' : (isMobile ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.3)'))) : hdrBtnBg, color: hdrBtnColor, border: hdrBtnBorder, backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none', flexShrink: 0 }}
                                 title={lang === 'en' ? 'Media Player' : 'Медиаплеер'}
                             ><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></button>
-                            <button
+                            {!isMobile && <button
                                 onClick={() => setShowHelp(true)}
-                                style={{ padding: '6px 7px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)'), color: dm ? '#c4b5fd' : 'white', border: isOled ? '1px solid rgba(167,139,250,0.3)' : (dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 4, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none' }}
+                                style={{ width: 30, height: 30, minHeight: 'unset', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: hdrBtnBg, color: hdrBtnColor, border: hdrBtnBorder, backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none', flexShrink: 0 }}
                                 title={lang === 'en' ? "What's new" : 'Что нового'}
-                            ><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>
+                            ><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>}
                         <div style={{ position: 'relative' }}>
                             <button
                                 onClick={() => setShowCreateDropdown(v => !v)}
-                                style={{ padding: '6px 7px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: isOled ? 'rgba(167,139,250,0.1)' : (dm ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.18)'), color: dm ? '#c4b5fd' : 'white', border: isOled ? '1px solid rgba(167,139,250,0.3)' : (dm ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(255,255,255,0.3)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 4, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none' }}
+                                style={{ width: 30, height: 30, minHeight: 'unset', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, backgroundColor: hdrBtnBg, color: hdrBtnColor, border: hdrBtnBorder, backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, boxShadow: isOled ? '0 0 8px rgba(167,139,250,0.08)' : 'none', flexShrink: 0 }}
                                 title={lang === 'en' ? 'New chat' : 'Новый чат'}
                             >
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                             </button>
                             {showCreateDropdown && (
                                 <>
-                                <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => setShowCreateDropdown(false)} />
                                 <div
-                                    className="floating-enter"
-                                    style={{ position: 'absolute', top: '110%', right: 0, zIndex: 300, background: isOled ? '#080810' : (dm ? C.bg2 : 'white'), borderRadius: 14, boxShadow: isOled ? '0 0 30px rgba(124,58,237,0.3), 0 16px 40px rgba(0,0,0,0.9)' : dm ? '0 0 24px rgba(99,102,241,0.2), 0 12px 36px rgba(0,0,0,0.5)' : '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)', minWidth: 180, overflow: 'hidden', padding: '4px 0' }}
+                                    style={{
+                                        position: 'fixed',
+                                        inset: 0,
+                                        zIndex: isMobile ? 9998 : 299,
+                                        background: isMobile ? (isOled ? 'rgba(0,0,0,0.62)' : 'rgba(10,6,26,0.32)') : 'transparent',
+                                        backdropFilter: isMobile ? 'blur(8px)' : undefined,
+                                    }}
+                                    onClick={() => setShowCreateDropdown(false)}
+                                />
+                                <div
+                                    className={isMobile ? 'floating-enter mobile-create-sheet' : 'floating-enter'}
+                                    style={isMobile
+                                        ? {
+                                            position: 'fixed',
+                                            left: 12,
+                                            right: 12,
+                                            bottom: 'calc(12px + env(safe-area-inset-bottom, 0px))',
+                                            zIndex: 9999,
+                                            background: isOled ? '#000000' : (dm ? '#0d0b18' : '#ffffff'),
+                                            borderRadius: 24,
+                                            border: `1px solid ${isOled ? 'rgba(167,139,250,0.22)' : dm ? 'rgba(167,139,250,0.18)' : 'rgba(99,102,241,0.14)'}`,
+                                            boxShadow: isOled ? '0 18px 44px rgba(0,0,0,0.92), 0 0 24px rgba(124,58,237,0.12)' : dm ? '0 18px 44px rgba(0,0,0,0.48)' : '0 18px 44px rgba(76,61,135,0.18)',
+                                            overflow: 'hidden',
+                                            padding: 8,
+                                        }
+                                        : { position: 'absolute', top: '110%', right: 0, zIndex: 300, background: isOled ? '#080810' : (dm ? C.bg2 : 'white'), borderRadius: 14, boxShadow: isOled ? '0 0 30px rgba(124,58,237,0.3), 0 16px 40px rgba(0,0,0,0.9)' : dm ? '0 0 24px rgba(99,102,241,0.2), 0 12px 36px rgba(0,0,0,0.5)' : '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)', minWidth: 180, overflow: 'hidden', padding: '4px 0' }}
                                 >
                                     {[
                                         { svg: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>, label: t('Create group'), action: () => { setShowCreateDropdown(false); setShowCreateGroup(true); } },
@@ -3338,8 +3601,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     ].map(item => (
                                         <div
                                             key={item.label}
+                                            className={isMobile ? 'mobile-create-menu-item' : undefined}
                                             onClick={item.action}
-                                            style={{ padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: dm ? '#e0e0f0' : '#1e1b4b', fontWeight: 500 }}
+                                            style={{ padding: isMobile ? '14px 16px' : '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontSize: isMobile ? 15 : 13, color: dm ? '#e0e0f0' : '#1e1b4b', fontWeight: 600, borderRadius: isMobile ? 16 : undefined }}
                                             onMouseEnter={e => (e.currentTarget.style.background = dm ? 'rgba(99,102,241,0.12)' : '#f5f3ff')}
                                             onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                                         >
@@ -3357,21 +3621,30 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 )}
 
                 {/* Sidebar search */}
-                {!sidebarCompact && !sidebarMinimal && !showArchive && <div style={{ padding: '8px 10px', borderBottom: 'none', position: 'relative' }}>
+                {!sidebarCompact && !sidebarMinimal && !showArchive && !(isMobile && mobileTab !== 'chats') && <div className={isMobile ? `mobile-home-search${sidebarSearchFocused ? ' mobile-search-active' : ''}` : undefined} style={{ padding: '8px 10px', borderBottom: 'none', position: 'relative', zIndex: isMobile && sidebarSearchFocused ? 265 : undefined }}>
                     <input
+                        ref={sidebarSearchInputRef}
                         type="text"
                         className="sidebar-search-input"
-                        placeholder={`🔍 ${t('Search users...')}`}
+                        placeholder={t('Search users...')}
                         value={sidebarSearchQuery}
                         onFocus={() => {
-                            setSidebarSearchFocused(true);
-                            if (!sidebarSearchQuery) {
-                                api.getRecentUsers(token).then(r => { if (r.users) setRecentUsers(r.users); }).catch(() => {});
+                            if (sidebarSearchBlurTimerRef.current) {
+                                clearTimeout(sidebarSearchBlurTimerRef.current);
+                                sidebarSearchBlurTimerRef.current = null;
                             }
+                            setSidebarSearchFocused(true);
                         }}
-                        onBlur={() => setTimeout(() => setSidebarSearchFocused(false), 150)}
+                        onBlur={() => {
+                            if (sidebarSearchBlurTimerRef.current) clearTimeout(sidebarSearchBlurTimerRef.current);
+                            sidebarSearchBlurTimerRef.current = setTimeout(() => {
+                                setSidebarSearchFocused(false);
+                                sidebarSearchBlurTimerRef.current = null;
+                            }, 150);
+                        }}
                         onChange={e => {
                             const q = e.target.value;
+                            setSidebarSearchFocused(true);
                             setSidebarSearchQuery(q);
                             if (sidebarSearchTimerRef.current) clearTimeout(sidebarSearchTimerRef.current);
                             if (!q.trim()) { setSidebarSearchResults([]); setSidebarChannelResults([]); setSidebarMsgResults([]); return; }
@@ -3392,10 +3665,21 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 finally { setSidebarSearchLoading(false); }
                             }, 300);
                         }}
-                        style={{ width: '100%', boxSizing: 'border-box', padding: '7px 12px', borderRadius: 10, border: 'none', background: !dm ? '#f5f3ff' : (isOled ? C.bg4 : '#1e1e3a'), color: dm ? '#e0e0f0' : '#1e1b4b', fontSize: 13, outline: 'none', boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.14), 0 2px 10px rgba(139,92,246,0.08)' : dm ? '0 0 0 1px rgba(99,102,241,0.2)' : '0 0 0 1px rgba(99,102,241,0.2)', transition: 'box-shadow 0.15s' }}
+                        style={{ width: '100%', boxSizing: 'border-box', padding: '7px 12px', borderRadius: 10, border: 'none', background: !dm ? '#f5f3ff' : (isOled ? C.bg4 : '#1e1e3a'), color: dm ? '#e0e0f0' : '#1e1b4b', fontSize: 13, outline: 'none', boxShadow: isOled ? '0 0 0 1px rgba(167,139,250,0.14), 0 2px 10px rgba(139,92,246,0.08)' : dm ? '0 0 0 1px rgba(99,102,241,0.2)' : '0 0 0 1px rgba(99,102,241,0.2)', transition: 'box-shadow 0.15s', position: isMobile && sidebarSearchFocused ? 'relative' : undefined, zIndex: isMobile && sidebarSearchFocused ? 280 : undefined }}
                     />
-                    {sidebarSearchFocused && (sidebarLocalMatches.users.length > 0 || sidebarLocalMatches.groups.length > 0 || sidebarSearchResults.length > 0 || sidebarChannelResults.length > 0 || sidebarMsgResults.length > 0 || sidebarSearchLoading || (!sidebarSearchQuery && (searchHistory.length > 0 || recentUsers.length > 0))) && (
-                        <div className="sidebar-search-dropdown" style={{ position: 'absolute', top: '100%', left: 10, right: 10, zIndex: 200, background: dm ? C.bg2 : 'white', border: `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 12, boxShadow: isOled ? '0 8px 32px rgba(0,0,0,0.8), 0 0 0 1px rgba(167,139,250,0.1)' : '0 8px 32px rgba(0,0,0,0.18)', overflow: 'hidden', maxHeight: 420, overflowY: 'auto' }}>
+                    {sidebarSearchFocused && (!!sidebarSearchQuery.trim() || sidebarLocalMatches.users.length > 0 || sidebarLocalMatches.groups.length > 0 || sidebarSearchResults.length > 0 || sidebarChannelResults.length > 0 || sidebarMsgResults.length > 0 || sidebarSearchLoading || (!sidebarSearchQuery && searchHistory.length > 0)) && (
+                        <>
+                        {isMobile && (
+                            <div
+                                className="mobile-search-backdrop"
+                                onPointerDown={stopSearchBackdropEvent}
+                                onPointerUp={stopSearchBackdropEvent}
+                                onMouseDown={stopSearchBackdropEvent}
+                                onClick={stopSearchBackdropEvent}
+                                onTouchStart={stopSearchBackdropEvent}
+                            />
+                        )}
+                        <div className={`sidebar-search-dropdown${isMobile ? ' mobile-search-results-panel' : ''}`} style={{ position: 'absolute', top: 'calc(100% + 8px)', left: isMobile ? 14 : 10, right: isMobile ? 14 : 10, zIndex: isMobile ? 270 : 200, background: dm ? C.bg2 : 'white', border: `1px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: isMobile ? 20 : 12, boxShadow: isMobile ? (isOled ? '0 14px 36px rgba(0,0,0,0.88), 0 0 0 1px rgba(167,139,250,0.16)' : dm ? '0 14px 36px rgba(0,0,0,0.42)' : '0 14px 34px rgba(76,61,135,0.15)') : (isOled ? '0 8px 32px rgba(0,0,0,0.8), 0 0 0 1px rgba(167,139,250,0.1)' : '0 8px 32px rgba(0,0,0,0.18)'), overflow: 'hidden', maxHeight: isMobile ? 'min(52dvh, 360px)' : 420, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                             {sidebarSearchQuery ? (
                                 <>
                                     {/* My chats — local matches from users + groups */}
@@ -3547,30 +3831,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             ))}
                                         </>
                                     )}
-                                    {recentUsers.length > 0 && (
-                                        <>
-                                            <div style={{ padding: '6px 12px 4px', fontSize: 11, fontWeight: 600, color: dm ? '#5a5a8a' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('New users')}</div>
-                                            {recentUsers.slice(0, 3).map(u => (
-                                                <div key={u.id} onMouseDown={() => { addToSearchHistory(u); setSelectedUserForProfile(u); setSidebarSearchFocused(false); }}
-                                                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer' }}
-                                                    className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}>
-                                                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: u.avatar ? (dm ? C.bg1 : '#f7f8fc') : ((u as any).avatar_color || '#6366f1'), display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, color: 'white', fontWeight: 700, fontSize: 14 }}>
-                                                        {u.avatar ? <img src={config.fileUrl(u.avatar) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : u.username[0]?.toUpperCase()}
-                                                    </div>
-                                                    <div style={{ minWidth: 0, flex: 1 }}>
-                                                        <div style={{ fontSize: 13, fontWeight: 600, color: dm ? '#e0e0f0' : '#1e1b4b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</span>
-                                                            {DEV_TAGS.includes(u.tag || '') && <DevBadge />}{TESTER_TAGS.includes(u.tag || '') && <TesterBadge />}
-                                                        </div>
-                                                        <div style={{ fontSize: 11, color: (users.find(lu => lu.id === u.id) ?? u).is_online ? '#22c55e' : (dm ? '#5a5a8a' : '#9ca3af') }}>{(users.find(lu => lu.id === u.id) ?? u).is_online ? `🟢 ${t('Online')}` : t('Offline')}</div>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </>
-                                    )}
                                 </>
                             )}
                         </div>
+                        </>
                     )}
                 </div>}
 
@@ -3626,18 +3890,19 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     </div>
                 )}
 
-                {/* ── Horizontal folder tabs (mobile only) ── */}
-                {isMobile && folders.length > 0 && (
-                    <div style={{ display: 'flex', overflowX: 'auto', scrollbarWidth: 'none', flexShrink: 0, background: isOled ? '#000' : dm ? '#111128' : '#ececf7', borderBottom: `1px solid ${isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.08)'}`, paddingInline: 6, gap: 4, paddingTop: 4, paddingBottom: 4 }}>
+                {/* ── Horizontal folder tabs (mobile only, chats tab only) ── */}
+                {isMobile && mobileTab === 'chats' && !showArchive && folders.length > 0 && (
+                    <div className="mobile-folder-tabs" style={{ display: 'flex', overflowX: 'auto', scrollbarWidth: 'none', flexShrink: 0, paddingInline: 8, gap: 4, paddingTop: 2, paddingBottom: 2 }}>
                         {/* All chats tab */}
                         {(() => {
                             const active = activeFolder === null;
                             const totalUnread = Object.values(unreadCounts).reduce((s, n) => s + n, 0);
+                            const accentC = isOled ? '#7c3aed' : '#6366f1';
                             return (
-                                <button onClick={() => setActiveFolder(null)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 20, border: 'none', cursor: 'pointer', flexShrink: 0, background: active ? (isOled ? 'rgba(124,58,237,0.3)' : dm ? 'rgba(99,102,241,0.22)' : 'rgba(99,102,241,0.15)') : 'transparent', fontFamily: 'inherit', position: 'relative' }}>
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={active ? (isOled ? '#c4b5fd' : '#6366f1') : (isOled ? '#4a3a6a' : dm ? '#4a4a6a' : '#8b8bb0')} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                                    <span style={{ fontSize: 12, fontWeight: active ? 700 : 500, color: active ? (isOled ? '#c4b5fd' : dm ? '#a5b4fc' : '#6366f1') : (isOled ? '#4a3a6a' : dm ? '#4a4a6a' : '#8b8bb0'), whiteSpace: 'nowrap' }}>{lang === 'en' ? 'All' : 'Все'}</span>
-                                    {totalUnread > 0 && !active && <span style={{ background: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 9, fontWeight: 700, borderRadius: 8, padding: '1px 4px', lineHeight: 1.4 }}>{totalUnread > 99 ? '99+' : totalUnread}</span>}
+                                <button className={`mobile-folder-tab${active ? ' active' : ''}`} onClick={() => setActiveFolder(null)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 9px', borderRadius: 20, border: 'none', cursor: 'pointer', flexShrink: 0, background: active ? (isOled ? '#7c3aed' : '#6366f1') : (isOled ? 'rgba(124,58,237,0.1)' : dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.09)'), fontFamily: 'inherit', transition: 'background 0.15s' }}>
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={active ? 'white' : (isOled ? '#a78bfa' : dm ? '#818cf8' : accentC)} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                    <span style={{ fontSize: 11, fontWeight: active ? 700 : 500, color: active ? 'white' : (isOled ? '#a78bfa' : dm ? '#818cf8' : accentC), whiteSpace: 'nowrap' }}>{lang === 'en' ? 'All' : 'Все'}</span>
+                                    {totalUnread > 0 && <span style={{ background: active ? 'rgba(255,255,255,0.25)' : (isOled ? '#7c3aed' : '#6366f1'), color: 'white', fontSize: 9, fontWeight: 700, borderRadius: 8, padding: '1px 5px', lineHeight: 1.4 }}>{totalUnread > 99 ? '99+' : totalUnread}</span>}
                                 </button>
                             );
                         })()}
@@ -3646,19 +3911,183 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             const active = activeFolder === f.id;
                             const folderUnread = folderUnreadMap[f.id] || 0;
                             return (
-                                <button key={f.id} onClick={() => setActiveFolder(f.id)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 20, border: 'none', cursor: 'pointer', flexShrink: 0, background: active ? `${f.color}22` : 'transparent', fontFamily: 'inherit' }}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={active ? f.color : (isOled ? '#4a3a6a' : dm ? '#4a4a6a' : '#8b8bb0')} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                                    <span style={{ fontSize: 12, fontWeight: active ? 700 : 500, color: active ? f.color : (isOled ? '#4a3a6a' : dm ? '#4a4a6a' : '#8b8bb0'), whiteSpace: 'nowrap' }}>{f.name}</span>
-                                    {folderUnread > 0 && <span style={{ background: active ? f.color : (dm ? '#3a3a5a' : '#d1d5db'), color: active ? 'white' : (dm ? '#9090b0' : '#6b7280'), fontSize: 9, fontWeight: 700, borderRadius: 8, padding: '1px 4px', lineHeight: 1.4 }}>{folderUnread > 99 ? '99+' : folderUnread}</span>}
+                                <button className={`mobile-folder-tab${active ? ' active' : ''}`} key={f.id}
+                                    onClick={() => { if (!folderLongPressTriggered.current) setActiveFolder(f.id); folderLongPressTriggered.current = false; }}
+                                    onPointerDown={e => { if (e.pointerType !== 'mouse') startFolderLongPress(f.id); }}
+                                    onPointerUp={cancelFolderLongPress}
+                                    onPointerCancel={cancelFolderLongPress}
+                                    onPointerMove={cancelFolderLongPress}
+                                    onContextMenu={e => { e.preventDefault(); setFolderCtxMenu({ x: e.clientX, y: e.clientY, folderId: f.id }); }}
+                                    style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 9px', borderRadius: 20, border: 'none', cursor: 'pointer', flexShrink: 0, background: active ? f.color : (isOled ? 'rgba(124,58,237,0.1)' : dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.09)'), fontFamily: 'inherit', transition: 'background 0.15s', touchAction: 'pan-x' }}>
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={active ? 'white' : (isOled ? '#a78bfa' : dm ? '#818cf8' : f.color)} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                    <span style={{ fontSize: 11, fontWeight: active ? 700 : 500, color: active ? 'white' : (isOled ? '#a78bfa' : dm ? '#818cf8' : f.color), whiteSpace: 'nowrap' }}>{f.name}</span>
+                                    {folderUnread > 0 && <span style={{ background: active ? 'rgba(255,255,255,0.25)' : f.color, color: 'white', fontSize: 9, fontWeight: 700, borderRadius: 8, padding: '1px 5px', lineHeight: 1.4 }}>{folderUnread > 99 ? '99+' : folderUnread}</span>}
                                 </button>
                             );
                         })}
                     </div>
                 )}
 
-                <div style={{ ...darkStyles.sidebarScroll, paddingLeft: (!sidebarCompact && !isMobile && folders.length > 0) ? 60 : 0 }} onClick={() => pinMenu && setPinMenu(null)}>
+                {/* ── Mobile: Settings tab inline ── */}
+                {isMobile && mobileTab === 'settings' && (
+                    <div className="mobile-settings-screen" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                        <SettingsModal
+                            inline
+                            token={token}
+                            currentUsername={currentUsername}
+                            currentUserTag={currentUserTag}
+                            currentAvatar={currentUserAvatar}
+                            currentStatus={currentUserStatus}
+                            isOnline={wsConnState === 'connected'}
+                            theme={theme}
+                            onThemeChange={onThemeChange}
+                            onProfileUpdate={onProfileUpdate}
+                            onLogout={onLogout}
+                            onOpenFolders={() => { setFolderManagerInitialId(null); setFolderManagerReturnTo('mobile-settings'); setShowFolderManager(true); }}
+                            onOpenFavorites={() => { setMobileTab('chats'); setTimeout(() => { setActiveChat({ type: 'private', id: currentUserId, name: '⭐ Избранные' }); loadPrivateMessages(currentUserId); }, 50); }}
+                            onOpenArchive={() => { setMobileTab('chats'); setTimeout(() => setShowArchive(true), 50); }}
+                            onOpenSupport={() => { setShowSupportChat(true); }}
+                            onOpenAdmin={() => { setMobileTab('chats'); setTimeout(() => setShowAdminPanel(true), 50); }}
+                            onShowOnboarding={onShowOnboarding ? () => { setMobileTab('chats'); setTimeout(() => onShowOnboarding(), 200); } : undefined}
+                            accounts={accounts}
+                            currentUserId={currentUserId}
+                            onSwitchAccount={onSwitchAccount}
+                            onClose={() => setMobileTab('chats')}
+                        />
+                    </div>
+                )}
 
-                    {/* ─── Archive mode list ─── */}
+                {/* ── Mobile: Profile tab ── */}
+                {isMobile && mobileTab === 'profile' && (() => {
+                    const avatarSrc = currentUserAvatar ? config.fileUrl(currentUserAvatar) : null;
+                    const avatarBg2 = theme.avatarColor || '#6366f1';
+                    const isOnlineP = wsConnState === 'connected';
+                    const pgBg = isOled ? '#000000' : dm ? '#0a0a14' : '#f5f3ff';
+                    const cardBg = isOled ? '#0d0d18' : dm ? '#161625' : '#ffffff';
+                    const cardBorder = isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(255,255,255,0.05)' : '#ede9fe';
+                    const textPrimary = dm ? '#e2e8f0' : '#1e1b4b';
+                    const textSecondary = dm ? '#7c7caa' : '#9ca3af';
+                    const divider = isOled ? 'rgba(167,139,250,0.06)' : dm ? 'rgba(255,255,255,0.05)' : '#f3f4f6';
+                    const headerGrad = isOled
+                        ? 'linear-gradient(160deg,#050010 0%,#0a0020 60%,#000000 100%)'
+                        : dm
+                            ? 'linear-gradient(160deg,#1e1840 0%,#2d1f6e 60%,#1a1a3e 100%)'
+                            : 'linear-gradient(160deg,#5b4fcf 0%,#7c3aed 60%,#6366f1 100%)';
+                    const uploadAvatar = () => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = async (e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (!f) return; const r = await api.uploadAvatar(token, f); if (r.avatar) onProfileUpdate(currentUsername, r.avatar); }; i.click(); };
+                    const InfoRow = ({ icon, value, label }: { icon: React.ReactNode; value: string; label: string }) => (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', borderBottom: `1px solid ${divider}` }}>
+                            <div style={{ width: 38, height: 38, borderRadius: 10, background: isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : '#ede9fe', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: isOled ? '#a78bfa' : '#6366f1' }}>{icon}</div>
+                            <div>
+                                <div style={{ fontSize: 15, color: textPrimary, fontWeight: 500 }}>{value}</div>
+                                <div style={{ fontSize: 11, color: textSecondary, marginTop: 1 }}>{label}</div>
+                            </div>
+                        </div>
+                    );
+                    return (
+                        <div className="mobile-profile-screen" style={{ flex: 1, overflowY: 'auto', background: pgBg }}>
+                            {/* Gradient header */}
+                            <div style={{ background: headerGrad, padding: '40px 20px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative' }}>
+                                {/* Decorative circles */}
+                                <div style={{ position: 'absolute', top: -30, right: -20, width: 160, height: 160, borderRadius: '50%', background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
+                                <div style={{ position: 'absolute', bottom: -10, left: -30, width: 100, height: 100, borderRadius: '50%', background: 'rgba(255,255,255,0.03)', pointerEvents: 'none' }} />
+
+                                {/* Logout button */}
+                                <button onClick={onLogout} title={lang === 'en' ? 'Log out' : 'Выйти'} style={{ position: 'absolute', top: 12, right: 12, width: 36, height: 36, minHeight: 36, minWidth: 36, borderRadius: '50%', background: 'rgba(255,255,255,0.14)', border: '1px solid rgba(255,255,255,0.22)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.85)', zIndex: 2, backdropFilter: 'blur(8px)', padding: 0, flexShrink: 0 }}>
+                                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                                </button>
+
+                                {/* Avatar */}
+                                <div style={{ position: 'relative', marginBottom: 16 }}>
+                                    <div style={{ width: 100, height: 100, borderRadius: '50%', overflow: 'hidden', border: `3px solid ${isOled ? 'rgba(167,139,250,0.4)' : 'rgba(255,255,255,0.4)'}`, boxShadow: `0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px ${isOled ? 'rgba(167,139,250,0.2)' : 'rgba(255,255,255,0.15)'}`, background: avatarSrc ? 'transparent' : avatarBg2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        {avatarSrc ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ color: 'white', fontSize: 40, fontWeight: 800 }}>{currentUsername[0]?.toUpperCase()}</span>}
+                                    </div>
+                                </div>
+
+                                {/* Name + badges */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                                    <span style={{ fontSize: 23, fontWeight: 800, color: 'white', letterSpacing: -0.5 }}>{currentUsername}</span>
+                                    {DEV_TAGS.includes(currentUserTag || '') && <DevBadge />}
+                                    {TESTER_TAGS.includes(currentUserTag || '') && <TesterBadge />}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 20 }}>
+                                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: isOnlineP ? '#4ade80' : 'rgba(255,255,255,0.3)', boxShadow: isOnlineP ? '0 0 6px #4ade80' : 'none' }} />
+                                    <span style={{ fontSize: 13, color: isOnlineP ? '#86efac' : 'rgba(255,255,255,0.5)', fontWeight: 500 }}>
+                                        {isOnlineP ? (lang === 'en' ? 'Online' : 'В сети') : (lang === 'en' ? 'Offline' : 'Не в сети')}
+                                    </span>
+                                </div>
+
+                                {/* Action buttons */}
+                                <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+                                    {([
+                                        { label: lang === 'en' ? 'Photo' : 'Фото', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>, action: uploadAvatar },
+                                        { label: lang === 'en' ? 'Edit' : 'Изменить', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>, action: () => setMobileEditProfile(true) },
+                                        { label: lang === 'en' ? 'Settings' : 'Настройки', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>, action: () => setMobileTab('settings') },
+                                    ] as { label: string; icon: React.ReactNode; action: () => void }[]).map(b => (
+                                        <button key={b.label} onClick={b.action} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: '10px 4px 11px', background: isOled ? 'rgba(167,139,250,0.08)' : 'rgba(255,255,255,0.13)', border: `1px solid ${isOled ? 'rgba(167,139,250,0.2)' : 'rgba(255,255,255,0.22)'}`, borderRadius: 14, cursor: 'pointer', color: 'white', fontSize: 11, fontWeight: 600, backdropFilter: 'blur(8px)', letterSpacing: 0.2 }}>
+                                            {b.icon}{b.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Quick links: Favorites + Archive */}
+                            <div style={{ display: 'flex', gap: 10, padding: '14px 14px 4px' }}>
+                                {[
+                                    { label: lang === 'en' ? 'Favorites' : 'Избранное', icon: '⭐', action: () => { setMobileTab('chats'); setTimeout(() => { setActiveChat({ type: 'private', id: currentUserId, name: '⭐ Избранные' }); loadPrivateMessages(currentUserId); }, 50); } },
+                                    { label: lang === 'en' ? 'Archive' : 'Архив', icon: '📦', action: () => { setMobileTab('chats'); setTimeout(() => setShowArchive(true), 50); } },
+                                ].map(b => (
+                                    <button key={b.label} onClick={b.action} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, padding: '11px 14px', background: cardBg, border: `1px solid ${cardBorder}`, borderRadius: 14, cursor: 'pointer', color: textPrimary, fontSize: 13, fontWeight: 600, boxShadow: isOled ? '0 2px 12px rgba(0,0,0,0.6)' : 'none' }}>
+                                        <span style={{ fontSize: 18 }}>{b.icon}</span>{b.label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Info card */}
+                            <div className={`mobile-profile-info-card${miniTrack ? ' mobile-profile-now-playing-card' : ''}`} style={{ margin: '10px 14px', background: cardBg, border: `1px solid ${cardBorder}`, borderRadius: 16, overflow: 'hidden', boxShadow: isOled ? '0 2px 16px rgba(0,0,0,0.6)' : dm ? '0 2px 12px rgba(0,0,0,0.3)' : '0 2px 8px rgba(99,102,241,0.06)' }}>
+                                {currentUserStatus && <InfoRow value={currentUserStatus} label={lang === 'en' ? 'Bio' : 'О себе'} icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>} />}
+                                {currentUserTag && <InfoRow value={`@${currentUserTag}`} label={lang === 'en' ? 'Username' : 'Имя пользователя'} icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/></svg>} />}
+                                {currentUserPhone && <InfoRow value={currentUserPhone} label={lang === 'en' ? 'Phone' : 'Телефон'} icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2A19.8 19.8 0 0 1 11.6 19a19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.68 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6.08 6.08l1.8-1.8a2 2 0 0 1 2.11-.45c.9.32 1.85.55 2.81.68A2 2 0 0 1 22 16.92z"/></svg>} />}
+                                {currentUserBirthday && (() => {
+                                    const bd = new Date(currentUserBirthday);
+                                    const age = new Date().getFullYear() - bd.getFullYear() - (new Date() < new Date(new Date().getFullYear(), bd.getMonth(), bd.getDate()) ? 1 : 0);
+                                    const fmt = bd.toLocaleDateString(lang === 'en' ? 'en-US' : 'ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+                                    return <InfoRow value={`${fmt} (${age} ${lang === 'en' ? 'y.o.' : 'лет'})`} label={lang === 'en' ? 'Birthday' : 'День рождения'} icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>} />;
+                                })()}
+                                {miniTrack && <InfoRow value={miniTrack.title} label={`${lang === 'en' ? 'Now playing' : 'Сейчас играет'}${miniTrack.artist ? ` - ${miniTrack.artist}` : ''}`} icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>} />}
+                                {!currentUserStatus && !currentUserTag && !currentUserPhone && !currentUserBirthday && !miniTrack && (
+                                    <div style={{ padding: '20px 16px', textAlign: 'center', color: textSecondary, fontSize: 13 }}>
+                                        {lang === 'en' ? 'Add bio and username in Edit' : 'Добавьте о себе и тег в Изменить'}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {/* Profile editing (from "Изменить" button) — opens directly without settings menu */}
+                {isMobile && mobileEditProfile && (
+                    <Suspense fallback={null}>
+                        <ProfileSubModal
+                            token={token}
+                            currentUsername={currentUsername}
+                            currentAvatar={currentUserAvatar}
+                            currentStatus={currentUserStatus}
+                            theme={theme}
+                            onProfileUpdate={onProfileUpdate}
+                            onBack={() => setMobileEditProfile(false)}
+                        />
+                    </Suspense>
+                )}
+
+                <div
+                    ref={isMobile ? mobileChatListScrollRef : undefined}
+                    className={isMobile ? 'mobile-chat-list-scroll' : undefined}
+                    style={{ ...darkStyles.sidebarScroll, paddingLeft: (!sidebarCompact && !isMobile && folders.length > 0) ? 60 : 0, paddingBottom: isMobile ? 64 : 0, display: (isMobile && mobileTab !== 'chats') ? 'none' : undefined }}
+                    onScroll={isMobile ? e => { mobileChatListScrollTopRef.current = e.currentTarget.scrollTop; } : undefined}
+                    onClick={() => pinMenu && setPinMenu(null)}
+                >
+
+                    {/* ─── Archive mode list / main chat list ─── */}
                     {showArchive && (() => {
                         const allArch = archivedList;
                         if (allArch.length === 0) return (
@@ -3685,6 +4114,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             key={key}
                                             onClick={() => type === 'group' ? selectGroupChat(item as any) : selectPrivateChat(item as any)}
                                             onContextMenu={e => { e.preventDefault(); setPinMenu({ x: e.clientX, y: e.clientY, key }); }}
+                                            onTouchStart={e => startSidebarLongPress(e, key)}
+                                            onTouchMove={e => cancelSidebarLongPress(e)}
+                                            onTouchEnd={e => cancelSidebarLongPress(e)}
+                                            onTouchCancel={e => cancelSidebarLongPress(e)}
                                             className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}
                                             style={{ ...darkStyles.chatItem, ...(isActive ? darkStyles.activeChatItem : {}), position: 'relative' }}
                                         >
@@ -3753,6 +4186,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         loadPrivateMessages(currentUserId);
                                     }}
                                     onContextMenu={e => { e.preventDefault(); setPinMenu({ x: e.clientX, y: e.clientY, key: favKey }); }}
+                                    onTouchStart={e => startSidebarLongPress(e, favKey)}
+                                    onTouchMove={e => cancelSidebarLongPress(e)}
+                                    onTouchEnd={e => cancelSidebarLongPress(e)}
+                                    onTouchCancel={e => cancelSidebarLongPress(e)}
                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}
                                     style={{ ...darkStyles.chatItem, ...(activeChat?.type === 'private' && activeChat.id === currentUserId ? darkStyles.activeChatItem : {}), ...((sidebarCompact || sidebarMinimal) ? { justifyContent: 'center', padding: '6px 0' } : {}), position: 'relative' }}
                                 >
@@ -3786,6 +4223,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     key={`g-${group.id}`}
                                     onClick={() => selectGroupChat(group)}
                                     onContextMenu={e => { e.preventDefault(); setPinMenu({ x: e.clientX, y: e.clientY, key: `group-${group.id}` }); }}
+                                    onTouchStart={e => startSidebarLongPress(e, `group-${group.id}`)}
+                                    onTouchMove={e => cancelSidebarLongPress(e)}
+                                    onTouchEnd={e => cancelSidebarLongPress(e)}
+                                    onTouchCancel={e => cancelSidebarLongPress(e)}
                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}
                                     style={{
                                         ...darkStyles.chatItem,
@@ -3880,6 +4321,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     key={`u-${user.id}`}
                                     onClick={() => selectPrivateChat(user)}
                                     onContextMenu={e => { e.preventDefault(); setPinMenu({ x: e.clientX, y: e.clientY, key: `private-${user.id}` }); }}
+                                    onTouchStart={e => startSidebarLongPress(e, `private-${user.id}`)}
+                                    onTouchMove={e => cancelSidebarLongPress(e)}
+                                    onTouchEnd={e => cancelSidebarLongPress(e)}
+                                    onTouchCancel={e => cancelSidebarLongPress(e)}
                                     className={`sidebar-item${dm ? ' sidebar-item-dark' : ''}`}
                                     style={{ ...darkStyles.chatItem, ...(activeChat?.type === 'private' && activeChat.id === user.id ? darkStyles.activeChatItem : {}), ...((sidebarCompact || sidebarMinimal) ? { justifyContent: 'center', padding: '6px 0' } : {}), position: 'relative' }}
                                 >
@@ -3960,7 +4405,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 </div>{/* end sidebar body wrapper */}
 
                 {/* Mini player dock — music + chat audio */}
-                {(miniTrack || nowPlaying) && !sidebarHidden && (
+                {(miniTrack || nowPlaying) && !sidebarHidden && !(isMobile && activeChat) && (!isMobile || mobileTab === 'chats') && (
                     <MiniPlayer
                         track={miniTrack}
                         isPlaying={miniIsPlaying}
@@ -3969,6 +4414,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         trackDuration={miniDuration}
                         dm={dm}
                         isOled={isOled}
+                        isMobile={isMobile}
                         onToggle={() => miniControlsRef.current?.toggle()}
                         onPrev={() => miniControlsRef.current?.prev()}
                         onNext={() => miniControlsRef.current?.next()}
@@ -3983,8 +4429,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     />
                 )}
 
-                {/* Profile card */}
-                {(() => {
+                {/* Profile card — hidden on mobile (replaced by bottom tab bar) */}
+                {!isMobile && (() => {
                     const totalUnreadProfile = Object.values(unreadCounts).reduce((s, n) => s + n, 0);
                     const isOnline = wsConnState === 'connected';
                     const statusText = currentUserStatus?.trim();
@@ -4072,12 +4518,36 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 {activeChat ? (
                     <>
                         {/* Шапка */}
-                        <div className={isMobile ? 'mobile-chat-header' : undefined} style={{ ...darkStyles.chatHeader, ...(isMobile ? { padding: '0 10px', height: 56, minHeight: 56, maxHeight: 56 } : {}), position: 'relative' }}>
+                        <div className={isMobile ? `mobile-chat-header mobile-conversation-header${selectionMode ? ' mobile-selection-header' : ''}` : undefined} style={{ ...darkStyles.chatHeader, ...(isMobile ? { padding: '0 10px', height: 56, minHeight: 56, maxHeight: 56 } : {}), position: 'relative' }}>
+                        {/* Mobile selection mode — replaces header content */}
+                        {isMobile && selectionMode ? (() => {
+                            const selCol = dm ? '#e2e8f0' : '#1e1b4b';
+                            const selBtnStyle: React.CSSProperties = { background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: 8, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 'unset' };
+                            const canAct = selectedMsgIds.size > 0;
+                            const selMsgs = messages.filter(m => selectedMsgIds.has(m.id) && !m.is_deleted);
+                            const isFav = activeChatRef.current?.type === 'private' && activeChatRef.current?.id === currentUserId;
+                            return (
+                                <>
+                                    <button onClick={exitSelectionMode} style={{ ...selBtnStyle, color: selCol }}>
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                    </button>
+                                    <span style={{ flex: 1, fontSize: 17, fontWeight: 700, color: selCol, paddingLeft: 4 }}>{selectedMsgIds.size > 0 ? selectedMsgIds.size : ''}</span>
+                                    {canAct && (
+                                        <>
+                                            {selectedMsgIds.size === 1 && (() => { const msg = selMsgs[0] as any; return (<button onClick={() => { setReplyTo({ id: msg.id, text: msg.message_text || '', sender: msg.sender_name || (lang === 'en' ? 'You' : 'Вы'), file_path: msg.file_path, filename: msg.filename }); exitSelectionMode(); }} style={selBtnStyle}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg></button>); })()}
+                                            <button onClick={handleBulkForward} style={selBtnStyle}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg></button>
+                                            {selectedMsgIds.size === 1 && selMsgs[0] && (selMsgs[0] as any).message_text && (<button onClick={() => { navigator.clipboard.writeText((selMsgs[0] as any).message_text); exitSelectionMode(); }} style={selBtnStyle}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>)}
+                                            <button onClick={() => { isFav ? handleBulkDelete(false) : setBulkDeleteConfirm(true); }} style={{ ...selBtnStyle, color: '#ef4444' }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
+                                        </>
+                                    )}
+                                </>
+                            );
+                        })() : (<>
                             <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 6 : 12, flex: 1, minWidth: 0 }}>
                                 {/* Кнопка назад (мобильная) */}
                                 {isMobile && (
                                     <button
-                                        onClick={() => setActiveChat(null)}
+                                        onClick={() => window.history.back()}
                                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#a5b4fc' : '#6366f1', padding: '4px 4px 4px 0', borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center' }}
                                     ><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
                                 )}
@@ -4262,7 +4732,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     </>
                                 )}
                             </div>
-                            <div style={{ display: 'flex', gap: isMobile ? 4 : 8 }}>
+                            <div style={{ display: 'flex', gap: isMobile ? 4 : 8, flexShrink: 0, alignItems: 'center' }}>
                                 {/* Call buttons — only for DM (not self, not blocked) */}
                                 {!chatSearchOpen && activeChat.type === 'private' && activeChat.id !== currentUserId && !blockedUserIds.has(activeChat.id) && usersById.get(activeChat.id)?.last_seen !== 'blocked_you' && callInfo.state === 'idle' && (
                                     <>
@@ -4272,13 +4742,6 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             title={lang === 'en' ? 'Audio call' : 'Аудиозвонок'}
                                         >
                                             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-                                        </button>
-                                        <button
-                                            onClick={() => startCall(activeChat.id, activeChat.name, 'video')}
-                                            style={darkStyles.iconBtn}
-                                            title={lang === 'en' ? 'Video call' : 'Видеозвонок'}
-                                        >
-                                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
                                         </button>
                                     </>
                                 )}
@@ -4297,8 +4760,34 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     <button onClick={() => { setSelectedGroupId(activeChat.id); setShowInviteModal(true); }} style={darkStyles.iconBtn} title={t('Invite')}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></button>
                                 )}
                             </div>
+                        </>)}
                         </div>
 
+                        {isMobile && activeChat && (miniTrack || nowPlaying) && (
+                            <div className="mobile-chat-player-dock mobile-chat-player-top">
+                                <MiniPlayer
+                                    track={miniTrack}
+                                    isPlaying={miniIsPlaying}
+                                    volume={miniVolume}
+                                    trackProgress={miniProgress}
+                                    trackDuration={miniDuration}
+                                    dm={dm}
+                                    isOled={isOled}
+                                    isMobile
+                                    onToggle={() => miniControlsRef.current?.toggle()}
+                                    onPrev={() => miniControlsRef.current?.prev()}
+                                    onNext={() => miniControlsRef.current?.next()}
+                                    onVolume={v => { setMiniVolume(v); miniControlsRef.current?.setVol(v); }}
+                                    onOpen={() => setShowMediaPlayer(true)}
+                                    chatAudio={nowPlaying ? { filename: nowPlaying.filename, currentTime: globalCurrentTime, duration: globalDuration } : null}
+                                    chatAudioPlaying={globalPlaying}
+                                    onChatAudioToggle={toggleGlobalPlay}
+                                    onChatAudioStop={stopGlobal}
+                                    onChatAudioPrev={mediaPlaylist.length > 1 ? prevTrack : undefined}
+                                    onChatAudioNext={mediaPlaylist.length > 1 ? nextTrack : undefined}
+                                />
+                            </div>
+                        )}
 
 
                         {/* Disappearing messages banner */}
@@ -4376,7 +4865,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         <div
                             key={chatKey}
                             ref={messagesContainerRef}
-                            className={chatLoading ? undefined : 'messages-reveal'}
+                            className={`${chatLoading ? '' : 'messages-reveal'}${isMobile ? ' mobile-messages-area' : ''}`.trim() || undefined}
                             style={{ ...styles.messagesArea, backgroundColor: dm ? C.bg0 : '#f2f4f8', overflowAnchor: 'none', paddingRight: isMobile ? 10 : 24, paddingLeft: isMobile ? 10 : 24, paddingTop: isMobile ? 12 : 20, position: 'relative', display: chatLoading ? 'none' : undefined }}
                             onScroll={e => {
                                 const el = e.currentTarget;
@@ -4412,7 +4901,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         lastDay = day;
                                         items.push(
                                             <div key={`sep-${day}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '10px 0' }}>
-                                                <span style={{ fontSize: 11, color: isOled ? 'rgba(167,139,250,0.55)' : (dm ? '#888' : '#aaa'), whiteSpace: 'nowrap', padding: '2px 10px', backgroundColor: isOled ? 'rgba(167,139,250,0.06)' : (dm ? C.bg6 : '#efefef'), borderRadius: 10, border: isOled ? '1px solid rgba(167,139,250,0.12)' : 'none' }}>
+                                                <span className={isMobile ? 'mobile-date-separator' : undefined} style={{ fontSize: 11, color: isOled ? 'rgba(167,139,250,0.55)' : (dm ? '#888' : '#aaa'), whiteSpace: 'nowrap', padding: '2px 10px', backgroundColor: isOled ? 'rgba(167,139,250,0.06)' : (dm ? C.bg6 : '#efefef'), borderRadius: 10, border: isOled ? '1px solid rgba(167,139,250,0.12)' : 'none' }}>
                                                     {getDateLabel(msg.timestamp)}
                                                 </span>
                                             </div>
@@ -4473,7 +4962,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     {/* Hover action buttons */}
                                                     {(isGroupAdmin || msg.sender_id === currentUserId) && hoveredMsgId === msg.id && editingMessageId !== msg.id && (
                                                         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                                                            {(isGroupAdmin || msg.sender_id === currentUserId) && (
+                                                            {(isGroupAdmin || msg.sender_id === currentUserId) && !isGif(msg.message_text) && !isSticker(msg.message_text) && (
                                                                 <button onClick={e => { e.stopPropagation(); handleEdit(msg.id, msg.message_text ?? ''); }}
                                                                     style={{ background: dm ? 'rgba(99,102,241,0.15)' : '#f0eeff', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', color: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title={t('Edit')}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
                                                             )}
@@ -4489,7 +4978,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     {filesArr.length > 0 && (
                                                         <div style={{ marginBottom: msg.message_text ? 8 : 0 }}>
                                                             {filesArr.filter((f: any) => isImgFile(f.filename || '')).length > 0
-                                                                ? <ImageGrid images={filesArr.filter((f: any) => isImgFile(f.filename || '')).map((f: any) => ({ url: f.file_path?.startsWith('http') ? f.file_path : `${BASE_URL}${f.file_path}`, name: f.filename || '' }))} />
+                                                                ? <ImageGrid images={filesArr.filter((f: any) => isImgFile(f.filename || '')).map((f: any) => ({ url: config.fileUrl(f.file_path) ?? f.file_path, name: f.filename || '' }))} />
                                                                 : filesArr.map((f: any, i: number) => <FileMessage key={i} filePath={f.file_path} filename={f.filename || ''} fileSize={f.file_size} isOwn={false} isDark={dm} />)
                                                             }
                                                         </div>
@@ -4610,14 +5099,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     const senderInitial = ((msg as any).sender_name || senderUser?.username || '?')[0]?.toUpperCase() || '?';
                                     const hasReactions = (reactions[msg.id]?.length || 0) > 0;
                                     const isSelected = selectedMsgIds.has(msg.id);
-                                    const isSwiping = isMobile && swipingMsgId === msg.id;
-                                    const msgSwipeX = isSwiping ? swipeOffset : 0;
+                                    const compactPrivateMessages = isMobile && activeChat.type === 'private';
                                     items.push(
                                     <div
                                         key={msg.id}
                                         id={`msg-${msg.id}`}
                                         {...(!isOwn ? { 'data-group-msg-id': msg.id } : {})}
-                                        className={deletingMsgIds.has(msg.id) ? 'msg-delete' : (isOwn ? 'msg-in-own' : 'msg-in-other')}
+                                        className={`${deletingMsgIds.has(msg.id) ? 'msg-delete' : (isOwn ? 'msg-in-own' : 'msg-in-other')}${isMobile ? ` mobile-message-row ${isOwn ? 'own' : 'other'}${selectionMode ? ' selecting' : ''}${isSelected ? ' selected' : ''}` : ''}`}
                                         onMouseEnter={() => !selectionMode && setHoveredMsgId(msg.id)}
                                         onMouseLeave={() => { setHoveredMsgId(null); setReactionPickerMsgId(null); }}
                                         onClick={selectionMode ? () => toggleMsgSelection(msg.id) : undefined}
@@ -4633,8 +5121,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             gap: 6,
                                             marginBottom: 12,
                                             cursor: selectionMode ? 'pointer' : 'default',
-                                            transform: msgSwipeX > 0 ? `translateX(${msgSwipeX}px)` : undefined,
-                                            transition: isSwiping ? 'background-color 0.1s' : 'transform 0.2s cubic-bezier(0.4,0,0.2,1), background-color 0.1s',
+                                            transition: 'background-color 0.1s',
                                             position: 'relative' as const,
                                             backgroundColor: selectionMode && isSelected
                                                 ? (dm ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.07)')
@@ -4647,18 +5134,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             padding: selectionMode ? '2px 6px' : '0',
                                         }}
                                     >
-                                        {/* Swipe-to-reply indicator */}
-                                        {isSwiping && msgSwipeX > 8 && (
-                                            <div style={{ position: 'absolute', left: isOwn ? undefined : -36, right: isOwn ? -36 : undefined, top: '50%', transform: 'translateY(-50%)', width: 28, height: 28, borderRadius: '50%', background: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: Math.min(msgSwipeX / 52, 1), zIndex: 0 }}>
-                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
-                                            </div>
-                                        )}
+                                        {/* Swipe-to-reply indicator rendered by onMsgTouchMove via DOM */}
                                         {selectionMode && (
-                                            <div style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', border: `2px solid ${isSelected ? '#6366f1' : (dm ? '#5a5a8a' : '#c4b5fd')}`, backgroundColor: isSelected ? '#6366f1' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s', order: 0 }}>
+                                            <div className={`mobile-selection-check${isSelected ? ' selected' : ''}`} style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', border: `2px solid ${isSelected ? '#6366f1' : (dm ? '#5a5a8a' : '#c4b5fd')}`, backgroundColor: isSelected ? '#6366f1' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s', order: 0 }}>
                                                 {isSelected && <svg width="12" height="12" viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
                                             </div>
                                         )}
-                                        {!isOwn && (
+                                        {!isOwn && !compactPrivateMessages && (
                                             <div
                                                 style={{ width: 28, height: 28, borderRadius: '50%', backgroundColor: senderAvatar ? (dm ? C.bg2 : '#f3f4f6') : senderAvatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 12, color: 'white', fontWeight: 700, cursor: 'pointer', alignSelf: 'flex-end', marginBottom: hasReactions ? 32 : 2 }}
                                                 onClick={() => { setSelectedUserForProfile(senderUser ?? { id: msg.sender_id, username: (msg as any).sender_name || '', email: '', created_at: '', avatar: senderAvatar || undefined, avatar_color: senderAvatarColor }); }}
@@ -4671,7 +5153,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             </div>
                                         )}
 
-                                        <div style={{ position: 'relative', display: 'inline-block', maxWidth: isMediaOnlyMsg(msg) ? (isMobile ? '88%' : '72%') : hasMediaWithCaption(msg) ? (isMobile ? 'min(300px, 78vw)' : 380) : (isMobile ? '82%' : '62%') }}>
+                                        <div style={{ position: 'relative', display: 'inline-block', maxWidth: compactPrivateMessages ? (isMediaOnlyMsg(msg) ? (isMobile ? '94%' : '76%') : hasMediaWithCaption(msg) ? (isMobile ? 'min(330px, 88vw)' : 420) : (isMobile ? '90%' : '68%')) : (isMediaOnlyMsg(msg) ? (isMobile ? '88%' : '72%') : hasMediaWithCaption(msg) ? (isMobile ? 'min(300px, 78vw)' : 380) : (isMobile ? '82%' : '62%')) }}>
                                         {/* Media pre-bubble: фото/видео отдельным пузырём когда есть и не-медиа файлы */}
                                         {(() => {
                                             const filesRaw = (msg as any).files;
@@ -4684,7 +5166,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             if (mediaFiles.length === 0 || nonMediaFiles.length === 0) return null;
                                             const IS_VID = (fn: string) => /\.(mp4|webm|mov|avi|mkv|m4v)$/i.test(fn);
                                             const IS_IMG = (fn: string) => /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(fn);
-                                            const toUrl = (fp: string) => fp?.startsWith('http') ? fp : `${BASE_URL}${fp}`;
+                                            const toUrl = (fp: string) => config.fileUrl(fp) ?? fp;
                                             const playVideo = (src: string, fn: string) => { setNowPlayingVideo({ src, filename: fn }); setTimeout(() => { if (floatingVideoRef.current) { floatingVideoRef.current.src = src; floatingVideoRef.current.play().catch(() => {}); } }, 100); };
                                             return (
                                                 <div style={{ borderRadius: isOwn ? '18px 4px 18px 18px' : '4px 18px 18px 18px', overflow: 'hidden', display: 'block', marginBottom: 4, maxWidth: isMobile ? 300 : 340 }}>
@@ -4695,7 +5177,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                             inBubble={false} hasCaption={false}
                                                             onPlay={playGlobalAudio} onPlayVideo={playVideo}
                                                             nowPlayingSrc={nowPlaying?.src} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} globalDuration={globalDuration} onGlobalSeek={seekGlobal} onGlobalToggle={toggleGlobalPlay} onDurationKnown={handleDurationKnown}
-                                                            knownDuration={knownAudioDurations.current.get(mediaFiles[0].file_path?.startsWith('http') ? mediaFiles[0].file_path : `${BASE_URL}${mediaFiles[0].file_path}`)}
+                                                            knownDuration={knownAudioDurations.current.get(config.fileUrl(mediaFiles[0].file_path) ?? mediaFiles[0].file_path)}
                                                         />
                                                     ) : (
                                                         <MediaGrid items={mediaFiles.map((f: any) => ({ url: toUrl(f.file_path), name: f.filename || 'file', type: IS_IMG(f.filename || '') ? 'image' as const : 'video' as const, onPlayVideo: IS_VID(f.filename || '') ? playVideo : undefined }))} />
@@ -4704,8 +5186,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                             );
                                         })()}
                                         <div
+                                            className={isMobile ? `mobile-message-bubble ${isOwn ? 'own' : 'other'}${isSpecialMsg(msg.message_text) || isMediaOnlyMsg(msg) ? ' no-bubble' : ''}` : undefined}
                                             onContextMenu={(e) => handleContextMenu(e, msg)}
-                                            {...(isMobile ? makeLongPressHandlers(msg) : {})}
+                                            data-msg-id={msg.id}
+                                            onTouchStart={isMobile ? onMsgTouchStart : undefined}
+                                            onTouchMove={isMobile ? onMsgTouchMove : undefined}
+                                            onTouchEnd={isMobile ? onMsgTouchEnd : undefined}
+                                            onTouchCancel={isMobile ? onMsgTouchCancel : undefined}
                                             style={(() => {
                                                 const noBubble = isSpecialMsg(msg.message_text) || isMediaOnlyMsg(msg);
                                                 if (noBubble) return {
@@ -4728,7 +5215,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     maxWidth: '100%',
                                                     padding: '10px 14px',
                                                     borderRadius: isOwn ? '18px 4px 18px 18px' : '4px 18px 18px 18px',
-                                                    overflow: geoMsg ? ('hidden' as const) : undefined,
+                                                    overflow: (geoMsg || mediaCap) ? ('hidden' as const) : undefined,
                                                     wordBreak: 'break-word' as const,
                                                     fontSize: theme.fontSize,
                                                     boxShadow: isOwn
@@ -4790,7 +5277,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                                 {msg.reply_to_sender || (lang === 'en' ? 'someone' : 'кто-то')}
                                                             </div>
                                                             <div style={{ color: isOwn ? 'rgba(255,255,255,0.75)' : (isOled ? '#9090b8' : (dm ? '#9090b8' : '#6b7280')), fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}>
-                                                                {msg.reply_to_text ? msg.reply_to_text : `📎 ${lang === 'en' ? 'attachment' : 'вложение'}`}
+                                                                {msg.reply_to_text ? formatReplyPreview(msg.reply_to_text) : `📎 ${lang === 'en' ? 'attachment' : 'вложение'}`}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -4846,7 +5333,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                     onGlobalSeek={seekGlobal}
                                                     onGlobalToggle={toggleGlobalPlay}
                                                     onDurationKnown={handleDurationKnown}
-                                                    knownDuration={knownAudioDurations.current.get(msg.file_path.startsWith('http') ? msg.file_path : `${BASE_URL}${msg.file_path}`)}
+                                                    knownDuration={knownAudioDurations.current.get(config.fileUrl(msg.file_path) ?? msg.file_path)}
                                                     token={token}
                                                 />
                                                 );
@@ -4859,7 +5346,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                 const IS_IMG = (fn: string) => /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(fn);
                                                 const IS_VID = (fn: string) => /\.(mp4|webm|mov|avi|mkv|m4v)$/i.test(fn);
                                                 const IS_AUD = (fn: string) => /\.(mp3|ogg|wav|flac|aac|m4a|opus|weba)$/i.test(fn);
-                                                const toUrl = (fp: string) => fp?.startsWith('http') ? fp : `${BASE_URL}${fp}`;
+                                                const toUrl = (fp: string) => config.fileUrl(fp) ?? fp;
                                                 const playVideo = (src: string, fn: string) => { setNowPlayingVideo({ src, filename: fn }); setTimeout(() => { if (floatingVideoRef.current) { floatingVideoRef.current.src = src; floatingVideoRef.current.play().catch(() => {}); } }, 100); };
                                                 // Split into 3 groups preserving order
                                                 const mediaFiles = filesArr.filter((f: any) => IS_IMG(f.filename || '') || IS_VID(f.filename || ''));
@@ -4896,7 +5383,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                                 inBubble={false} hasCaption={false}
                                                                 onPlay={playGlobalAudio} onPlayVideo={playVideo}
                                                                 nowPlayingSrc={nowPlaying?.src} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} globalDuration={globalDuration} onGlobalSeek={seekGlobal} onGlobalToggle={toggleGlobalPlay} onDurationKnown={handleDurationKnown}
-                                                                knownDuration={knownAudioDurations.current.get(f.file_path?.startsWith('http') ? f.file_path : `${BASE_URL}${f.file_path}`)}
+                                                                knownDuration={knownAudioDurations.current.get(config.fileUrl(f.file_path) ?? f.file_path)}
                                                             />
                                                         ))}
                                                         {/* Documents */}
@@ -5072,7 +5559,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                             isPoll(fwdBody)
                                                                 ? (() => { const pid = getPollId(fwdBody); return pid ? <PollMessage key={`fwd-poll-${pid}`} pollId={pid} token={token} isDark={dm} isOled={isOled} isOwn={isOwn} /> : null; })()
                                                             : isSticker(fwdBody) || isGif(fwdBody)
-                                                                ? <img src={fwdBody.replace(/^__(sticker|gif)__:/, '')} alt={isGif(fwdBody) ? 'GIF' : 'Sticker'} style={{ maxWidth: 220, maxHeight: 220, borderRadius: 8, display: 'block' }} />
+                                                                ? <img src={specialUrl(fwdBody)} alt={isGif(fwdBody) ? 'GIF' : 'Sticker'} style={{ maxWidth: isMobile ? 'min(220px, 62vw)' : 220, maxHeight: 220, borderRadius: 12, display: 'block', objectFit: 'contain' }} />
                                                             : isGeo(fwdBody)
                                                                 ? (() => { const geo = getGeo(fwdBody); if (!geo) return null; const mapSrc = `https://static-maps.yandex.ru/1.x/?lang=ru_RU&ll=${geo.lon},${geo.lat}&z=15&l=map&size=560,220&pt=${geo.lon},${geo.lat},pm2rdl`; const mapsUrl = `https://www.openstreetmap.org/?mlat=${geo.lat}&mlon=${geo.lon}#map=15/${geo.lat}/${geo.lon}`; return <a href={mapsUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'block', textDecoration: 'none', margin: '-10px -14px -10px', minWidth: isMobile ? 220 : 260 }}><div style={{ position: 'relative', height: isMobile ? 130 : 160 }}><img src={mapSrc} alt="map" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} /><div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-60%)', width: 20, height: 20, borderRadius: '50%', background: '#ef4444', border: '3px solid white', boxShadow: '0 2px 8px rgba(0,0,0,0.5)' }} /></div><div style={{ padding: '9px 12px 10px', background: isOwn ? 'rgba(0,0,0,0.15)' : (dm ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)') }}><span style={{ fontSize: 13, fontWeight: 700, color: isOwn ? 'white' : (dm ? '#e2e8f0' : '#1e1b4b') }}>{geo.name}</span></div></a>; })()
                                                             : isContact(fwdBody)
@@ -5176,7 +5663,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         );
                                     })()}
                                     </div>
-                                    {isOwn && !selectionMode && (
+                                    {isOwn && !compactPrivateMessages && !selectionMode && (
                                         <div
                                             style={{ width: 28, height: 28, borderRadius: '50%', backgroundColor: currentUserAvatar ? (dm ? C.bg2 : '#f3f4f6') : avatarBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 12, color: 'white', fontWeight: 700, alignSelf: 'flex-end', marginBottom: hasReactions ? 32 : 2 }}
                                         >
@@ -5389,7 +5876,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                                                         <div style={{ fontSize: 13, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{parsed.mainText}{(c as any).edited_at && <span style={{ fontSize: 10, opacity: 0.55, marginLeft: 4 }}>{t('edited')}</span>}</div>
                                                                     </>;
                                                                 })()}
-                                                                {c.file_path && <FileMessage filePath={c.file_path} filename={(c as any).filename || ''} fileSize={(c as any).file_size} isOwn={isOwn2} isDark={dm} onPlay={playGlobalAudio} nowPlayingSrc={nowPlaying?.src} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} knownDuration={knownAudioDurations.current.get(c.file_path?.startsWith('http') ? c.file_path : `${BASE_URL}${c.file_path}`)} />}
+                                                                {c.file_path && <FileMessage filePath={c.file_path} filename={(c as any).filename || ''} fileSize={(c as any).file_size} isOwn={isOwn2} isDark={dm} onPlay={playGlobalAudio} nowPlayingSrc={nowPlaying?.src} globalPlaying={globalPlaying} globalCurrentTime={globalCurrentTime} knownDuration={knownAudioDurations.current.get(config.fileUrl(c.file_path) ?? c.file_path)} />}
                                                             </>
                                                         )}
                                                         <div style={{ fontSize: 10, opacity: 0.5, marginTop: 4, textAlign: isOwn2 ? 'right' : 'left' }}>{new Date(c.timestamp).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ru-RU', { hour: '2-digit', minute: '2-digit' })}</div>
@@ -5486,7 +5973,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isOled ? '#a78bfa' : '#6366f1'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                                     <div style={{ minWidth: 0 }}>
                                         <div style={{ fontSize: 11, fontWeight: 700, color: isOled ? '#a78bfa' : '#6366f1', marginBottom: 1 }}>{lang === 'en' ? 'Editing message' : 'Редактирование'}</div>
-                                        <div style={{ fontSize: 12, color: dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{editingText.slice(0, 80)}</div>
+                                        <div style={{ fontSize: 12, color: dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{formatReplyPreview(editingText).slice(0, 80)}</div>
                                     </div>
                                 </div>
                                 <button onClick={() => { setEditingMessageId(null); setEditingText(''); if (inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; setInputCharCount(0); } }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#5a5a8a' : '#a5b4fc', padding: '2px 4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
@@ -5518,7 +6005,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         <div style={{ minWidth: 0 }}>
                                             <div style={{ fontSize: 10, fontWeight: 700, color: isOled ? '#a78bfa' : dm ? '#818cf8' : '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>{replyTo.sender_name || t('Reply')}</div>
                                             <div style={{ fontSize: 12, color: isOled ? '#6b6b9a' : dm ? '#9090b8' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                {replyTo.message_text?.slice(0, 80) || replyFileLabel || `📎 ${lang === 'en' ? 'file' : 'файл'}`}
+                                                {formatReplyPreview(replyTo.message_text)?.slice(0, 80) || replyFileLabel || `📎 ${lang === 'en' ? 'file' : 'файл'}`}
                                             </div>
                                         </div>
                                     </div>
@@ -5609,7 +6096,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         )}
 
                         {/* Режим выбора сообщений */}
-                        {selectionMode && (
+                        {selectionMode && !isMobile && (
                             <div className="bar-enter" style={{ ...darkStyles.inputArea, justifyContent: 'space-between', padding: '10px 16px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                     <button onClick={exitSelectionMode} style={{ background: 'none', border: `1.5px solid ${dm ? C.bdr2 : '#ede9fe'}`, borderRadius: 10, padding: '7px 14px', cursor: 'pointer', color: dm ? '#c0c0d8' : '#6b7280', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> {t('Cancel')}</button>
@@ -5632,6 +6119,40 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 </div>
                             </div>
                         )}
+                        {/* Mobile selection bottom bar — Reply + Forward */}
+                        {selectionMode && isMobile && (() => {
+                            const selBg = isOled ? 'rgba(0,0,0,0.96)' : dm ? 'rgba(8,8,18,0.94)' : 'rgba(255,255,255,0.96)';
+                            const divider = `1px solid ${isOled ? 'rgba(167,139,250,0.12)' : dm ? 'rgba(167,139,250,0.14)' : 'rgba(139,92,246,0.12)'}`;
+                            const canAct = selectedMsgIds.size > 0;
+                            const selMsgs = messages.filter(m => selectedMsgIds.has(m.id) && !m.is_deleted);
+                            const canReply = selectedMsgIds.size === 1;
+                            const btnBase: React.CSSProperties = { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: 'none', border: 'none', cursor: canAct ? 'pointer' : 'default', fontSize: 15, fontWeight: 700, opacity: canAct ? 1 : 0.35, minHeight: 'unset', padding: '14px 0', WebkitTapHighlightColor: 'transparent' };
+                            return (
+                                <div className="mobile-selection-actions modal-enter" style={{ display: 'flex', background: selBg, flexShrink: 0, margin: '8px 12px calc(10px + env(safe-area-inset-bottom, 0px))', borderRadius: 24, overflow: 'hidden', border: divider, boxShadow: isOled ? '0 18px 60px rgba(0,0,0,0.95), 0 0 0 1px rgba(167,139,250,0.07)' : dm ? '0 16px 52px rgba(0,0,0,0.55)' : '0 16px 44px rgba(76,61,135,0.2)', backdropFilter: 'blur(22px)', WebkitBackdropFilter: 'blur(22px)' }}>
+                                    <button
+                                        disabled={!canAct || !canReply}
+                                        onClick={() => {
+                                            if (!canAct || !canReply) return;
+                                            const msg = selMsgs[0] as any;
+                                            setReplyTo({ id: msg.id, text: msg.message_text || '', sender: msg.sender_name || (lang === 'en' ? 'You' : 'Вы'), file_path: msg.file_path, filename: msg.filename });
+                                            exitSelectionMode();
+                                        }}
+                                        style={{ ...btnBase, color: dm ? '#c4b5fd' : '#6366f1', borderRight: divider }}
+                                    >
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
+                                        {lang === 'en' ? 'Reply' : 'Ответить'}
+                                    </button>
+                                    <button
+                                        disabled={!canAct}
+                                        onClick={canAct ? handleBulkForward : undefined}
+                                        style={{ ...btnBase, color: dm ? '#c4b5fd' : '#6366f1' }}
+                                    >
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg>
+                                        {lang === 'en' ? 'Forward' : 'Переслать'}
+                                    </button>
+                                </div>
+                            );
+                        })()}
 
                         {/* Ввод */}
                         {!selectionMode && isChannelChat && !isChannelMember && (
@@ -5759,7 +6280,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         {!selectionMode && !isDeletedUser && !isBlockedByMeInput && !isBlockedByThemInput && (!isChannelChat || isGroupAdmin) && <div className="chat-input-area" style={{ ...darkStyles.inputArea, position: 'relative' }}>
                             {showEmojiPicker && (
                                 <MediaPicker
-                                    onSelectEmoji={emoji => { if (inputRef.current) { inputRef.current.value += emoji; autoResize(inputRef.current); inputRef.current.focus(); } }}
+                                    onSelectEmoji={emoji => { if (inputRef.current) { const _sc = messagesContainerRef.current; const _st = _sc?.scrollTop ?? 0; inputRef.current.value += emoji; autoResize(inputRef.current); if (_sc) _sc.scrollTop = _st; inputRef.current.focus(); } }}
                                     onSendSticker={url => { sendStickerMessage(url); setShowEmojiPicker(false); }}
                                     onSendGif={url => { sendSpecialMessage('__gif__' + url); setShowEmojiPicker(false); }}
                                     onClose={() => setShowEmojiPicker(false)}
@@ -5890,7 +6411,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 );
                             })()}
                             {/* Input pill */}
-                            <div style={darkStyles.inputPill}>
+                            <div className={isMobile ? 'mobile-composer-pill' : undefined} style={darkStyles.inputPill}>
                                 <button onClick={() => setShowEmojiPicker(p => !p)} style={{ ...darkStyles.pillBtn, color: showEmojiPicker ? (dm ? '#a5b4fc' : '#6366f1') : (dm ? (isOled ? '#a78bfa' : '#7c7caa') : '#9ca3af') }} title={lang === 'en' ? 'Emoji' : 'Эмодзи'}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
                                 <textarea
                                     ref={inputRef}
@@ -5998,25 +6519,34 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>, label: lang === 'en' ? 'Contact' : 'Контакт', color: '#f97316', action: () => { setShowAttachMenu(false); setShowContactPicker(true); } },
                                     ];
                                     if (isMobile) {
-                                        // Bottom sheet on mobile — avoids ghost-click and keyboard-shift issues
                                         return (
-                                            <div style={{ position: 'fixed', inset: 0, zIndex: 400, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }} onClick={() => setShowAttachMenu(false)}>
-                                                <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)' }} />
-                                                <div className="modal-enter mobile-bottom-sheet" style={{ position: 'relative', background: isOled ? '#0a0a14' : (dm ? '#1a1a2e' : 'white'), borderRadius: '20px 20px 0 0', padding: '8px 0 env(safe-area-inset-bottom,12px)', zIndex: 1 }} onClick={e => e.stopPropagation()}>
-                                                    <div style={{ width: 36, height: 4, borderRadius: 2, background: dm ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)', margin: '6px auto 12px' }} />
+                                            <div style={{ position: 'fixed', inset: 0, zIndex: 900 }} onClick={() => setShowAttachMenu(false)}>
+                                                <div className="modal-backdrop-enter" style={{ position: 'absolute', inset: 0, background: isOled ? 'rgba(0,0,0,0.62)' : 'rgba(10,6,26,0.32)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }} />
+                                                <div
+                                                    className="floating-enter mobile-create-sheet"
+                                                    style={{
+                                                        position: 'fixed',
+                                                        left: 12,
+                                                        right: 12,
+                                                        bottom: 'calc(12px + env(safe-area-inset-bottom, 0px))',
+                                                        zIndex: 901,
+                                                        background: isOled ? '#000000' : (dm ? '#0d0b18' : '#ffffff'),
+                                                        borderRadius: 24,
+                                                        border: `1px solid ${isOled ? 'rgba(167,139,250,0.22)' : dm ? 'rgba(167,139,250,0.18)' : 'rgba(99,102,241,0.14)'}`,
+                                                        boxShadow: isOled ? '0 18px 44px rgba(0,0,0,0.92), 0 0 24px rgba(124,58,237,0.12)' : dm ? '0 18px 44px rgba(0,0,0,0.48)' : '0 18px 44px rgba(76,61,135,0.18)',
+                                                        overflow: 'hidden',
+                                                        padding: 8,
+                                                    }}
+                                                    onClick={e => e.stopPropagation()}
+                                                >
                                                     {attachItems.map((item, i) => (
-                                                        <button key={i} onPointerUp={() => item.action()} style={{ display: 'flex', alignItems: 'center', gap: 14, width: '100%', padding: '14px 22px', background: 'none', border: 'none', cursor: 'pointer', color: isOled ? '#c4b5fd' : (dm ? '#e2e8f0' : '#1e1b4b'), fontSize: 16, textAlign: 'left', WebkitTapHighlightColor: 'transparent' }}>
-                                                            <div style={{ width: 42, height: 42, borderRadius: '50%', background: `${item.color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: item.color, flexShrink: 0 }}>
+                                                        <button key={i} className="mobile-create-menu-item" onPointerUp={() => item.action()} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '14px 16px', background: 'transparent', border: 'none', borderRadius: 16, cursor: 'pointer', color: dm ? '#e0e0f0' : '#1e1b4b', fontSize: 15, textAlign: 'left', WebkitTapHighlightColor: 'transparent' }}>
+                                                            <span style={{ color: item.color, display: 'inline-flex', flexShrink: 0 }}>
                                                                 {item.icon}
-                                                            </div>
-                                                            <span style={{ fontWeight: 500 }}>{item.label}</span>
+                                                            </span>
+                                                            <span style={{ fontWeight: 600 }}>{item.label}</span>
                                                         </button>
                                                     ))}
-                                                    {serverInfo?.storage === 'cloudinary' && (
-                                                        <div style={{ padding: '6px 22px 10px', fontSize: 12, color: dm ? '#6060a0' : '#9ca3af' }}>
-                                                            ☁️ {lang === 'en' ? `Image ≤${serverInfo.max_image_mb} MB · Video ≤${serverInfo.max_video_mb} MB` : `Фото ≤${serverInfo.max_image_mb} МБ · Видео ≤${serverInfo.max_video_mb} МБ`}
-                                                        </div>
-                                                    )}
                                                 </div>
                                             </div>
                                         );
@@ -6087,7 +6617,21 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         </div>}
                     </>
                 ) : (
-                    <div className="fadein-up" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 40px', gap: 32, overflowY: 'auto' }}>
+                    <div className="fadein-up" style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flex: 1,
+                        padding: '32px 40px',
+                        gap: 32,
+                        overflowY: 'auto',
+                        background: isOled
+                            ? '#000000'
+                            : dm
+                                ? `radial-gradient(circle at 50% 18%, rgba(99,102,241,0.12), transparent 32%), ${theme.chatBg || C.bg0}`
+                                : theme.chatBg || '#f2f4f8',
+                    }}>
                         {/* Logo + greeting */}
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
                             <div style={{ width: 72, height: 72, borderRadius: '50%', background: isOled ? 'linear-gradient(135deg,rgba(124,58,237,0.2),rgba(167,139,250,0.1))' : dm ? 'linear-gradient(135deg,rgba(99,102,241,0.2),rgba(139,92,246,0.1))' : 'linear-gradient(135deg,#ede9fe,#f5f3ff)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: isOled ? '0 0 40px rgba(167,139,250,0.15)' : dm ? '0 4px 24px rgba(99,102,241,0.12)' : '0 4px 24px rgba(99,102,241,0.1)', color: isOled ? '#a78bfa' : dm ? '#818cf8' : '#6366f1' }}>
@@ -6095,7 +6639,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             </div>
                             <div>
                                 <div style={{ fontWeight: 800, fontSize: 22, color: dm ? '#e2e8f0' : '#1e1b4b', textAlign: 'center', letterSpacing: -0.3 }}>Aurora</div>
-                                <div style={{ fontSize: 13, color: dm ? '#5a5a8a' : '#9ca3af', textAlign: 'center', marginTop: 4 }}>{lang === 'en' ? 'Select a chat or start a new one' : 'Выберите чат или начните новый'}</div>
+                                <div style={{ fontSize: 13, color: isOled ? '#8b7dc8' : dm ? '#a5b4fc' : '#6b7280', textAlign: 'center', marginTop: 4 }}>{lang === 'en' ? 'Select a chat or start a new one' : 'Выберите чат или начните новый'}</div>
                             </div>
                         </div>
 
@@ -6124,12 +6668,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             const favEntry = favoritesLastMsg?.time && !hiddenChats.has(`private-${currentUserId}`) ? [{ kind: 'favorites' as const, data: { last_msg_time: favoritesLastMsg.time, last_msg_text: favoritesLastMsg.text, last_msg_file: favoritesLastMsg.file, last_msg_filename: favoritesLastMsg.filename } }] : [];
                             const recent = [...favEntry, ...recentUsers.map(u => ({ kind: 'user' as const, data: u })), ...recentGroups.map(g => ({ kind: 'group' as const, data: g }))].sort((a, b) => new Date((b.data as any).last_msg_time!).getTime() - new Date((a.data as any).last_msg_time!).getTime()).slice(0, 5);
                             if (!recent.length) return null;
-                            const cardBg = isOled ? '#050508' : dm ? '#12122a' : 'white';
-                            const cardBorder = isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.12)' : '#f0eeff';
+                            const cardBg = isOled ? '#050508' : dm ? '#18182d' : 'white';
+                            const cardBorder = isOled ? 'rgba(167,139,250,0.14)' : dm ? 'rgba(99,102,241,0.2)' : '#f0eeff';
                             return (
                                 <div style={{ width: '100%', maxWidth: 460 }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                                        <span style={{ fontSize: 12, fontWeight: 700, color: isOled ? '#7c6aaa' : dm ? '#5a5a8a' : '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{lang === 'en' ? 'Recent' : 'Недавние'}</span>
+                                        <span style={{ fontSize: 12, fontWeight: 700, color: isOled ? '#9f8cff' : dm ? '#a5b4fc' : '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{lang === 'en' ? 'Recent' : 'Недавние'}</span>
                                         {allUnread > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: 'white', background: isOled ? '#7c3aed' : '#6366f1', borderRadius: 10, padding: '2px 8px' }}>{allUnread} {lang === 'en' ? 'unread' : 'непрочитанных'}</span>}
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -6183,7 +6727,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             {menuMessage && (
                 <>
                 {/* Backdrop for mobile bottom sheet */}
-                {isMobile && <div style={{ position: 'fixed', inset: 0, zIndex: 9998, background: 'rgba(0,0,0,0.4)' }} onClick={() => setMenuMessageId(null)} />}
+                {isMobile && <div style={{ position: 'fixed', inset: 0, zIndex: 9998, background: 'rgba(0,0,0,0.4)' }} onClick={() => setMenuMessageId(null)} onTouchMove={e => e.preventDefault()} />}
                 <div
                     ref={menuContainerRef}
                     data-ctx-mobile={isMobile ? 'true' : undefined}
@@ -6223,13 +6767,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             }
                             return (
                     <div style={{ ...styles.menu, backgroundColor: menuBg, boxShadow: menuGlow, padding: 0, overflow: 'hidden', maxHeight: isMobile ? '75vh' : '80vh', overflowY: 'auto', borderRadius: isMobile ? '20px 20px 0 0' : 14 }}>
-                        {/* Quick reactions row */}
-                        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 8px 6px', gap: 2 }}>
+                        {/* Quick reactions row — hidden for call bubbles */}
+                        {!isCallEnded(menuMessage.message_text) && <div style={{ display: 'flex', alignItems: 'center', padding: '8px 8px 6px', gap: 2 }}>
                             {quickReactions.slice(0, 7).map((emoji: string) => {
                                 const hasMyReaction = msgReactions.some(r => r.user_id === currentUserId && r.emoji === emoji);
                                 return (
                                     <button key={emoji} onClick={() => addReaction(emoji)} className="emoji-btn"
-                                        style={{ background: hasMyReaction ? (dm ? 'rgba(99,102,241,0.25)' : '#ede9fe') : 'none', border: hasMyReaction ? '1.5px solid #6366f1' : '1.5px solid transparent', borderRadius: 10, cursor: 'pointer', fontSize: 22, padding: 0, lineHeight: 1, transition: 'all 0.12s', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                        style={{ background: hasMyReaction ? (dm ? 'rgba(99,102,241,0.25)' : '#ede9fe') : 'none', border: hasMyReaction ? '1.5px solid #6366f1' : '1.5px solid transparent', borderRadius: 10, cursor: 'pointer', fontSize: 22, padding: 0, lineHeight: 1, transition: 'all 0.12s', width: isMobile ? 44 : 36, height: isMobile ? 44 : 36, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                                         onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.25)')}
                                         onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}>
                                         {emoji}
@@ -6241,7 +6785,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 title={lang === 'en' ? 'All emoji' : 'Все эмодзи'}>
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
                             </button>
-                        </div>
+                        </div>}
                         <div style={{ padding: '4px 0' }}>
                         {activeChat && (() => {
                             const chatKey = `${activeChat.type}-${activeChat.id}`;
@@ -6265,17 +6809,17 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 {lang === 'en' ? 'Report' : 'Пожаловаться'}
                             </button>
                         )}
-                        {!menuMessage.is_deleted && (
+                        {!menuMessage.is_deleted && !isCallEnded(menuMessage.message_text) && (
                         <button onClick={() => { setReplyTo(menuMessage); setMenuMessageId(null); }} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
                             {t('Reply')}
                         </button>
                         )}
-                        {!menuMessage.is_deleted && <button onClick={() => { setForwardingMessage(menuMessage); setMenuMessageId(null); }} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
+                        {!menuMessage.is_deleted && !isCallEnded(menuMessage.message_text) && <button onClick={() => { setForwardingMessage(menuMessage); setMenuMessageId(null); }} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg>
                             {t('Forward')}
                         </button>}
-                        <button onClick={() => {
+                        {!isCallEnded(menuMessage.message_text) && <button onClick={() => {
                             const text = menuMessage.message_text ?? '';
                             if (navigator.clipboard?.writeText) {
                                 navigator.clipboard.writeText(text);
@@ -6293,7 +6837,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         }} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                             {t('Copy text')}
-                        </button>
+                        </button>}
                         {(() => {
                             // __gif__ prefix
                             if (isGif(menuMessage.message_text)) {
@@ -6319,7 +6863,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 const filesArr = (() => { try { return typeof filesRaw === 'string' ? JSON.parse(filesRaw) : filesRaw; } catch { return []; } })();
                                 const gifFile = Array.isArray(filesArr) ? filesArr.find((f: any) => /\.gif$/i.test(f.filename || '')) : null;
                                 if (gifFile?.file_path) {
-                                    const gifUrl = gifFile.file_path.startsWith('http') ? gifFile.file_path : `${BASE_URL}${gifFile.file_path}`;
+                                    const gifUrl = config.fileUrl(gifFile.file_path) ?? gifFile.file_path;
                                     const isSaved = (() => { try { return JSON.parse(localStorage.getItem('aurora_saved_gifs') || '[]').some((g: any) => g.url === gifUrl); } catch { return false; } })();
                                     return (
                                         <button onClick={() => {
@@ -6343,8 +6887,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                 const isGroup = activeChat?.type === 'group';
                                 const tokenParam = `?token=${encodeURIComponent(token)}`;
                                 const url = isGroup
-                                    ? `${BASE_URL}/files/group/download/${menuMessage.id}${tokenParam}`
-                                    : `${BASE_URL}/files/download/${menuMessage.id}${tokenParam}`;
+                                    ? `${config.BASE_URL}/files/group/download/${menuMessage.id}${tokenParam}`
+                                    : `${config.BASE_URL}/files/download/${menuMessage.id}${tokenParam}`;
                                 const filename = (menuMessage as any).filename || 'file';
                                 try {
                                     const res = await fetch(url);
@@ -6373,7 +6917,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         )}
                         {menuMessage.sender_id === currentUserId && !menuMessage.is_deleted && (
                             <>
-                                {!isPoll(menuMessage.message_text) && !isGeo(menuMessage.message_text) && !isContact(menuMessage.message_text) && (
+                                {!isPoll(menuMessage.message_text) && !isGeo(menuMessage.message_text) && !isContact(menuMessage.message_text) && !isCallEnded(menuMessage.message_text) && !isGif(menuMessage.message_text) && !isSticker(menuMessage.message_text) && (
                                     <button onClick={() => handleEdit(menuMessage.id, menuMessage.message_text ?? '')} style={{ ...styles.menuItem, color: dm ? '#e0e0e0' : 'inherit', display: 'flex', alignItems: 'center', gap: 10 }}>
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                                         {t('Edit message')}
@@ -6540,10 +7084,21 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     users={users.filter(u => u.id !== currentUserId)}
                     groups={groups}
                     isDark={theme.darkMode}
-                    baseUrl={BASE_URL}
-                    onClose={() => setShowFolderManager(false)}
-                    onBack={() => { setShowFolderManager(false); setTimeout(() => setShowSettings(true), 50); }}
+                    baseUrl={config.BASE_URL}
+                    onClose={() => { setShowFolderManager(false); setFolderManagerInitialId(null); }}
+                    onBack={() => {
+                        setShowFolderManager(false);
+                        setFolderManagerInitialId(null);
+                        if (folderManagerReturnTo === 'mobile-settings') {
+                            setTimeout(() => setMobileTab('settings'), 50);
+                        } else if (folderManagerReturnTo === 'modal-settings') {
+                            setTimeout(() => setShowSettings(true), 50);
+                        } else {
+                            setTimeout(() => setMobileTab('chats'), 50);
+                        }
+                    }}
                     onFoldersChange={updated => { setFolders(updated); }}
+                    initialFolderId={folderManagerInitialId}
                 />
                 </Suspense>
             )}
@@ -6560,7 +7115,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     onThemeChange={onThemeChange}
                     onProfileUpdate={onProfileUpdate}
                     onLogout={onLogout}
-                    onOpenFolders={() => { setShowSettings(false); setTimeout(() => setShowFolderManager(true), 50); }}
+                    onOpenFolders={() => {
+                        setFolderManagerInitialId(null);
+                        setFolderManagerReturnTo(isMobile ? 'modal-settings' : 'modal-settings');
+                        if (!isMobile) setShowSettings(false);
+                        setShowFolderManager(true);
+                    }}
                     onOpenFavorites={() => {
                         saveDraft(activeChatRef.current);
                         restoreDraft(`private-${currentUserId}`);
@@ -6569,7 +7129,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         loadPrivateMessages(currentUserId);
                     }}
                     onOpenArchive={() => setShowArchive(true)}
-                    onOpenSupport={() => setShowSupportChat(true)}
+                    onOpenSupport={() => { if (!isMobile) setShowSettings(false); setShowSupportChat(true); }}
                     onOpenAdmin={() => setShowAdminPanel(true)}
                     onShowOnboarding={onShowOnboarding ? () => { setShowSettings(false); setTimeout(() => onShowOnboarding(), 200); } : undefined}
                     accounts={accounts}
@@ -6586,7 +7146,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     currentUserId={currentUserId}
                     isDark={theme.darkMode}
                     onClose={() => setShowSupportChat(false)}
-                    onBack={() => { setShowSupportChat(false); setTimeout(() => setShowSettings(true), 50); }}
+                    onBack={() => { setShowSupportChat(false); if (isMobile) setTimeout(() => setMobileTab('settings'), 50); }}
                     newReply={newSupportReply}
                 />
                 </Suspense>
@@ -6597,7 +7157,13 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     token={token}
                     isDark={theme.darkMode}
                     onClose={() => setShowAdminPanel(false)}
-                    onBack={() => { setShowAdminPanel(false); setTimeout(() => setShowSettings(true), 50); }}
+                    onBack={() => {
+                        setShowAdminPanel(false);
+                        setTimeout(() => {
+                            if (isMobile) setMobileTab('settings');
+                            else setShowSettings(true);
+                        }, 50);
+                    }}
                     newSupportMsg={newSupportMsg}
                 />
                 </Suspense>
@@ -6683,7 +7249,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             {/* Bulk delete confirmation modal */}
             {bulkDeleteConfirm && (
                 <div className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 5000, backgroundColor: dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setBulkDeleteConfirm(false)}>
-                    <div className="modal-enter" style={{ background: dm ? '#13132a' : '#ffffff', borderRadius: 20, width: 320, padding: '28px 28px 22px', boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)', border: dm ? '1px solid rgba(99,102,241,0.25)' : '1px solid #ede9fe', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                    <div className="modal-enter aurora-confirm-modal" style={{ background: dm ? '#13132a' : '#ffffff', borderRadius: 20, width: 320, padding: '28px 28px 22px', boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)', border: dm ? '1px solid rgba(99,102,241,0.25)' : '1px solid #ede9fe', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
                         <div style={{ fontSize: 17, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', marginBottom: 8 }}>{t('Delete messages?')}</div>
                         <div style={{ fontSize: 14, color: dm ? '#9090b0' : '#6b7280', marginBottom: 20 }}>{t('This cannot be undone.')}</div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -6714,8 +7280,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     </div>
                 );
                 return (
-                <div className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 4000, background: isOled ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)', backdropFilter: isOled ? 'blur(8px)' : 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setForwardingMessages(null)}>
-                    <div className="modal-enter" style={{ background: fwdBg, borderRadius: 20, width: 360, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 24px 70px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 20px 60px rgba(0,0,0,0.15)' }} onClick={e => e.stopPropagation()}>
+                <div className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 4000, background: isOled ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)', backdropFilter: isOled ? 'blur(8px)' : 'blur(6px)', display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center' }} onClick={() => setForwardingMessages(null)}>
+                    <div className={`modal-enter${isMobile ? ' mobile-fullscreen' : ''}`} style={{ background: fwdBg, borderRadius: isMobile ? 0 : 20, width: isMobile ? '100%' : 360, height: isMobile ? '100dvh' : undefined, maxHeight: isMobile ? '100dvh' : '80vh', paddingTop: isMobile ? 'env(safe-area-inset-top)' : undefined, paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : undefined, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 24px 70px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 20px 60px rgba(0,0,0,0.15)' }} onClick={e => e.stopPropagation()}>
                         <div style={{ padding: '16px 18px 14px', background: fwdCard, boxShadow: `0 1px 0 ${isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}` }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span style={{ fontWeight: 700, fontSize: 15, color: fwdCol }}>{lang === 'en' ? `Forward ${forwardingMessages.length} msg.` : `Переслать ${forwardingMessages.length} сообщ.`}</span>
@@ -6740,7 +7306,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 <div style={{ position: 'fixed', inset: 0, zIndex: 5000, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                     className="modal-backdrop-enter" onClick={() => setShowClearConfirm(false)}>
                     <div style={{ background: isOled ? '#000000' : (dm ? '#13132a' : '#ffffff'), borderRadius: 20, width: 320, padding: '28px 28px 22px', boxShadow: isOled ? '0 0 40px rgba(167,139,250,0.15), 0 30px 80px rgba(0,0,0,0.95)' : (dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)'), border: isOled ? '1px solid rgba(167,139,250,0.2)' : (dm ? '1px solid rgba(99,102,241,0.25)' : '1px solid #ede9fe'), textAlign: 'center' }}
-                        className="modal-enter" onClick={e => e.stopPropagation()}>
+                        className="modal-enter aurora-confirm-modal" onClick={e => e.stopPropagation()}>
                         <div style={{ fontSize: 17, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', marginBottom: 8 }}>{t('This cannot be undone.')}</div>
                         <div style={{ fontSize: 14, color: isOled ? '#7070a0' : (dm ? '#9090b0' : '#6b7280'), marginBottom: 24 }}>{lang === 'en' ? 'Clear all chat history?' : 'Очистить всю историю чата?'}</div>
                         <div style={{ display: 'flex', gap: 10 }}>
@@ -6760,7 +7326,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 >
                     <div
                         style={{ background: isOled ? '#000000' : (dm ? '#13132a' : '#ffffff'), borderRadius: 20, width: 320, padding: '28px 28px 22px', boxShadow: isOled ? '0 0 40px rgba(167,139,250,0.15), 0 30px 80px rgba(0,0,0,0.9)' : (dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)'), border: isOled ? '1px solid rgba(167,139,250,0.2)' : (dm ? '1px solid rgba(99,102,241,0.25)' : '1px solid #ede9fe'), textAlign: 'center' }}
-                        className="modal-enter"
+                        className="modal-enter aurora-confirm-modal"
                         onClick={e => e.stopPropagation()}
                     >
                         <div style={{ fontSize: 17, fontWeight: 700, color: dm ? '#ffffff' : '#1e1b4b', marginBottom: 8 }}>{t('Delete message')}</div>
@@ -6876,9 +7442,9 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     setForwardingMessage(null);
                 };
                 return (
-                <div className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 4000, background: isOled ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)', backdropFilter: isOled ? 'blur(8px)' : 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                <div className="modal-backdrop-enter" style={{ position: 'fixed', inset: 0, zIndex: 4000, background: isOled ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)', backdropFilter: isOled ? 'blur(8px)' : 'blur(6px)', display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center' }}
                     onClick={() => setForwardingMessage(null)}>
-                    <div className="modal-enter" style={{ background: sfBg, borderRadius: 20, width: 360, maxHeight: '70vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 24px 70px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 20px 60px rgba(0,0,0,0.15)' }}
+                    <div className={`modal-enter${isMobile ? ' mobile-fullscreen' : ''}`} style={{ background: sfBg, borderRadius: isMobile ? 0 : 20, width: isMobile ? '100%' : 360, height: isMobile ? '100dvh' : undefined, maxHeight: isMobile ? '100dvh' : '70vh', paddingTop: isMobile ? 'env(safe-area-inset-top)' : undefined, paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : undefined, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 24px 70px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 20px 60px rgba(0,0,0,0.15)' }}
                         onClick={e => e.stopPropagation()}>
                         <div style={{ padding: '16px 18px 14px', background: sfCard, boxShadow: `0 1px 0 ${isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}` }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -6887,7 +7453,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                             </div>
                             <div style={{ background: isOled ? '#0a0a14' : dm ? '#1e1e38' : '#f5f3ff', borderRadius: 10, padding: '8px 12px', borderLeft: `3px solid ${isOled ? '#7c3aed' : '#6366f1'}` }}>
                                 <div style={{ fontSize: 11, fontWeight: 600, color: isOled ? '#a78bfa' : '#6366f1', marginBottom: 2 }}>{forwardingMessage.sender_name || usersById.get(forwardingMessage.sender_id)?.username || (lang === 'en' ? 'Unknown' : 'Неизвестно')}</div>
-                                <div style={{ fontSize: 12, color: sfSub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{forwardingMessage.message_text || (forwardingMessage.filename ? `📎 ${forwardingMessage.filename}` : `📎 ${lang === 'en' ? 'attachment' : 'вложение'}`)}</div>
+                                <div style={{ fontSize: 12, color: sfSub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{formatReplyPreview(forwardingMessage.message_text) || (forwardingMessage.filename ? `📎 ${forwardingMessage.filename}` : `📎 ${lang === 'en' ? 'attachment' : 'вложение'}`)}</div>
                             </div>
                         </div>
                         <div style={{ overflowY: 'auto', flex: 1, padding: '10px 14px' }}>
@@ -6905,14 +7471,16 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
 
             {/* Chat context menu (right-click on sidebar item) */}
             {pinMenu && (
-                <div className="floating-enter" style={{ position: 'fixed', top: Math.min(pinMenu.y, window.innerHeight - 260), left: Math.min(pinMenu.x, window.innerWidth - 210), zIndex: 9999, background: isOled ? '#080810' : dm ? C.bg3 : 'white', borderRadius: 12, padding: 4, boxShadow: isOled ? '0 0 30px rgba(124,58,237,0.3), 0 16px 40px rgba(0,0,0,0.95)' : dm ? '0 0 24px rgba(99,102,241,0.2), 0 12px 36px rgba(0,0,0,0.5)' : '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)', minWidth: 192, maxHeight: '80vh', overflowY: 'auto' }}
-                    onClick={e => e.stopPropagation()}>
-                    {(() => {
-                        const btnStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#e0e0e0' : '#1e1b4b', fontSize: 13, borderRadius: 8, textAlign: 'left' as const };
-                        const key = pinMenu.key;
-                        const isMuted = mutedChats.has(key);
-                        if (addToFolderKey === key) {
-                            return (
+                <>
+                    <div className={isMobile ? 'mobile-context-backdrop' : undefined} style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => { setPinMenu(null); setAddToFolderKey(null); }} />
+                    <div data-ctx-mobile={isMobile ? 'true' : undefined} className={`floating-enter chat-context-menu${isMobile ? ' mobile-floating-context-sheet' : ''}`} style={{ position: 'fixed', ...(isMobile ? { left: 12, right: 12, bottom: 'calc(12px + env(safe-area-inset-bottom, 0px))', borderRadius: 24 } : { top: Math.min(pinMenu.y, window.innerHeight - 260), left: Math.min(pinMenu.x, window.innerWidth - 210), borderRadius: 12 }), zIndex: 9999, background: isOled ? '#080810' : dm ? C.bg3 : 'white', padding: isMobile ? 8 : 4, boxShadow: isOled ? '0 0 30px rgba(124,58,237,0.3), 0 16px 40px rgba(0,0,0,0.95)' : dm ? '0 0 24px rgba(99,102,241,0.2), 0 12px 36px rgba(0,0,0,0.5)' : '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)', minWidth: isMobile ? undefined : 192, maxHeight: isMobile ? 'calc(100dvh - 44px - env(safe-area-inset-bottom, 0px))' : '80vh', overflowY: 'auto' }}
+                        onClick={e => e.stopPropagation()}>
+                        {(() => {
+                            const btnStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#e0e0e0' : '#1e1b4b', fontSize: 13, borderRadius: 8, textAlign: 'left' as const };
+                            const key = pinMenu.key;
+                            const isMuted = mutedChats.has(key);
+                            if (addToFolderKey === key) {
+                                return (
                                 <>
                                     <button onClick={() => setAddToFolderKey(null)} style={{ ...btnStyle, color: '#6366f1' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg> {t('Back')}</button>
                                     {folders.length === 0 && <div style={{ padding: '6px 14px', fontSize: 12, color: dm ? '#7070a0' : '#aaa' }}>{t('No folders')}</div>}
@@ -6923,12 +7491,12 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         </button>
                                     ))}
                                 </>
-                            );
-                        }
-                        const isPrivate = key.startsWith('private-');
-                        const privateUserId = isPrivate ? parseInt(key.split('-')[1]) : null;
-                        const isBlocked = privateUserId !== null && blockedUserIds.has(privateUserId);
-                        return (
+                                );
+                            }
+                            const isPrivate = key.startsWith('private-');
+                            const privateUserId = isPrivate ? parseInt(key.split('-')[1]) : null;
+                            const isBlocked = privateUserId !== null && blockedUserIds.has(privateUserId);
+                            return (
                             <>
                                 <button onClick={() => togglePin(key)} style={btnStyle}><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg> {pinnedChats.has(key) ? t('Unpin') : t('Pin')}</button>
                                 {key !== `private-${currentUserId}` && <button onClick={() => toggleMute(key)} style={btnStyle}>{isMuted ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> {lang === 'en' ? 'Unmute' : 'Включить уведомления'}</> : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg> {lang === 'en' ? 'Mute' : 'Выключить уведомления'}</>}</button>}
@@ -6949,21 +7517,23 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     <button onClick={() => handleDeleteChat(key)} style={{ ...btnStyle, color: '#ef4444' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> {lang === 'en' ? 'Delete chat' : 'Удалить чат'}</button>
                                 )}
                             </>
-                        );
-                    })()}
-                </div>
+                            );
+                        })()}
+                    </div>
+                </>
             )}
-            {pinMenu && <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => { setPinMenu(null); setAddToFolderKey(null); }} />}
 
             {/* Folder context menu */}
             {folderCtxMenu && (
-                <div className="floating-enter" style={{ position: 'fixed', top: folderCtxMenu.y, left: folderCtxMenu.x, zIndex: 9999, background: isOled ? '#080810' : dm ? C.bg3 : 'white', borderRadius: 12, padding: 4, boxShadow: isOled ? '0 0 30px rgba(124,58,237,0.3), 0 16px 40px rgba(0,0,0,0.95)' : dm ? '0 0 24px rgba(99,102,241,0.2), 0 12px 36px rgba(0,0,0,0.5)' : '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)', minWidth: 180 }}
-                    onClick={e => e.stopPropagation()}>
-                    {(() => {
-                        const btnStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#e0e0e0' : '#1e1b4b', fontSize: 13, borderRadius: 8, textAlign: 'left' as const };
-                        const ctxFolder = folders.find(f => f.id === folderCtxMenu.folderId);
-                        const ctxUnread = ctxFolder ? (folderUnreadMap[ctxFolder.id] || 0) : 0;
-                        return (
+                <>
+                    <div className={isMobile ? 'mobile-context-backdrop' : undefined} style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setFolderCtxMenu(null)} />
+                    <div className={`floating-enter folder-context-menu${isMobile ? ' mobile-floating-context-sheet' : ''}`} style={{ position: 'fixed', ...(isMobile ? { left: 12, right: 12, bottom: 'calc(12px + env(safe-area-inset-bottom, 0px))' } : { top: folderCtxMenu.y, left: folderCtxMenu.x }), zIndex: 9999, background: isOled ? '#080810' : dm ? C.bg3 : 'white', borderRadius: isMobile ? 24 : 12, padding: isMobile ? 8 : 4, boxShadow: isOled ? '0 0 30px rgba(124,58,237,0.3), 0 16px 40px rgba(0,0,0,0.95)' : dm ? '0 0 24px rgba(99,102,241,0.2), 0 12px 36px rgba(0,0,0,0.5)' : '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)', minWidth: isMobile ? undefined : 180, maxHeight: isMobile ? 'calc(100dvh - 44px - env(safe-area-inset-bottom, 0px))' : undefined, overflowY: isMobile ? 'auto' : undefined }}
+                        onClick={e => e.stopPropagation()}>
+                        {(() => {
+                            const btnStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#e0e0e0' : '#1e1b4b', fontSize: 13, borderRadius: 8, textAlign: 'left' as const };
+                            const ctxFolder = folders.find(f => f.id === folderCtxMenu.folderId);
+                            const ctxUnread = ctxFolder ? (folderUnreadMap[ctxFolder.id] || 0) : 0;
+                            return (
                             <>
                                 {ctxUnread > 0 && ctxFolder && (
                                     <button onClick={() => {
@@ -6982,7 +7552,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         {lang === 'en' ? 'Mark all as read' : 'Пометить всё как прочитанное'}
                                     </button>
                                 )}
-                                <button onClick={() => { setShowFolderManager(true); setFolderCtxMenu(null); }} style={btnStyle}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> {t('Settings')}</button>
+                                <button onClick={() => { setFolderManagerInitialId(folderCtxMenu.folderId); setFolderManagerReturnTo('chats'); setShowFolderManager(true); setFolderCtxMenu(null); }} style={btnStyle}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> {t('Settings')}</button>
                                 <button onClick={async () => {
                                     try { await api.deleteFolder(token, folderCtxMenu.folderId); } catch {}
                                     const res = await api.getFolders(token);
@@ -6991,11 +7561,11 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     setFolderCtxMenu(null);
                                 }} style={{ ...btnStyle, color: '#ef4444' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> {lang === 'en' ? 'Delete folder' : 'Удалить папку'}</button>
                             </>
-                        );
-                    })()}
-                </div>
+                            );
+                        })()}
+                    </div>
+                </>
             )}
-            {folderCtxMenu && <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setFolderCtxMenu(null)} />}
 
             {/* All chats context menu */}
             {allChatsCtxMenu && (() => {
@@ -7003,8 +7573,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 const btnStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', color: dm ? '#e0e0e0' : '#1e1b4b', fontSize: 13, borderRadius: 8, textAlign: 'left' as const };
                 return (
                     <>
-                        <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setAllChatsCtxMenu(null)} />
-                        <div className="floating-enter" style={{ position: 'fixed', top: allChatsCtxMenu.y, left: allChatsCtxMenu.x, zIndex: 9999, background: isOled ? '#080810' : dm ? C.bg3 : 'white', borderRadius: 12, padding: 4, boxShadow: isOled ? '0 0 30px rgba(124,58,237,0.3), 0 16px 40px rgba(0,0,0,0.95)' : dm ? '0 0 24px rgba(99,102,241,0.2), 0 12px 36px rgba(0,0,0,0.5)' : '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)', minWidth: 210 }}
+                        <div className={isMobile ? 'mobile-context-backdrop' : undefined} style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setAllChatsCtxMenu(null)} />
+                        <div className={`floating-enter${isMobile ? ' mobile-floating-context-sheet' : ''}`} style={{ position: 'fixed', ...(isMobile ? { left: 12, right: 12, bottom: 'calc(12px + env(safe-area-inset-bottom, 0px))' } : { top: allChatsCtxMenu.y, left: allChatsCtxMenu.x }), zIndex: 9999, background: isOled ? '#080810' : dm ? C.bg3 : 'white', borderRadius: isMobile ? 24 : 12, padding: isMobile ? 8 : 4, boxShadow: isOled ? '0 0 30px rgba(124,58,237,0.3), 0 16px 40px rgba(0,0,0,0.95)' : dm ? '0 0 24px rgba(99,102,241,0.2), 0 12px 36px rgba(0,0,0,0.5)' : '0 0 20px rgba(99,102,241,0.1), 0 8px 28px rgba(0,0,0,0.14)', minWidth: isMobile ? undefined : 210 }}
                             onClick={e => e.stopPropagation()}>
                             {totalUnread > 0 && (
                                 <button onClick={() => {
@@ -7017,7 +7587,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     {lang === 'en' ? 'Mark all as read' : 'Пометить всё как прочитанное'}
                                 </button>
                             )}
-                            <button onClick={() => { setShowFolderManager(true); setAllChatsCtxMenu(null); }} style={btnStyle}>
+                            <button onClick={() => { setFolderManagerInitialId(null); setFolderManagerReturnTo('chats'); setShowFolderManager(true); setAllChatsCtxMenu(null); }} style={btnStyle}>
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                                 {lang === 'en' ? 'Manage folders' : 'Управление папками'}
                             </button>
@@ -7189,7 +7759,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                     setPlaylistToShare(null);
                 };
                 return (
-                    <div style={{ position: 'fixed', inset: 0, zIndex: 5500, background: isOled ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setPlaylistToShare(null)}>
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 5500, background: isOled ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center' }} onClick={() => setPlaylistToShare(null)}>
                         {(() => {
                         const mBg = isOled ? '#000000' : dm ? '#0d0d1a' : '#f7f6ff';
                         const cBg = isOled ? '#050508' : dm ? '#13131f' : 'white';
@@ -7198,7 +7768,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                         const sub = isOled ? '#7c6aaa' : dm ? '#5a5a8a' : '#9ca3af';
                         const secLabel: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: sub, textTransform: 'uppercase', letterSpacing: '0.8px', margin: '8px 4px 6px', display: 'block' };
                         return (
-                        <div style={{ background: mBg, borderRadius: 20, width: 380, maxHeight: '75vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 24px 70px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 20px 60px rgba(0,0,0,0.15)' }} onClick={e => e.stopPropagation()}>
+                        <div className={isMobile ? 'mobile-fullscreen' : undefined} style={{ background: mBg, borderRadius: isMobile ? 0 : 20, width: isMobile ? '100%' : 380, height: isMobile ? '100dvh' : undefined, maxHeight: isMobile ? '100dvh' : '75vh', paddingTop: isMobile ? 'env(safe-area-inset-top)' : undefined, paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : undefined, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 60px rgba(124,58,237,0.25), 0 30px 80px rgba(0,0,0,0.9)' : dm ? '0 0 50px rgba(99,102,241,0.22), 0 24px 70px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.14), 0 20px 60px rgba(0,0,0,0.15)' }} onClick={e => e.stopPropagation()}>
                             <div style={{ padding: '16px 18px 12px', background: isOled ? '#050508' : dm ? '#13131f' : 'white', boxShadow: `0 1px 0 ${isOled ? 'rgba(167,139,250,0.08)' : dm ? 'rgba(99,102,241,0.1)' : '#ede9fe'}` }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                                     <div>
@@ -7207,7 +7777,7 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                     </div>
                                     <button onClick={() => setPlaylistToShare(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: sub, display: 'flex', alignItems: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                                 </div>
-                                <input autoFocus value={playlistShareSearch} onChange={e => setPlaylistShareSearch(e.target.value)} placeholder="🔍 Поиск чата..." style={{ width: '100%', padding: '8px 12px', borderRadius: 10, border: 'none', background: isOled ? '#0a0a14' : dm ? '#1e1e38' : '#f5f3ff', color: col, fontSize: 13, outline: 'none', boxSizing: 'border-box' as const }} />
+                                <input autoFocus={!isMobile} value={playlistShareSearch} onChange={e => setPlaylistShareSearch(e.target.value)} placeholder="🔍 Поиск чата..." style={{ width: '100%', padding: '8px 12px', borderRadius: 10, border: 'none', background: isOled ? '#0a0a14' : dm ? '#1e1e38' : '#f5f3ff', color: col, fontSize: 13, outline: 'none', boxSizing: 'border-box' as const }} />
                             </div>
                             <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px' }}>
                                 {filteredUsers.length > 0 && <span style={secLabel}>Люди</span>}
@@ -7270,10 +7840,10 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 };
                 const accentC = isOled ? '#a78bfa' : '#6366f1';
                 return (
-                    <div style={{ position: 'fixed', inset: 0, zIndex: 5500, background: isOled ? 'rgba(0,0,0,0.9)' : 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setPlaylistPreview(null)}>
-                        <div style={{ background: isOled ? '#000' : dm ? '#0f0f1a' : '#fff', borderRadius: 24, width: 420, maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 32px 100px rgba(0,0,0,0.95), 0 0 0 1px rgba(167,139,250,0.14)' : '0 32px 100px rgba(0,0,0,0.3)', border: isOled ? '1px solid rgba(167,139,250,0.15)' : dm ? '1px solid rgba(99,102,241,0.2)' : '1px solid #ede9fe' }} onClick={e => e.stopPropagation()}>
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 5500, background: isOled ? 'rgba(0,0,0,0.9)' : 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: isMobile ? 'stretch' : 'center', justifyContent: 'center' }} onClick={() => setPlaylistPreview(null)}>
+                        <div className={isMobile ? 'mobile-fullscreen' : undefined} style={{ background: isOled ? '#000' : dm ? '#0f0f1a' : '#fff', borderRadius: isMobile ? 0 : 24, width: isMobile ? '100%' : 420, height: isMobile ? '100dvh' : undefined, maxHeight: isMobile ? '100dvh' : '92vh', paddingTop: isMobile ? 'env(safe-area-inset-top)' : undefined, paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : undefined, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 32px 100px rgba(0,0,0,0.95), 0 0 0 1px rgba(167,139,250,0.14)' : '0 32px 100px rgba(0,0,0,0.3)', border: isMobile ? 'none' : isOled ? '1px solid rgba(167,139,250,0.15)' : dm ? '1px solid rgba(99,102,241,0.2)' : '1px solid #ede9fe' }} onClick={e => e.stopPropagation()}>
                             {/* Cover header */}
-                            <div style={{ position: 'relative', height: 180, background: coverSrc ? `url(${coverSrc}) center/cover` : `linear-gradient(135deg, ${accentC}, ${isOled ? '#5b21b6' : '#8b5cf6'})`, display: 'flex', alignItems: 'flex-end', padding: '0 20px 16px', flexShrink: 0 }}>
+                            <div style={{ position: 'relative', height: isMobile ? 150 : 180, background: coverSrc ? `url(${coverSrc}) center/cover` : `linear-gradient(135deg, ${accentC}, ${isOled ? '#5b21b6' : '#8b5cf6'})`, display: 'flex', alignItems: 'flex-end', padding: '0 20px 16px', flexShrink: 0 }}>
                                 <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)' }} />
                                 <div style={{ position: 'relative', zIndex: 1 }}>
                                     <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.7)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>Плейлист</div>
@@ -7325,6 +7895,70 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                 onSharePlaylist={pl => { setPlaylistToShare(pl); setShowMediaPlayer(false); setPlaylistShareSearch(''); }}
             />
 
+            {/* ── Mobile bottom tab bar ── */}
+            {isMobile && !activeChat && callInfo.state === 'idle' && !showCreateDropdown && !pinMenu && !folderCtxMenu && !allChatsCtxMenu && (() => {
+                const totalUnreadTab = Object.values(unreadCounts).reduce((s, n) => s + n, 0);
+                const tabColor = (id: string) => mobileTab === id
+                    ? (isOled ? '#c4b5fd' : '#6366f1')
+                    : (isOled ? '#4a3a6a' : dm ? '#5a5a7a' : '#9ca3af');
+                const tabs = [
+                    {
+                        id: 'chats',
+                        label: lang === 'en' ? 'Chats' : 'Чаты',
+                        badge: totalUnreadTab,
+                        icon: (c: string) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
+                    },
+                    {
+                        id: 'settings',
+                        label: lang === 'en' ? 'Settings' : 'Настройки',
+                        icon: (c: string) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+                    },
+                    {
+                        id: 'profile',
+                        label: lang === 'en' ? 'Profile' : 'Профиль',
+                        avatar: true,
+                        icon: (c: string) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
+                    },
+                ];
+                return (
+                    <div className="mobile-bottom-nav" style={{
+                        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 80,
+                        background: isOled ? 'rgba(0,0,0,0.95)' : dm ? 'rgba(15,14,32,0.97)' : 'rgba(255,255,255,0.97)',
+                        backdropFilter: 'blur(20px)',
+                        borderTop: `1px solid ${isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)'}`,
+                        display: 'flex', alignItems: 'stretch',
+                        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+                        boxShadow: dm ? '0 -4px 24px rgba(0,0,0,0.4)' : '0 -2px 16px rgba(0,0,0,0.06)',
+                    }}>
+                        {tabs.map(tab => {
+                            const c = tabColor(tab.id);
+                            const active = mobileTab === tab.id;
+                            return (
+                                <button className={`mobile-bottom-nav-button${active ? ' active' : ''}`} key={tab.id} onClick={() => setMobileTab(tab.id as any)} style={{
+                                    flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                                    justifyContent: 'center', gap: 3, height: 56,
+                                    background: 'none', border: 'none', cursor: 'pointer',
+                                    position: 'relative',
+                                    WebkitTapHighlightColor: 'transparent',
+                                }}>
+                                    <div className="mobile-bottom-nav-icon" style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        {tab.id === 'profile' && currentUserAvatar
+                                            ? <img src={config.fileUrl(currentUserAvatar) ?? undefined} alt="" style={{ width: 26, height: 26, borderRadius: '50%', objectFit: 'cover', border: active ? `2px solid ${isOled ? '#c4b5fd' : '#6366f1'}` : '2px solid transparent' }} />
+                                            : tab.icon(c)}
+                                        {(tab as any).badge > 0 && (
+                                            <span style={{ position: 'absolute', top: -4, right: -6, minWidth: 15, height: 15, borderRadius: 8, background: isOled ? '#7c3aed' : '#6366f1', color: 'white', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>
+                                                {(tab as any).badge > 99 ? '99+' : (tab as any).badge}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <span style={{ fontSize: 10, fontWeight: active ? 700 : 500, color: c, letterSpacing: 0.2 }}>{tab.label}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                );
+            })()}
+
             {/* Call overlay */}
             {callInfo.state !== 'idle' && (
                 <CallOverlay
@@ -7348,7 +7982,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     container: { display: 'flex', height: '100svh', backgroundColor: '#eef0f5' },
     sidebar: { width: 340, backgroundColor: '#f7f8fc', boxShadow: '2px 0 16px rgba(99,102,241,0.07)', display: 'flex', flexDirection: 'column', overflow: 'hidden', zIndex: 1 },
     sidebarScroll: { flex: 1, overflowY: 'auto' as const, backgroundColor: '#f7f8fc' },
-    sidebarHeader: { padding: '16px', background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', color: 'white', display: 'flex', alignItems: 'center', gap: 8 },
+    sidebarHeader: { padding: '7px 14px', background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', color: 'white', display: 'flex', alignItems: 'center', gap: 8 },
     newChatBtn: { padding: '6px 10px', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 10, cursor: 'pointer', fontSize: 14, backdropFilter: 'blur(4px)' },
     createGroupBtn: { padding: '6px 10px', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 10, cursor: 'pointer', fontSize: 12, backdropFilter: 'blur(4px)' },
     profileCard: { padding: '0 16px', height: 60, borderTop: '1px solid #e4e5ef', display: 'flex', alignItems: 'center', gap: 10, backgroundColor: '#f0f1f8', flexShrink: 0, boxSizing: 'border-box' as const },
@@ -7364,7 +7998,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     chatName: { fontSize: 14, fontWeight: 600 as const, color: '#1e1b4b', textAlign: 'left' as const },
     chatSub: { fontSize: 11, color: '#9ca3af', marginTop: 2, textAlign: 'left' as const },
     chatArea: { flex: 1, display: 'flex', flexDirection: 'column' as const, backgroundColor: '#f2f4f8', minWidth: 0 },
-    chatHeader: { padding: '0 20px', borderBottom: '1px solid #e8e8ef', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f7f8fc', height: 68, minHeight: 68, maxHeight: 68, flexShrink: 0, boxSizing: 'border-box' as const },
+    chatHeader: { padding: '0 20px', borderBottom: '1px solid #e8e8ef', display: 'flex', flexDirection: 'row' as const, flexWrap: 'nowrap' as const, justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f7f8fc', height: 68, minHeight: 68, maxHeight: 68, flexShrink: 0, boxSizing: 'border-box' as const },
     typing: { fontSize: 12, color: '#a5b4fc', fontStyle: 'italic' },
     iconBtn: { background: 'none', border: '1px solid #ede9fe', fontSize: 18, cursor: 'pointer', padding: '6px 10px', borderRadius: 10, color: '#6366f1', transition: 'all 0.15s' },
     messagesArea: { flex: 1, overflowY: 'auto' as const, paddingTop: 20, paddingBottom: 20, paddingLeft: 24, paddingRight: 24, backgroundColor: '#f2f4f8' },
@@ -7533,6 +8167,7 @@ const StickerPackPreviewModal: React.FC<{
     onClose: () => void;
 }> = ({ data, isDark, onClose }) => {
     const { t: tl, lang: language } = useLang();
+    const isMobile = useIsMobile();
     const dm = isDark;
     const isOled = dm && document.body.classList.contains('oled-theme');
     const text = dm ? '#e2e8f0' : '#1e1b4b';
@@ -7594,8 +8229,8 @@ const StickerPackPreviewModal: React.FC<{
     const cellBg = isOled ? 'rgba(255,255,255,0.03)' : dm ? 'rgba(255,255,255,0.04)' : 'rgba(99,102,241,0.05)';
 
     return (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(12px)' }}>
-            <div ref={ref} className="floating-enter" style={{ background: modalBg, borderRadius: 24, boxShadow: glow, width: 340, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1200, display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(12px)' }}>
+            <div ref={ref} className={`floating-enter${isMobile ? ' mobile-fullscreen' : ''}`} style={{ background: modalBg, borderRadius: isMobile ? 0 : 24, boxShadow: glow, width: isMobile ? '100%' : 340, height: isMobile ? '100dvh' : undefined, maxHeight: isMobile ? '100dvh' : '80vh', paddingTop: isMobile ? 'env(safe-area-inset-top)' : undefined, paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : undefined, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                 {/* Header */}
                 <div style={{ padding: '18px 18px 14px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
                     <div style={{ width: 46, height: 46, borderRadius: 14, background: isOled ? 'rgba(139,92,246,0.18)' : dm ? 'rgba(99,102,241,0.2)' : 'rgba(99,102,241,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, flexShrink: 0 }}>

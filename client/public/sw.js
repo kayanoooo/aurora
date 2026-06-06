@@ -1,4 +1,4 @@
-const CACHE_NAME = 'aurora-v1';
+const CACHE_NAME = 'aurora-v2';
 
 // App shell — static files to cache on install
 const SHELL = [
@@ -89,16 +89,48 @@ self.addEventListener('push', e => {
       data: data,
       renotify: true,
       vibrate: [100, 50, 100],
+      silent: !!data.silent,
     })
   );
 });
 
 self.addEventListener('notificationclick', e => {
   e.notification.close();
+  const data = e.notification.data || {};
+  const targetUrl = data.url || '/';
   e.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
-      if (list.length > 0) return list[0].focus();
-      return clients.openWindow('/');
+      const client = list.find(c => 'focus' in c);
+      if (client) {
+        client.postMessage({ type: 'AURORA_NOTIFICATION_CLICK', data });
+        return client.focus();
+      }
+      return clients.openWindow(targetUrl).then(opened => {
+        if (opened) opened.postMessage({ type: 'AURORA_NOTIFICATION_CLICK', data });
+      });
     })
   );
+});
+
+self.addEventListener('message', e => {
+  const msg = e.data || {};
+  if (msg.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
+  if (msg.type === 'AURORA_SHOW_NOTIFICATION') {
+    const data = msg.data || {};
+    e.waitUntil(
+      self.registration.showNotification(data.title || 'Aurora', {
+        body: data.body || '',
+        icon: data.icon || '/logo192.png',
+        badge: data.badge || '/logo192.png',
+        tag: data.tag || 'aurora-msg',
+        data: data.data || {},
+        renotify: true,
+        vibrate: data.silent ? undefined : [80, 40, 80],
+        silent: !!data.silent,
+      })
+    );
+  }
 });

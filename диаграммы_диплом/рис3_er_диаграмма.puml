@@ -1,0 +1,308 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam defaultFontSize 10
+skinparam classBackgroundColor #FAFAFA
+skinparam classBorderColor #888888
+skinparam classHeaderBackgroundColor #D4E6F1
+skinparam linetype ortho
+hide circle
+
+title Рисунок 3 – ER-диаграмма базы данных мессенджера Aurora
+
+' ─── ПОЛЬЗОВАТЕЛИ ───────────────────────────────────────────
+entity users {
+  * id : INT <<PK, AI>>
+  --
+  username : VARCHAR(100) NOT NULL
+  tag : VARCHAR(64) UNIQUE
+  email : VARCHAR(255) UNIQUE NOT NULL
+  password_hash : VARCHAR(255) NOT NULL
+  avatar : VARCHAR(512)
+  avatar_color : VARCHAR(50)
+  status : VARCHAR(255)
+  birthday : DATE
+  phone : VARCHAR(50)
+  privacy_settings : TEXT (JSON)
+  last_seen : TIMESTAMP
+  public_key : TEXT
+  now_playing : TEXT (JSON)
+  setup_complete : TINYINT(1)
+  is_deleted : TINYINT(1)
+  is_banned : TINYINT(1)
+  ban_expires_at : DATETIME
+  created_at : TIMESTAMP
+}
+
+entity user_tags {
+  * id : INT <<PK, AI>>
+  --
+  * user_id : INT <<FK → users.id>>
+  * tag : VARCHAR(64) UNIQUE
+  created_at : TIMESTAMP
+}
+
+entity user_sessions {
+  * id : INT <<PK, AI>>
+  --
+  * user_id : INT <<FK → users.id>>
+  token_hash : VARCHAR(64) UNIQUE
+  device_name : VARCHAR(200)
+  device_id : VARCHAR(64)
+  ip : VARCHAR(64)
+  last_active : DATETIME
+  created_at : DATETIME
+}
+
+entity username_history {
+  * id : INT <<PK, AI>>
+  --
+  * user_id : INT <<FK → users.id>>
+  old_username : VARCHAR(100)
+  changed_at : DATETIME
+}
+
+entity blocked_users {
+  * id : INT <<PK, AI>>
+  --
+  * blocker_id : INT <<FK → users.id>>
+  * blocked_id : INT <<FK → users.id>>
+}
+
+' ─── ЛИЧНЫЕ СООБЩЕНИЯ ───────────────────────────────────────
+entity messages {
+  * id : INT <<PK, AI>>
+  --
+  * sender_id : INT <<FK → users.id>>
+  * receiver_id : INT <<FK → users.id>>
+  message_text : TEXT
+  files : TEXT (JSON — массив URL)
+  reply_to_id : INT
+  reply_to_text : TEXT
+  is_deleted : TINYINT(1)
+  deleted_by_sender : TINYINT(1)
+  delivered : TINYINT(1)
+  is_read : TINYINT(1)
+  is_edited : TINYINT(1)
+  edited_at : DATETIME
+  disappear_after : INT (секунды)
+  created_at : TIMESTAMP
+}
+
+entity message_reactions {
+  * id : INT <<PK, AI>>
+  --
+  * message_id : INT
+  is_group : TINYINT(1)
+  * user_id : INT <<FK → users.id>>
+  emoji : VARCHAR(10)
+}
+
+entity scheduled_messages {
+  * id : INT <<PK, AI>>
+  --
+  * sender_id : INT <<FK → users.id>>
+  * receiver_id : INT
+  is_group : TINYINT(1)
+  message_text : TEXT
+  files : TEXT (JSON)
+  scheduled_at : DATETIME
+  sent : TINYINT(1)
+  created_at : TIMESTAMP
+}
+
+entity chat_disappear_settings {
+  * id : INT <<PK, AI>>
+  --
+  * user_id : INT <<FK → users.id>>
+  * other_id : INT
+  is_group : TINYINT(1)
+  disappear_after : INT
+}
+
+' ─── ГРУППЫ И КАНАЛЫ ────────────────────────────────────────
+entity groups {
+  * id : INT <<PK, AI>>
+  --
+  * creator_id : INT <<FK → users.id>>
+  name : VARCHAR(100) NOT NULL
+  description : TEXT
+  avatar : VARCHAR(512)
+  channel_type : ENUM(public,private) — NULL если группа
+  channel_tag : VARCHAR(64) UNIQUE
+  invite_link : VARCHAR(100) UNIQUE
+  is_channel : TINYINT(1)
+  slow_mode_interval : INT
+  welcome_message : TEXT
+  reactions_allowed : TINYINT(1)
+  created_at : TIMESTAMP
+}
+
+entity group_members {
+  * id : INT <<PK, AI>>
+  --
+  * group_id : INT <<FK → groups.id>>
+  * user_id : INT <<FK → users.id>>
+  role : ENUM(admin,member)
+  custom_title : VARCHAR(50)
+  joined_at : TIMESTAMP
+}
+
+entity group_messages {
+  * id : INT <<PK, AI>>
+  --
+  * group_id : INT <<FK → groups.id>>
+  * sender_id : INT <<FK → users.id>>
+  message_text : TEXT
+  files : TEXT (JSON)
+  reply_to_id : INT
+  is_system : TINYINT(1)
+  is_deleted : TINYINT(1)
+  is_edited : TINYINT(1)
+  edited_at : DATETIME
+  created_at : TIMESTAMP
+}
+
+entity group_message_reads {
+  * id : INT <<PK, AI>>
+  --
+  * message_id : INT <<FK → group_messages.id>>
+  * user_id : INT <<FK → users.id>>
+  * group_id : INT <<FK → groups.id>>
+  read_at : TIMESTAMP
+}
+
+entity post_views {
+  * id : INT <<PK, AI>>
+  --
+  * post_id : INT <<FK → group_messages.id>>
+  * user_id : INT <<FK → users.id>>
+  viewed_at : TIMESTAMP
+}
+
+entity group_slow_mode_timestamps {
+  * id : INT <<PK, AI>>
+  --
+  * group_id : INT <<FK → groups.id>>
+  * user_id : INT <<FK → users.id>>
+  last_message_at : DATETIME
+}
+
+' ─── ПАПКИ И ПОДДЕРЖКА ──────────────────────────────────────
+entity chat_folders {
+  * id : INT <<PK, AI>>
+  --
+  * user_id : INT <<FK → users.id>>
+  name : VARCHAR(100) NOT NULL
+  color : VARCHAR(50)
+  created_at : TIMESTAMP
+}
+
+entity folder_chats {
+  * id : INT <<PK, AI>>
+  --
+  * folder_id : INT <<FK → chat_folders.id>>
+  chat_type : ENUM(user,group)
+  * chat_id : INT
+}
+
+entity support_messages {
+  * id : INT <<PK, AI>>
+  --
+  * user_id : INT <<FK → users.id>>
+  message_text : TEXT NOT NULL
+  is_admin_reply : TINYINT(1)
+  is_read : TINYINT(1)
+  created_at : TIMESTAMP
+}
+
+' ─── ОПРОСЫ ─────────────────────────────────────────────────
+entity polls {
+  * id : INT <<PK, AI>>
+  --
+  * creator_id : INT <<FK → users.id>>
+  question : VARCHAR(500) NOT NULL
+  options : TEXT NOT NULL (JSON)
+  is_anonymous : TINYINT(1)
+  multiple_choice : TINYINT(1)
+  expires_at : DATETIME
+  created_at : TIMESTAMP
+}
+
+entity poll_votes {
+  * id : INT <<PK, AI>>
+  --
+  * poll_id : INT <<FK → polls.id>>
+  * user_id : INT <<FK → users.id>>
+  option_index : INT NOT NULL
+  voted_at : TIMESTAMP
+}
+
+' ─── ПЛЕЙЛИСТЫ ──────────────────────────────────────────────
+entity playlists {
+  * id : INT <<PK, AI>>
+  --
+  * user_id : INT <<FK → users.id>>
+  name : VARCHAR(200) NOT NULL
+  cover_path : VARCHAR(512)
+  share_code : VARCHAR(32) UNIQUE
+  created_at : TIMESTAMP
+}
+
+entity playlist_tracks {
+  * id : INT <<PK, AI>>
+  --
+  * playlist_id : INT <<FK → playlists.id>>
+  title : VARCHAR(300) NOT NULL
+  artist : VARCHAR(200)
+  file_path : VARCHAR(512) NOT NULL
+  duration : INT
+  position : INT
+  added_at : TIMESTAMP
+}
+
+' ─── ЖАЛОБЫ ─────────────────────────────────────────────────
+entity reports {
+  * id : INT <<PK, AI>>
+  --
+  * reporter_id : INT <<FK → users.id>>
+  * target_id : INT
+  target_type : ENUM(user,group,message)
+  reason : VARCHAR(500)
+  created_at : TIMESTAMP
+}
+
+' ─── СВЯЗИ ──────────────────────────────────────────────────
+users ||--o{ user_tags               : "имеет теги"
+users ||--o{ user_sessions           : "активные сессии"
+users ||--o{ username_history        : "история имён"
+users ||--o{ blocked_users           : "блокирует"
+
+users ||--o{ messages                : "отправляет"
+users ||--o{ messages                : "получает"
+users ||--o{ message_reactions       : "ставит реакции"
+users ||--o{ scheduled_messages      : "планирует"
+users ||--o{ chat_disappear_settings : "настройки исчезания"
+
+users ||--o{ groups                  : "создаёт"
+users ||--o{ group_members           : "участник"
+users ||--o{ group_messages          : "пишет в группы"
+groups ||--o{ group_members          : "содержит"
+groups ||--o{ group_messages         : "хранит сообщения"
+group_messages ||--o{ group_message_reads : "прочтения"
+group_messages ||--o{ post_views     : "просмотры канала"
+groups ||--o{ group_slow_mode_timestamps : "slow mode"
+
+users ||--o{ chat_folders            : "создаёт папки"
+chat_folders ||--o{ folder_chats     : "содержит чаты"
+users ||--o{ support_messages        : "обращения"
+
+users ||--o{ polls                   : "создаёт опросы"
+polls ||--o{ poll_votes              : "голоса"
+users ||--o{ poll_votes              : "голосует"
+
+users ||--o{ playlists               : "создаёт плейлисты"
+playlists ||--o{ playlist_tracks     : "содержит треки"
+
+users ||--o{ reports                 : "подаёт жалобы"
+@enduml

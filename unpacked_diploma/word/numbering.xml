@@ -1,0 +1,3226 @@
+<?xml version="1.0" encoding="utf-8"?>
+<w:numbering xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:w10="urn:schemas-microsoft-com:office:word" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk" xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" mc:Ignorable="w14 w15 wp14">
+  <w:abstractNum w:abstractNumId="0">
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="●"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="○"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="■"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="●"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="○"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="■"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="●"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="●"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="●"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="1">
+    <w:nsid w:val="0217784C"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%1."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%2."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%3."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="2160"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%4."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%5."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%6."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="4320"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%7."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%8."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%9."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="6480"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="2">
+    <w:nsid w:val="0766B244"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="–"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+        <w:b w:val="0"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="3">
+    <w:nsid w:val="62C2DEC8"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="–"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+        <w:b w:val="0"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="4">
+    <w:nsid w:val="16715795"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%1)"/>
+      <w:numFmt w:val="russianLower"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:b w:val="0"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="5">
+    <w:nsid w:val="6C5B2A73"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%1."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%2."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%3."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="2160"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%4."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%5."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%6."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="4320"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%7."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%8."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%9."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="6480"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="6">
+    <w:nsid w:val="3A8967EE"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="–"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+        <w:b w:val="0"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="7">
+    <w:nsid w:val="072DBFD6"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="–"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+        <w:b w:val="0"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="8">
+    <w:nsid w:val="4E217167"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="–"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+        <w:b w:val="0"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="9">
+    <w:nsid w:val="3507C839"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="10">
+    <w:nsid w:val="60D87064"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="–"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+        <w:b w:val="0"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="11">
+    <w:nsid w:val="3D1E7A1B"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%1."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%2."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%3."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="2160"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%4."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%5."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%6."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="4320"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%7."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%8."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%9."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="6480"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="12">
+    <w:nsid w:val="79E3F2BF"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%1."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%2."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%3."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="2160"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%4."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%5."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%6."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="4320"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%7."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%8."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%9."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="6480"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="13">
+    <w:nsid w:val="4760E527"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%1."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%2."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%3."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="2160"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%4."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%5."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%6."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="4320"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%7."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%8."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%9."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="6480"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="14">
+    <w:nsid w:val="044A42B5"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="–"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+        <w:b w:val="0"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="15">
+    <w:nsid w:val="4F3B10E8"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="–"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+        <w:b w:val="0"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="16">
+    <w:nsid w:val="248DD8D6"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="–"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+        <w:b w:val="0"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="17">
+    <w:nsid w:val="67826835"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="–"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+        <w:b w:val="0"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="18">
+    <w:nsid w:val="7C5A6763"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="–"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+        <w:b w:val="0"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="19">
+    <w:nsid w:val="220CE7A0"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="·"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol" w:eastAsia="Symbol" w:cs="Symbol"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New" w:eastAsia="Courier New" w:cs="Courier New"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="§"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings" w:eastAsia="Wingdings" w:cs="Wingdings"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="20">
+    <w:nsid w:val="183AF5F4"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%1."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%2."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%3."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="2160"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%4."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%5."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%6."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="4320"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%7."/>
+      <w:numFmt w:val="decimal"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="%8."/>
+      <w:numFmt w:val="lowerLetter"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="right"/>
+      <w:lvlText w:val="%9."/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:spacing/>
+        <w:ind w:hanging="180" w:left="6480"/>
+      </w:pPr>
+      <w:rPr/>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="21">
+    <w:nsid w:val="3E6975D0"/>
+    <w:lvl w:ilvl="0">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val=""/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:tabs>
+          <w:tab w:val="num" w:leader="none" w:pos="720"/>
+        </w:tabs>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="720"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Symbol" w:hAnsi="Symbol"/>
+        <w:sz w:val="20"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val="o"/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:tabs>
+          <w:tab w:val="num" w:leader="none" w:pos="1440"/>
+        </w:tabs>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="1440"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Courier New" w:hAnsi="Courier New"/>
+        <w:sz w:val="20"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="2">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val=""/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:tabs>
+          <w:tab w:val="num" w:leader="none" w:pos="2160"/>
+        </w:tabs>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2160"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings"/>
+        <w:sz w:val="20"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val=""/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:tabs>
+          <w:tab w:val="num" w:leader="none" w:pos="2880"/>
+        </w:tabs>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="2880"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings"/>
+        <w:sz w:val="20"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val=""/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:tabs>
+          <w:tab w:val="num" w:leader="none" w:pos="3600"/>
+        </w:tabs>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="3600"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings"/>
+        <w:sz w:val="20"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val=""/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:tabs>
+          <w:tab w:val="num" w:leader="none" w:pos="4320"/>
+        </w:tabs>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="4320"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings"/>
+        <w:sz w:val="20"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val=""/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:tabs>
+          <w:tab w:val="num" w:leader="none" w:pos="5040"/>
+        </w:tabs>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5040"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings"/>
+        <w:sz w:val="20"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val=""/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:tabs>
+          <w:tab w:val="num" w:leader="none" w:pos="5760"/>
+        </w:tabs>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="5760"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings"/>
+        <w:sz w:val="20"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8">
+      <w:isLgl w:val="false"/>
+      <w:lvlJc w:val="left"/>
+      <w:lvlText w:val=""/>
+      <w:numFmt w:val="bullet"/>
+      <w:pPr>
+        <w:pBdr/>
+        <w:tabs>
+          <w:tab w:val="num" w:leader="none" w:pos="6480"/>
+        </w:tabs>
+        <w:spacing/>
+        <w:ind w:hanging="360" w:left="6480"/>
+      </w:pPr>
+      <w:rPr>
+        <w:rFonts w:hint="default" w:ascii="Wingdings" w:hAnsi="Wingdings"/>
+        <w:sz w:val="20"/>
+      </w:rPr>
+      <w:start w:val="1"/>
+      <w:suff w:val="tab"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="1">
+    <w:abstractNumId w:val="0"/>
+    <w:lvlOverride w:ilvl="0">
+      <w:startOverride w:val="1"/>
+    </w:lvlOverride>
+  </w:num>
+  <w:num w:numId="2">
+    <w:abstractNumId w:val="1"/>
+  </w:num>
+  <w:num w:numId="3">
+    <w:abstractNumId w:val="2"/>
+  </w:num>
+  <w:num w:numId="4">
+    <w:abstractNumId w:val="3"/>
+  </w:num>
+  <w:num w:numId="5">
+    <w:abstractNumId w:val="4"/>
+  </w:num>
+  <w:num w:numId="6">
+    <w:abstractNumId w:val="5"/>
+  </w:num>
+  <w:num w:numId="7">
+    <w:abstractNumId w:val="6"/>
+  </w:num>
+  <w:num w:numId="8">
+    <w:abstractNumId w:val="7"/>
+  </w:num>
+  <w:num w:numId="9">
+    <w:abstractNumId w:val="8"/>
+  </w:num>
+  <w:num w:numId="10">
+    <w:abstractNumId w:val="9"/>
+  </w:num>
+  <w:num w:numId="11">
+    <w:abstractNumId w:val="10"/>
+  </w:num>
+  <w:num w:numId="12">
+    <w:abstractNumId w:val="11"/>
+  </w:num>
+  <w:num w:numId="13">
+    <w:abstractNumId w:val="12"/>
+  </w:num>
+  <w:num w:numId="14">
+    <w:abstractNumId w:val="13"/>
+  </w:num>
+  <w:num w:numId="15">
+    <w:abstractNumId w:val="14"/>
+  </w:num>
+  <w:num w:numId="16">
+    <w:abstractNumId w:val="15"/>
+  </w:num>
+  <w:num w:numId="17">
+    <w:abstractNumId w:val="16"/>
+  </w:num>
+  <w:num w:numId="18">
+    <w:abstractNumId w:val="17"/>
+  </w:num>
+  <w:num w:numId="19">
+    <w:abstractNumId w:val="18"/>
+  </w:num>
+  <w:num w:numId="20">
+    <w:abstractNumId w:val="19"/>
+  </w:num>
+  <w:num w:numId="21">
+    <w:abstractNumId w:val="20"/>
+  </w:num>
+  <w:num w:numId="22">
+    <w:abstractNumId w:val="21"/>
+  </w:num>
+</w:numbering>

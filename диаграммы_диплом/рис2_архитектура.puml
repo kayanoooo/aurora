@@ -1,0 +1,50 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam ArrowColor #333333
+skinparam componentStyle rectangle
+
+title Архитектура серверной части мессенджера Aurora
+
+package "Клиенты" #E8F4FD {
+  [Web-браузер\n(React 18)]
+  [Electron Desktop\n(Windows/macOS/Linux)]
+  [Mobile\n(Tauri/Android/iOS)]
+}
+
+package "Серверная часть (FastAPI + Uvicorn ASGI)" #FFF9E6 {
+  component "main.py\n80+ REST-эндпоинтов\n+ WebSocket /ws" as Main #FFE082
+  component "auth.py\nbcrypt + JWT HS256" as Auth #A5D6A7
+  component "websocket_manager.py\nConnectionManager\nmulti-device" as WS #90CAF9
+  component "models.py\n12 моделей\n(aiomysql pool)" as Models #CE93D8
+  component "config.py\n.env конфигурация" as Cfg #FFCCBC
+}
+
+database "MySQL 5.7\n(Docker-контейнер)" #D4EDDA {
+  [users / user_tags]
+  [messages / group_messages]
+  [groups / group_members]
+  [message_reactions]
+  [sessions / polls / playlists]
+}
+
+cloud "Cloudinary CDN" #F0F0F0 {
+  [Медиахранилище\n(автофоллбэк\nна /uploads)]
+}
+
+[Web-браузер\n(React 18)] --> Main : HTTP/REST\n+ WebSocket
+[Electron Desktop\n(Windows/macOS/Linux)] --> Main : HTTP/REST\n+ WebSocket
+[Mobile\n(Tauri/Android/iOS)] --> Main : HTTP/REST
+Main --> Auth : JWT-верификация\nна каждый запрос
+Main <--> WS : события реального\nвремени
+Main --> Models : параметрические\nSQL-запросы
+WS --> Models : SQL-запросы
+Models --> [users / user_tags] : aiomysql\n(pool 5-20)
+Models --> [messages / group_messages] : aiomysql
+Models --> [groups / group_members] : aiomysql
+Models --> [message_reactions] : aiomysql
+Models --> [sessions / polls / playlists] : aiomysql
+Main --> [Медиахранилище\n(автофоллбэк\nна /uploads)] : SDK upload/delete
+Cfg --> Main : DB_HOST, JWT_SECRET,\nCLOUDINARY_*
+@enduml

@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import ReactDOM from 'react-dom';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 interface Props {
     initialTab?: 'license' | 'privacy';
@@ -8,20 +10,22 @@ interface Props {
 
 const PolicyModal: React.FC<Props> = ({ initialTab = 'license', isDark = false, onClose }) => {
     const [tab, setTab] = useState<'license' | 'privacy'>(initialTab);
+    const isMobile = useIsMobile();
     const dm = isDark;
-    const isOled = dm && document.body.classList.contains('oled-theme');
+    const isOled = dm && typeof document !== 'undefined' && document.body.classList.contains('oled-theme');
 
-    const bg      = isOled ? '#000000'  : dm ? '#0e0e1a'  : '#ffffff';
-    const col     = isOled ? '#e2e0ff'  : dm ? '#e2e8f0'  : '#1e1b4b';
-    const subCol  = isOled ? '#5a4a8a'  : dm ? '#6060a0'  : '#9ca3af';
-    const accent  = isOled ? '#a78bfa'  : '#6366f1';
+    const bg      = isOled ? '#000000' : dm ? '#0e0e1a' : '#ffffff';
+    const col     = dm ? '#eef2ff' : '#1e1b4b';
+    const subCol  = dm ? '#a5b4fc' : '#9ca3af';
+    const accent  = dm ? '#a78bfa' : '#6366f1';
     const shadow  = isOled
         ? '0 0 60px rgba(124,58,237,0.35), 0 32px 80px rgba(0,0,0,0.97)'
         : dm
         ? '0 0 40px rgba(99,102,241,0.25), 0 24px 70px rgba(0,0,0,0.7)'
         : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.14)';
-    const metaBg  = isOled ? 'rgba(167,139,250,0.06)' : dm ? 'rgba(99,102,241,0.07)' : 'rgba(99,102,241,0.04)';
-    const tabBarBg = isOled ? 'rgba(167,139,250,0.07)' : dm ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.06)';
+    const metaBg  = dm ? 'rgba(99,102,241,0.07)' : 'rgba(99,102,241,0.04)';
+    const tabBarBg = dm ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.06)';
+    const shellClass = `${isMobile ? 'mobile-fullscreen ' : ''}policy-modal-shell ${dm ? 'policy-modal-themed' : 'policy-modal-light'}`;
 
     const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
         <div style={{ marginBottom: 20 }}>
@@ -33,13 +37,13 @@ const PolicyModal: React.FC<Props> = ({ initialTab = 'license', isDark = false, 
         </div>
     );
 
-    return (
+    return ReactDOM.createPortal(
         <div
-            style={{ position: 'fixed', inset: 0, zIndex: 10000, background: isOled ? 'rgba(0,0,0,0.92)' : dm ? 'rgba(10,8,30,0.78)' : 'rgba(15,10,40,0.45)', backdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            style={{ position: 'fixed', inset: 0, zIndex: 10000, background: isOled ? 'rgba(0,0,0,0.92)' : dm ? 'rgba(10,8,30,0.78)' : 'rgba(15,10,40,0.45)', backdropFilter: 'blur(12px)', display: 'flex', alignItems: isMobile ? 'stretch' : 'center', justifyContent: 'center' }}
             onClick={onClose}
         >
-            <div
-                style={{ backgroundColor: bg, borderRadius: 22, width: 500, maxWidth: '95vw', maxHeight: '84vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: shadow, position: 'relative' }}
+            <div className={shellClass}
+                style={{ backgroundColor: bg, borderRadius: isMobile ? 0 : 22, width: isMobile ? '100%' : 500, maxWidth: isMobile ? 'none' : '95vw', height: isMobile ? '100dvh' : undefined, maxHeight: isMobile ? '100dvh' : '84vh', paddingTop: isMobile ? 'env(safe-area-inset-top)' : undefined, paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : undefined, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: shadow, position: 'relative' }}
                 onClick={e => e.stopPropagation()}
             >
                 {/* Glow strip at top */}
@@ -54,7 +58,7 @@ const PolicyModal: React.FC<Props> = ({ initialTab = 'license', isDark = false, 
                             </div>
                             <div style={{ fontSize: 17, fontWeight: 800, color: col }}>Документы Aurora</div>
                         </div>
-                        <button onClick={onClose} style={{ background: isOled ? 'rgba(167,139,250,0.1)' : dm ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.07)', border: 'none', borderRadius: 10, width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: subCol }}>
+                        <button onClick={onClose} style={{ background: isOled ? 'rgba(167,139,250,0.14)' : dm ? 'rgba(99,102,241,0.16)' : 'rgba(99,102,241,0.07)', border: dm ? '1px solid rgba(167,139,250,0.12)' : 'none', borderRadius: 10, width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: col }}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                         </button>
                     </div>
@@ -65,9 +69,9 @@ const PolicyModal: React.FC<Props> = ({ initialTab = 'license', isDark = false, 
                             <button key={t} onClick={() => setTab(t)} style={{
                                 flex: 1, padding: '9px 0', border: 'none', borderRadius: 9, cursor: 'pointer', fontSize: 13, fontWeight: 600,
                                 background: tab === t
-                                    ? (isOled ? 'rgba(167,139,250,0.2)' : dm ? 'rgba(99,102,241,0.22)' : 'white')
+                                    ? (isOled ? 'rgba(167,139,250,0.22)' : dm ? 'rgba(99,102,241,0.24)' : 'white')
                                     : 'transparent',
-                                color: tab === t ? accent : subCol,
+                                color: tab === t ? (dm ? '#f5f3ff' : accent) : subCol,
                                 boxShadow: tab === t ? (isOled ? '0 0 12px rgba(167,139,250,0.2), 0 2px 8px rgba(0,0,0,0.4)' : dm ? '0 2px 8px rgba(0,0,0,0.3)' : '0 1px 6px rgba(99,102,241,0.12)') : 'none',
                                 transition: 'all 0.18s',
                             }}>
@@ -139,7 +143,8 @@ const PolicyModal: React.FC<Props> = ({ initialTab = 'license', isDark = false, 
                     )}
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 

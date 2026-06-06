@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import PolicyModal from './PolicyModal';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 interface HelpModalProps {
     isDark?: boolean;
@@ -224,7 +225,7 @@ const AUTHORS = {
 
 const HelpModal: React.FC<HelpModalProps> = ({ isDark = false, initialTab = 'features', onClose }) => {
     const dm = isDark;
-    const isMobile = typeof window !== 'undefined' && window.innerWidth < 600;
+    const isMobile = useIsMobile(599);
     const [tab, setTab] = useState<'features' | 'patchnotes' | 'authors'>(initialTab);
     const [closing, setClosing] = useState(false);
     const [policyTab, setPolicyTab] = useState<'license' | 'privacy' | null>(null);
@@ -255,7 +256,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ isDark = false, initialTab = 'fea
         >
             <div
                 style={panelStyle}
-                className={(closing ? 'modal-exit' : 'modal-enter') + (isMobile ? ' mobile-bottom-sheet' : '')}
+                className={(closing ? 'modal-exit' : 'modal-enter') + (isMobile ? ' mobile-fullscreen' : '')}
                 onClick={e => e.stopPropagation()}
             >
                 {isMobile && <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px', flexShrink: 0 }}><div style={{ width: 36, height: 4, borderRadius: 2, background: dm ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)' }} /></div>}

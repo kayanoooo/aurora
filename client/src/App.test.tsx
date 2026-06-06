@@ -2,8 +2,8 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import App from './App';
 
-test('renders learn react link', () => {
+test('renders Aurora authentication screen', async () => {
   render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: /Aurora/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /Вход|Sign In/i })).toBeInTheDocument();
 });

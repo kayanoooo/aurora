@@ -1,0 +1,44 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam sequenceArrowThickness 1.5
+skinparam SequenceBoxBackgroundColor #F8F9FA
+
+title Диаграмма последовательности: отправка и доставка сообщения через WebSocket
+
+actor "Отправитель\n(Клиент А)" as A
+participant "ConnectionManager\n(сервер)" as CM #LightBlue
+participant "MessageModel\n(aiomysql)" as DB #LightGreen
+participant "MySQL 5.7" as MySQL #LightYellow
+actor "Получатель\n(Клиент Б)" as B
+
+A -> CM : WebSocket connect\n?token=<JWT>
+CM -> CM : decode_jwt_token()\nverify user_id
+
+CM -> DB : get_undelivered_messages(user_id)
+DB -> MySQL : SELECT * FROM messages\nWHERE receiver_id=? AND delivered=FALSE
+MySQL --> DB : [{message_id, text, ...}]
+DB --> CM : pending messages
+CM --> A : {"type":"message", ...} × N
+
+A -> CM : {"type":"message",\n"receiver_id":2,\n"text":"Привет!",\n"files":[]}
+CM -> DB : create_message(\nsender_id, receiver_id, text)
+DB -> MySQL : INSERT INTO messages\n(sender_id, receiver_id,\nmessage_text, delivered=FALSE)
+MySQL --> DB : message_id, created_at
+
+CM -> CM : send_to_user(receiver_id,\n{type:"message",...})
+
+alt Получатель онлайн (в словаре connections)
+  CM --> B : {"type":"message",\n"message_id":42, "text":"Привет!"}
+  CM -> DB : update_delivered(message_id, TRUE)
+  DB -> MySQL : UPDATE messages\nSET delivered=TRUE
+  B --> CM : {"type":"read",\n"message_id":42}
+  CM -> DB : mark_read(message_id)
+  DB -> MySQL : UPDATE messages\nSET is_read=TRUE
+  CM --> A : {"type":"read_receipt",\n"message_id":42}
+  note over A : Отображает двойную\nгалочку прочтения
+else Получатель оффлайн (нет в connections)
+  note over CM,DB : delivered=FALSE остаётся в БД\nДоставка произойдёт при следующем connect()
+end
+@enduml

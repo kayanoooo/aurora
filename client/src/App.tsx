@@ -277,8 +277,9 @@ function App() {
     const handleSwitchAccount = useCallback((acc: AccountEntry) => {
         wsService.disconnect();
         localStorage.setItem('chat_auth', JSON.stringify({ token: acc.token, userId: acc.userId, username: acc.username }));
-        setAuth(null);
+        setShowAuth(true);
         setLoading(true);
+        setAuth(null);
         restoreSession(acc.token, acc.userId, acc.username);
     }, [restoreSession]);
 

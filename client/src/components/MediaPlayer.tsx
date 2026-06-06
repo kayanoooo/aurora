@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { api } from '../services/api';
 import { config } from '../config';
+import { clearAuroraMediaSession, updateAuroraMediaSession } from '../services/mediaSession';
 
 export interface Track {
     id: number;
@@ -48,6 +49,56 @@ interface Props {
 
 type RepeatMode = 'none' | 'one' | 'all';
 
+interface PlaylistUploadStatus {
+    playlistId: number;
+    total: number;
+    processed: number;
+    failed: number;
+    current?: string;
+    canceled?: boolean;
+}
+
+const splitTrackFilename = (filename: string) => {
+    const clean = filename.replace(/\.[^/.]+$/, '').trim();
+    const parts = clean.split(/\s+-\s+/, 2);
+    return parts.length === 2
+        ? { title: parts[0].trim(), artist: parts[1].trim() }
+        : { title: clean, artist: undefined };
+};
+
+const isAudioFile = (file: File) => {
+    if (file.type.startsWith('audio/')) return true;
+    return /\.(aac|aiff?|alac|amr|ape|flac|m4a|mp3|oga|ogg|opus|wav|webm|wma)$/i.test(file.name);
+};
+
+const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
+
+const readAudioDuration = (filePath: string): Promise<number> => new Promise(resolve => {
+    const audio = new Audio();
+    const url = config.fileUrl(filePath) ?? filePath;
+    let settled = false;
+    let timeoutId: number | undefined;
+
+    const finish = (value: number) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId) window.clearTimeout(timeoutId);
+        audio.removeEventListener('loadedmetadata', onLoaded);
+        audio.removeEventListener('error', onError);
+        audio.src = '';
+        resolve(Number.isFinite(value) ? Math.round(value) : 0);
+    };
+    const onLoaded = () => finish(audio.duration || 0);
+    const onError = () => finish(0);
+
+    timeoutId = window.setTimeout(() => finish(0), 8000);
+    audio.preload = 'metadata';
+    audio.addEventListener('loadedmetadata', onLoaded);
+    audio.addEventListener('error', onError);
+    audio.src = url;
+    audio.load();
+});
+
 const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, visible, onClose, onNowPlaying, onStateChange, onSharePlaylist, onPlayStart }) => {
     const [playlists, setPlaylists] = useState<Playlist[]>([]);
     const [activePlaylist, setActivePlaylist] = useState<Playlist | null>(null);
@@ -64,14 +115,19 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
     const [renameVal, setRenameVal] = useState('');
     const [view, setView] = useState<'playlists' | 'player'>('playlists');
     const [collapsedPlaylists, setCollapsedPlaylists] = useState<Set<number>>(new Set());
+    const [uploadStatus, setUploadStatus] = useState<PlaylistUploadStatus | null>(null);
+    const uploadCancelRef = useRef(false);
+    const uploadXhrRef = useRef<XMLHttpRequest | null>(null);
+    const uploadStatusClearTimerRef = useRef<number | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const coverInputRef = useRef<HTMLInputElement>(null);
     const shuffleOrder = useRef<number[]>([]);
+    const metadataRequestedRef = useRef<Set<number>>(new Set());
 
     const bg = isOled ? '#000000' : dm ? '#0f0f1a' : '#ffffff';
-    const bg2 = isOled ? '#050507' : dm ? '#16162a' : '#f5f3ff';
-    const bg3 = isOled ? '#0a0a0f' : dm ? '#1e1e3a' : '#ede9fe';
+    const bg2 = isOled ? '#000000' : dm ? '#16162a' : '#f5f3ff';
+    const bg3 = isOled ? '#000000' : dm ? '#1e1e3a' : '#ede9fe';
     const text = isOled ? '#e2e0ff' : dm ? '#e2e8f0' : '#1e1b4b';
     const sub = isOled ? '#7c6aaa' : dm ? '#5a5a8a' : '#9ca3af';
     const accent = isOled ? '#a78bfa' : '#6366f1';
@@ -99,6 +155,36 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentTrack, repeat, shuffle, activePlaylist]);
+
+    useEffect(() => {
+        if (!currentTrack || (currentTrack.cover_path && currentTrack.artist) || !activePlaylist) return;
+        const trackId = currentTrack.id;
+        if (metadataRequestedRef.current.has(trackId)) return;
+        metadataRequestedRef.current.add(trackId);
+        const playlistId = activePlaylist.id;
+        api.extractTrackCover(token, trackId).then(result => {
+            if (!result) return;
+            const updateTrack = (track: Track): Track => ({
+                ...track,
+                cover_path: result.cover_path || track.cover_path,
+                title: result.title || track.title,
+                artist: result.artist || track.artist,
+            });
+            setCurrentTrack(current => current?.id === trackId ? updateTrack(current) : current);
+            setPlaylists(prev => prev.map(p => p.id === playlistId
+                ? { ...p, tracks: p.tracks.map(t => t.id === trackId ? updateTrack(t) : t) }
+                : p));
+            setActivePlaylist(prev => prev?.id === playlistId
+                ? { ...prev, tracks: prev.tracks.map(t => t.id === trackId ? updateTrack(t) : t) }
+                : prev);
+        }).catch(() => {});
+    }, [currentTrack, activePlaylist, token]);
+
+    useEffect(() => () => {
+        uploadCancelRef.current = true;
+        uploadXhrRef.current?.abort();
+        if (uploadStatusClearTimerRef.current) window.clearTimeout(uploadStatusClearTimerRef.current);
+    }, []);
 
     const loadAndPlay = useCallback((track: Track) => {
         onPlayStart?.();
@@ -218,23 +304,143 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
         setRenaming(null);
     };
 
-    const handleFileAdd = async (playlist: Playlist, files: FileList) => {
-        for (const file of Array.from(files)) {
-            if (!file.type.startsWith('audio/')) continue;
-            const data = await api.uploadFile(token, file);
-            if (!data?.file_path) continue;
-            const audio = new Audio(config.fileUrl(data.file_path) ?? data.file_path);
-            const dur: number = await new Promise(resolve => {
-                audio.addEventListener('loadedmetadata', () => resolve(Math.round(audio.duration)));
-                audio.addEventListener('error', () => resolve(0));
-            });
-            const track = await api.addTrack(token, { playlist_id: playlist.id, title: file.name.replace(/\.[^/.]+$/, ''), file_path: data.file_path, duration: dur });
-            if (track.id) {
-                const newTrack: Track = { id: track.id, playlist_id: playlist.id, title: file.name.replace(/\.[^/.]+$/, ''), file_path: data.file_path, duration: dur, position: playlist.tracks.length };
-                setPlaylists(prev => prev.map(p => p.id === playlist.id ? { ...p, tracks: [...p.tracks, newTrack] } : p));
-                if (activePlaylist?.id === playlist.id) setActivePlaylist(prev => prev ? { ...prev, tracks: [...prev.tracks, newTrack] } : prev);
-            }
+    const cancelTrackUpload = () => {
+        uploadCancelRef.current = true;
+        uploadXhrRef.current?.abort();
+        setUploadStatus(current => current
+            ? { ...current, canceled: true, current: undefined }
+            : current);
+    };
+
+    const handleFileAdd = async (playlist: Playlist, files: FileList | File[]) => {
+        const audioFiles = Array.from(files).filter(isAudioFile);
+        if (audioFiles.length === 0) return;
+
+        const playlistId = playlist.id;
+        let processed = 0;
+        let failed = 0;
+        let canceled = false;
+        uploadCancelRef.current = false;
+        if (uploadStatusClearTimerRef.current) {
+            window.clearTimeout(uploadStatusClearTimerRef.current);
+            uploadStatusClearTimerRef.current = null;
         }
+        const uploadFileWithRetry = async (file: File) => {
+            let lastError: unknown = null;
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                if (uploadCancelRef.current) throw new Error('Upload cancelled');
+                let currentXhr: XMLHttpRequest | null = null;
+                try {
+                    return await api.uploadFileWithProgress(token, file, () => {}, (xhr: XMLHttpRequest) => {
+                        currentXhr = xhr;
+                        uploadXhrRef.current = xhr;
+                        if (uploadCancelRef.current) xhr.abort();
+                    });
+                } catch (error) {
+                    if (uploadCancelRef.current) throw error;
+                    lastError = error;
+                    if (attempt === 0) await wait(600);
+                } finally {
+                    if (currentXhr && uploadXhrRef.current === currentXhr) uploadXhrRef.current = null;
+                }
+            }
+            throw lastError;
+        };
+
+        setUploadStatus({ playlistId, total: audioFiles.length, processed: 0, failed: 0, current: audioFiles[0]?.name });
+
+        for (const file of audioFiles) {
+            if (uploadCancelRef.current) { canceled = true; break; }
+            setUploadStatus(current => current?.playlistId === playlistId
+                ? { ...current, current: file.name }
+                : current);
+
+            let fileFailed = false;
+            let fileCompleted = false;
+            try {
+                const data = await uploadFileWithRetry(file);
+                if (uploadCancelRef.current) { canceled = true; break; }
+                if (!data?.file_path) throw new Error('Upload finished without file_path');
+
+                const fallback = splitTrackFilename(file.name);
+                const title = data.audio_title || fallback.title;
+                const artist = data.audio_artist || fallback.artist;
+                const dur = await readAudioDuration(data.file_path);
+                if (uploadCancelRef.current) { canceled = true; break; }
+                const track = await api.addTrack(token, {
+                    playlist_id: playlistId,
+                    title,
+                    artist,
+                    file_path: data.file_path,
+                    cover_path: data.cover_path,
+                    duration: dur,
+                });
+                if (!track?.id) throw new Error(track?.detail || 'Track was not added');
+
+                const newTrack: Track = {
+                    id: track.id,
+                    playlist_id: playlistId,
+                    title,
+                    artist,
+                    file_path: data.file_path,
+                    cover_path: data.cover_path,
+                    duration: dur,
+                    position: track.position || 0,
+                };
+                setPlaylists(prev => prev.map(p => p.id === playlistId
+                    ? { ...p, tracks: [...p.tracks, { ...newTrack, position: newTrack.position || p.tracks.length + 1 }] }
+                    : p));
+                setActivePlaylist(prev => prev?.id === playlistId
+                    ? { ...prev, tracks: [...prev.tracks, { ...newTrack, position: newTrack.position || prev.tracks.length + 1 }] }
+                    : prev);
+                fileCompleted = true;
+            } catch (error) {
+                if (uploadCancelRef.current) {
+                    canceled = true;
+                } else {
+                    fileFailed = true;
+                    console.warn('Playlist track upload failed:', file.name, error);
+                }
+            } finally {
+                if (fileFailed) {
+                    failed += 1;
+                    processed += 1;
+                } else if (fileCompleted) {
+                    processed += 1;
+                }
+                const nextProcessed = processed;
+                const nextFailed = failed;
+                const nextCanceled = canceled || uploadCancelRef.current;
+                const nextCurrent = !nextCanceled && nextProcessed < audioFiles.length ? audioFiles[nextProcessed]?.name : undefined;
+                setUploadStatus(current => current?.playlistId === playlistId
+                    ? { ...current, processed: nextProcessed, failed: nextFailed, current: nextCurrent, canceled: nextCanceled || current.canceled }
+                    : current);
+            }
+            if (canceled || uploadCancelRef.current) break;
+        }
+
+        try {
+            const freshPlaylists = await api.getPlaylists(token);
+            if (Array.isArray(freshPlaylists)) {
+                setPlaylists(freshPlaylists);
+                setActivePlaylist(prev => {
+                    if (!prev || prev.id !== playlistId) return prev;
+                    return freshPlaylists.find((p: Playlist) => p.id === playlistId) || prev;
+                });
+            }
+        } catch (error) {
+            console.warn('Playlist refresh after upload failed:', error);
+        }
+
+        uploadXhrRef.current = null;
+        uploadStatusClearTimerRef.current = window.setTimeout(() => {
+            setUploadStatus(current => current?.playlistId === playlistId && current.processed >= current.total
+                ? null
+                : current?.playlistId === playlistId && current.canceled
+                    ? null
+                    : current);
+            uploadStatusClearTimerRef.current = null;
+        }, canceled || failed ? 4500 : 1800);
     };
 
     const handleCoverUpload = async (playlist: Playlist, file: File) => {
@@ -266,13 +472,45 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
     const stableSetVol = useCallback((v: number) => volRef.current(v), []);
 
     useEffect(() => {
-        // Merge playlist cover as fallback so MiniPlayer always has something to display
-        const trackWithCover = currentTrack
-            ? { ...currentTrack, cover_path: currentTrack.cover_path || activePlaylist?.cover || undefined }
-            : null;
-        onStateChange?.({ track: trackWithCover, isPlaying, volume, progress, duration, toggle: stableToggle, prev: stablePrev, next: stableNext, setVol: stableSetVol });
+        onStateChange?.({ track: currentTrack, isPlaying, volume, progress, duration, toggle: stableToggle, prev: stablePrev, next: stableNext, setVol: stableSetVol });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentTrack, isPlaying, volume, progress, duration, activePlaylist]);
+    }, [currentTrack, isPlaying, volume, progress, duration]);
+
+    useEffect(() => () => clearAuroraMediaSession('music'), []);
+
+    useEffect(() => {
+        if (!currentTrack) {
+            clearAuroraMediaSession('music');
+            return;
+        }
+        const artwork = currentTrack.cover_path
+            ? (config.fileUrl(currentTrack.cover_path) ?? currentTrack.cover_path)
+            : activePlaylist?.cover
+                ? (config.fileUrl(activePlaylist.cover) ?? activePlaylist.cover)
+                : null;
+        updateAuroraMediaSession('music', {
+            title: currentTrack.title,
+            artist: currentTrack.artist || 'Aurora',
+            album: activePlaylist?.name || 'Aurora',
+            artwork,
+            duration,
+            position: progress,
+            playbackState: isPlaying ? 'playing' : 'paused',
+            handlers: {
+                play: () => { if (!isPlaying) stableToggle(); },
+                pause: () => { if (isPlaying) stableToggle(); },
+                stop: stopPlayback,
+                previoustrack: stablePrev,
+                nexttrack: stableNext,
+                seekto: time => {
+                    if (!audioRef.current) return;
+                    audioRef.current.currentTime = time;
+                    setProgress(time);
+                },
+            },
+        });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentTrack, activePlaylist?.name, activePlaylist?.cover, isPlaying, progress, duration, stableToggle, stablePrev, stableNext]);
 
     const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
@@ -287,12 +525,12 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
 
     return (
         <>
-        <audio ref={audioRef} style={{ display: 'none' }} />
+        <audio ref={audioRef} preload="auto" style={{ display: 'none' }} />
         {/* Hidden file inputs */}
         <input ref={fileInputRef} type="file" accept="audio/*" multiple style={{ display: 'none' }} onChange={e => {
             const plId = parseInt(fileInputRef.current?.getAttribute('data-pl') || '0');
             const pl = playlists.find(p => p.id === plId);
-            if (pl && e.target.files) handleFileAdd(pl, e.target.files);
+            if (pl && e.target.files) handleFileAdd(pl, Array.from(e.target.files));
             e.target.value = '';
         }} />
         <input ref={coverInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => {
@@ -303,13 +541,11 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
         }} />
 
         {visible && <div style={{ position: 'fixed', inset: 0, zIndex: 4000, display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center', backgroundColor: isMobile ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.7)', backdropFilter: 'blur(12px)' }} onClick={onClose}>
-            <div style={{ background: bg, borderRadius: isMobile ? '24px 24px 0 0' : 26, width: isMobile ? '100%' : 500, maxHeight: isMobile ? '92svh' : '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 80px rgba(124,58,237,0.4), 0 40px 100px rgba(0,0,0,0.98)' : dm ? '0 0 60px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.7)' : '0 0 50px rgba(99,102,241,0.18), 0 20px 60px rgba(0,0,0,0.18)', position: 'relative', paddingBottom: isMobile ? 'env(safe-area-inset-bottom, 0px)' : 0 }} onClick={e => e.stopPropagation()}>
+            <div className={`${isMobile ? 'mobile-fullscreen ' : ''}aurora-media-panel`} style={{ background: bg, borderRadius: isMobile ? 0 : 26, width: isMobile ? '100%' : 500, height: isMobile ? '100dvh' : undefined, maxHeight: isMobile ? '100dvh' : '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: isOled ? '0 0 80px rgba(124,58,237,0.4), 0 40px 100px rgba(0,0,0,0.98)' : dm ? '0 0 60px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.7)' : '0 0 50px rgba(99,102,241,0.18), 0 20px 60px rgba(0,0,0,0.18)', position: 'relative', paddingTop: isMobile ? 'env(safe-area-inset-top, 0px)' : 0, paddingBottom: isMobile ? 'env(safe-area-inset-bottom, 0px)' : 0 }} onClick={e => e.stopPropagation()}>
 
                 {/* Mobile drag handle */}
-                {isMobile && <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 0' }}><div style={{ width: 36, height: 4, borderRadius: 2, background: isOled ? 'rgba(167,139,250,0.25)' : dm ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)' }} /></div>}
-
                 {/* Header */}
-                <div style={{ padding: isMobile ? '10px 16px 10px' : '16px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div className="aurora-media-header" style={{ padding: isMobile ? '10px 16px 10px' : '16px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ display: 'flex', gap: 6 }}>
                         <button onClick={() => setView('playlists')} style={{ ...btnStyle(view === 'playlists'), fontSize: 13, padding: '5px 12px', fontWeight: 600 }}>Плейлисты</button>
                         {currentTrack && <button onClick={() => setView('player')} style={{ ...btnStyle(view === 'player'), fontSize: 13, padding: '5px 12px', fontWeight: 600 }}>Плеер</button>}
@@ -317,7 +553,7 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
                     <button onClick={onClose} style={{ ...btnStyle(), fontSize: 18, padding: '4px 8px', color: sub }}>✕</button>
                 </div>
 
-                <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px 14px' : '16px 20px' }}>
+                <div className="aurora-media-body" style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px 14px' : '16px 20px' }}>
 
                     {/* ─── PLAYLISTS VIEW ─── */}
                     {view === 'playlists' && (
@@ -335,12 +571,38 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
                                 </div>
                             )}
 
+                            {uploadStatus && (
+                                <div style={{ background: bg2, border: `1px solid ${border}`, borderRadius: 14, padding: '10px 12px', marginBottom: 14, boxShadow: isOled ? '0 0 24px rgba(167,139,250,0.1)' : '0 8px 24px rgba(15,23,42,0.08)' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                                        <span style={{ color: text, fontWeight: 700, fontSize: 13 }}>
+                                            {uploadStatus.canceled
+                                                ? `Загрузка отменена: ${uploadStatus.processed} из ${uploadStatus.total}`
+                                                : uploadStatus.processed >= uploadStatus.total
+                                                ? `Загружено ${uploadStatus.total - uploadStatus.failed} из ${uploadStatus.total}`
+                                                : `Загрузка ${uploadStatus.processed + 1}/${uploadStatus.total}`}
+                                        </span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                                            {uploadStatus.failed > 0 && <span style={{ color: '#f87171', fontSize: 12, fontWeight: 700 }}>Ошибок: {uploadStatus.failed}</span>}
+                                            {!uploadStatus.canceled && uploadStatus.processed < uploadStatus.total && (
+                                                <button onClick={cancelTrackUpload} style={{ border: `1px solid ${isOled ? 'rgba(248,113,113,0.35)' : 'rgba(248,113,113,0.28)'}`, background: isOled ? 'rgba(127,29,29,0.18)' : dm ? 'rgba(127,29,29,0.22)' : '#fff1f2', color: '#f87171', borderRadius: 9, padding: '4px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                                                    Отменить
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div style={{ height: 5, borderRadius: 999, background: isOled ? 'rgba(167,139,250,0.12)' : 'rgba(99,102,241,0.14)', overflow: 'hidden', marginBottom: uploadStatus.current ? 7 : 0 }}>
+                                        <div style={{ width: `${Math.min(100, (uploadStatus.processed / uploadStatus.total) * 100)}%`, height: '100%', borderRadius: 999, background: `linear-gradient(90deg, ${accent}, ${isOled ? '#7c3aed' : '#ec4899'})`, transition: 'width 0.2s ease' }} />
+                                    </div>
+                                    {uploadStatus.current && <div style={{ color: sub, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{uploadStatus.current}</div>}
+                                </div>
+                            )}
+
                             {playlists.length === 0 && <div style={{ textAlign: 'center', color: sub, padding: '40px 0', fontSize: 14 }}>Нет плейлистов. Создайте первый!</div>}
 
                             {playlists.map(pl => {
                                 const plCover = coverUrl(pl.cover);
                                 return (
-                                <div key={pl.id} style={{ background: bg2, borderRadius: 16, marginBottom: 12, overflow: 'hidden', boxShadow: `0 2px 16px rgba(0,0,0,0.1)` }}>
+                                <div className="aurora-playlist-card" key={pl.id} style={{ background: bg2, borderRadius: 16, marginBottom: 12, overflow: 'hidden', boxShadow: `0 2px 16px rgba(0,0,0,0.1)` }}>
                                     {/* Playlist header row */}
                                     <div style={{ padding: isMobile ? '12px 12px 8px' : '14px 14px 10px', display: 'flex', alignItems: 'center', gap: 14 }}>
                                         {/* Cover — clickable to change */}
@@ -369,7 +631,7 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
                                                 <span style={{ fontSize: 10, opacity: 0.7 }}>{collapsedPlaylists.has(pl.id) ? '▶' : '▼'}</span>
                                             </div>
                                             <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
-                                                <button onClick={() => { fileInputRef.current!.setAttribute('data-pl', String(pl.id)); fileInputRef.current!.click(); }} style={btnStyle()} title="Добавить музыку">
+                                                <button disabled={uploadStatus?.playlistId === pl.id && !uploadStatus.canceled && uploadStatus.processed < uploadStatus.total} onClick={() => { fileInputRef.current!.setAttribute('data-pl', String(pl.id)); fileInputRef.current!.click(); }} style={{ ...btnStyle(), opacity: uploadStatus?.playlistId === pl.id && !uploadStatus.canceled && uploadStatus.processed < uploadStatus.total ? 0.45 : 1 }} title="Добавить музыку">
                                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                                                 </button>
                                                 <button onClick={() => { setRenaming(pl.id); setRenameVal(pl.name); }} style={btnStyle()} title="Переименовать">
@@ -389,7 +651,7 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
                                     {pl.tracks.length > 0 && !collapsedPlaylists.has(pl.id) && (
                                         <div style={{ borderTop: `1px solid ${border}` }}>
                                             {pl.tracks.map((track, i) => (
-                                                <div key={track.id}
+                                                <div className="aurora-track-row" key={track.id}
                                                     onClick={() => playTrack(track, pl)}
                                                     onMouseEnter={e => { if (currentTrack?.id !== track.id) e.currentTarget.style.background = isOled ? 'rgba(167,139,250,0.05)' : 'rgba(99,102,241,0.04)'; }}
                                                     onMouseLeave={e => { if (currentTrack?.id !== track.id) e.currentTarget.style.background = 'transparent'; }}
@@ -417,17 +679,17 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
 
                     {/* ─── PLAYER VIEW ─── */}
                     {view === 'player' && currentTrack && (() => {
-                        const trackCover = coverUrl(currentTrack.cover_path) || coverUrl(activePlaylist?.cover);
+                        const trackCover = coverUrl(currentTrack.cover_path);
                         const coverSz = isMobile ? Math.min(window.innerWidth - 48, 300) : 260;
                         return (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <div className="aurora-player-view" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                             {/* Back */}
                             <button onClick={() => setView('playlists')} style={{ alignSelf: 'flex-start', background: 'none', border: 'none', color: sub, cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 4, padding: '0 0 16px', fontFamily: 'inherit' }}>
                                 ← {activePlaylist?.name}
                             </button>
 
                             {/* Large Cover */}
-                            <div style={{ width: coverSz, height: coverSz, borderRadius: isMobile ? 24 : 22, flexShrink: 0, overflow: 'hidden',
+                            <div className="aurora-player-cover" style={{ width: coverSz, height: coverSz, borderRadius: isMobile ? 24 : 22, flexShrink: 0, overflow: 'hidden',
                                 background: trackCover ? `url(${trackCover}) center/cover` : `linear-gradient(135deg, ${accent}, ${isOled ? '#5b21b6' : '#8b5cf6'})`,
                                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 80,
                                 boxShadow: isOled ? `0 20px 70px rgba(139,92,246,0.55)` : '0 16px 48px rgba(99,102,241,0.3)',
@@ -442,15 +704,14 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
                                     {currentTrack.title}
                                 </div>
                                 <div style={{ color: accent, fontSize: isMobile ? 15 : 14, fontWeight: 600 }}>
-                                    {currentTrack.artist || activePlaylist?.name}
+                                    {currentTrack.artist || 'Неизвестный исполнитель'}
                                 </div>
                             </div>
 
                             {/* Progress */}
                             <div style={{ width: '100%', marginBottom: isMobile ? 4 : 8 }}>
-                                <input type="range" min={0} max={duration || 1} step={0.1} value={progress} onChange={handleSeek}
-                                    style={{ width: '100%', accentColor: accent, cursor: 'pointer',
-                                        height: isMobile ? 6 : 4, borderRadius: 3 }} />
+                                <input className="aurora-volume-range aurora-progress-range" type="range" min={0} max={duration || 1} step={0.1} value={progress} onChange={handleSeek}
+                                    style={{ '--range-progress': `${duration ? Math.min(100, (progress / duration) * 100) : 0}%`, '--range-accent': accent, width: '100%' } as React.CSSProperties} />
                                 <div style={{ display: 'flex', justifyContent: 'space-between', color: sub, fontSize: 12, marginTop: 6 }}>
                                     <span>{fmt(progress)}</span><span>{fmt(duration)}</span>
                                 </div>
@@ -509,10 +770,9 @@ const MediaPlayer: React.FC<Props> = ({ token, dm, isOled, isMobile = false, vis
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%',
                                 marginBottom: isMobile ? 8 : 0 }}>
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/></svg>
-                                <input type="range" min={0} max={1} step={0.01} value={volume}
+                                <input className="aurora-volume-range" type="range" min={0} max={1} step={0.01} value={volume}
                                     onChange={e => handleVolumeChange(parseFloat(e.target.value))}
-                                    style={{ flex: 1, accentColor: accent, cursor: 'pointer',
-                                        height: isMobile ? 5 : 4 }} />
+                                    style={{ '--range-progress': `${volume * 100}%`, '--range-accent': accent, flex: 1 } as React.CSSProperties} />
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
                             </div>
                         </div>
@@ -537,6 +797,7 @@ export const MiniPlayer: React.FC<{
     trackDuration?: number;
     dm: boolean;
     isOled: boolean;
+    isMobile?: boolean;
     onToggle: () => void;
     onPrev: () => void;
     onNext: () => void;
@@ -548,7 +809,7 @@ export const MiniPlayer: React.FC<{
     onChatAudioStop?: () => void;
     onChatAudioPrev?: () => void;
     onChatAudioNext?: () => void;
-}> = ({ track, isPlaying, volume, trackProgress = 0, trackDuration = 0, dm, isOled, onToggle, onPrev, onNext, onVolume, onOpen, chatAudio, chatAudioPlaying, onChatAudioToggle, onChatAudioStop, onChatAudioPrev, onChatAudioNext }) => {
+}> = ({ track, isPlaying, volume, trackProgress = 0, trackDuration = 0, dm, isOled, isMobile = false, onToggle, onPrev, onNext, onVolume, onOpen, chatAudio, chatAudioPlaying, onChatAudioToggle, onChatAudioStop, onChatAudioPrev, onChatAudioNext }) => {
     const [showVol, setShowVol] = useState(false);
     const [volPos, setVolPos] = useState<{ top: number; right: number } | null>(null);
     const volBtnRef = useRef<HTMLButtonElement>(null);
@@ -591,7 +852,7 @@ export const MiniPlayer: React.FC<{
           </div>;
 
     return (
-        <div style={{ margin: '0 8px 6px', background: bg, borderRadius: 14, border: `1px solid ${borderTopCol}`, overflow: 'hidden' }}>
+        <div className={isMobile ? 'mobile-mini-player' : undefined} style={{ margin: '0 8px 6px', background: bg, borderRadius: 14, border: `1px solid ${borderTopCol}`, overflow: 'hidden' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: showMusic ? 'pointer' : 'default', borderRadius: 14 }} onClick={showMusic ? onOpen : undefined}>
                 {coverEl}
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -617,8 +878,8 @@ export const MiniPlayer: React.FC<{
                     <button onClick={e => { e.stopPropagation(); onNext(); }} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg></button>
                     <div style={{ position: 'relative' }}>
                         <button ref={volBtnRef} onClick={handleVolToggle} style={{ background: 'none', border: 'none', color: sub, cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center' }}>{volIcon}</button>
-                        {showVol && volPos && <div style={{ position: 'fixed', top: volPos.top, right: volPos.right, background: bg, borderRadius: 10, padding: '8px 10px', boxShadow: '0 4px 20px rgba(0,0,0,0.35)', border: `1px solid ${isOled ? 'rgba(167,139,250,0.15)' : dm ? 'rgba(99,102,241,0.2)' : '#ede9fe'}`, zIndex: 9999 }} onClick={e => e.stopPropagation()}>
-                            <input type="range" min={0} max={1} step={0.01} value={volume} onChange={e => onVolume(parseFloat(e.target.value))} style={{ width: 80, accentColor: accent, cursor: 'pointer', display: 'block' }} />
+                        {showVol && volPos && <div className="mini-volume-popover" style={{ position: 'fixed', top: volPos.top, right: volPos.right, background: bg, borderRadius: 10, padding: '8px 10px', boxShadow: '0 4px 20px rgba(0,0,0,0.35)', border: `1px solid ${isOled ? 'rgba(167,139,250,0.15)' : dm ? 'rgba(99,102,241,0.2)' : '#ede9fe'}`, zIndex: 9999 }} onClick={e => e.stopPropagation()}>
+                            <input className="aurora-volume-range" type="range" min={0} max={1} step={0.01} value={volume} onChange={e => onVolume(parseFloat(e.target.value))} style={{ '--range-progress': `${volume * 100}%`, '--range-accent': accent } as React.CSSProperties} />
                         </div>}
                     </div>
                 </>}

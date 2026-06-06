@@ -5,8 +5,7 @@ import { User } from '../types';
 import { api } from '../services/api';
 import { config } from '../config';
 import { useLang } from '../i18n';
-
-const BASE_URL = config.BASE_URL;
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 const isImg = (n: string) => /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(n);
 const isVid = (n: string) => /\.(mp4|webm|ogg|mov|avi|mkv)$/i.test(n);
@@ -37,7 +36,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
     const [closing, setClosing] = useState(false);
     const [avatarLightbox, setAvatarLightbox] = useState(false);
     const [expanded, setExpanded] = useState(initialMediaOpen);
-    const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
+    const isMobile = useIsMobile();
     const [mediaTab, setMediaTab] = useState<'images' | 'video' | 'audio' | 'files'>('images');
     const [lightbox, setLightbox] = useState<{ src: string; filename: string; isVideo: boolean } | null>(null);
     const [mediaClosing, setMediaClosing] = useState(false);
@@ -72,7 +71,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     if (dateTo && d > dateTo) return;
                 }
             }
-            const src = fp.startsWith('http') ? fp : `${BASE_URL}${fp}`;
+            const src = config.fileUrl(fp) ?? fp;
             const item = { src, filename: fn, fileSize: fs, messageId: mid };
             if (isImg(fn)) i.push(item);
             else if (isVid(fn)) v.push(item);

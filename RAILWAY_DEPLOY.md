@@ -6,22 +6,29 @@ This Dockerfile builds the React client and serves it from FastAPI. In Railway:
 
 1. Create a MySQL service.
 2. Create an Aurora service from this repository.
-3. Add the backend variables:
+3. Add the backend variables. If you use Railway MySQL, prefer variable references from the MySQL service:
 
 ```env
-MYSQL_HOST=
-MYSQL_PORT=3306
-MYSQL_DATABASE=messenger
-MYSQL_USER=
-MYSQL_PASSWORD=
+MYSQLHOST=${{MySQL.MYSQLHOST}}
+MYSQLPORT=${{MySQL.MYSQLPORT}}
+MYSQLDATABASE=${{MySQL.MYSQLDATABASE}}
+MYSQLUSER=${{MySQL.MYSQLUSER}}
+MYSQLPASSWORD=${{MySQL.MYSQLPASSWORD}}
 JWT_SECRET=replace-with-at-least-32-random-characters
 CORS_ORIGINS=https://your-aurora-host.up.railway.app
 CLOUDINARY_CLOUD_NAME=
 CLOUDINARY_API_KEY=
 CLOUDINARY_API_SECRET=
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=
+SMTP_FROM_NAME=Aurora Messenger
 ```
 
 Railway provides `PORT` automatically. The app listens on that port.
+The app also understands `MYSQL_URL` / `DATABASE_URL` and the underscore aliases `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`.
 
 ## Client builds for Android and desktop
 

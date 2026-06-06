@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../services/api';
 import { useLang } from '../i18n';
 import AvatarCropper from './AvatarCropper';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 interface CreateChannelModalProps {
     token: string;
@@ -13,6 +14,7 @@ interface CreateChannelModalProps {
 const CreateChannelModal: React.FC<CreateChannelModalProps> = ({ token, isDark = false, onClose, onChannelCreated }) => {
     const dm = isDark;
     const { t } = useLang();
+    const isMobile = useIsMobile();
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [channelType, setChannelType] = useState<'public' | 'private'>('public');
@@ -95,13 +97,13 @@ const CreateChannelModal: React.FC<CreateChannelModalProps> = ({ token, isDark =
     return (
         <>
         <div
-            style={{ position: 'fixed', inset: 0, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}
+            style={{ position: 'fixed', inset: 0, backgroundColor: isOled ? 'rgba(0,0,0,0.85)' : (dm ? 'rgba(15,10,40,0.75)' : 'rgba(15,10,40,0.4)'), backdropFilter: 'blur(8px)', display: 'flex', alignItems: isMobile ? 'stretch' : 'center', justifyContent: 'center', zIndex: 1100 }}
             className={closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'}
             onClick={close}
         >
             <div
-                style={{ backgroundColor: bg, borderRadius: 24, width: 460, maxWidth: '95vw', maxHeight: '92vh', overflowY: 'auto', padding: 28, boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)', border: `1px solid ${borderCol}` }}
-                className={closing ? 'modal-exit' : 'modal-enter'}
+                style={{ backgroundColor: bg, borderRadius: isMobile ? 0 : 24, width: isMobile ? '100%' : 460, maxWidth: isMobile ? 'none' : '95vw', height: isMobile ? '100dvh' : undefined, maxHeight: isMobile ? '100dvh' : '92vh', boxSizing: 'border-box', overflowY: 'auto', padding: isMobile ? 'max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom))' : 28, boxShadow: dm ? '0 0 40px rgba(99,102,241,0.3), 0 30px 80px rgba(0,0,0,0.6)' : '0 0 40px rgba(99,102,241,0.12), 0 20px 60px rgba(0,0,0,0.12)', border: isMobile ? 'none' : `1px solid ${borderCol}` }}
+                className={`${isMobile ? 'mobile-fullscreen ' : ''}${closing ? 'modal-exit' : 'modal-enter'}`}
                 onClick={e => e.stopPropagation()}
             >
                 <h3 style={{ margin: '0 0 22px', textAlign: 'center', color: col, fontWeight: 700, fontSize: 18 }}>{t('📢 Create channel')}</h3>
@@ -130,7 +132,7 @@ const CreateChannelModal: React.FC<CreateChannelModalProps> = ({ token, isDark =
                     {/* Name */}
                     <div style={{ marginBottom: 12 }}>
                         <label style={{ fontSize: 11, fontWeight: 700, color: subCol, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'block', marginBottom: 5 }}>{t('Channel name')}</label>
-                        <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder={t('Enter name...')} style={inp} autoFocus required />
+                        <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder={t('Enter name...')} style={inp} autoFocus={!isMobile} required />
                     </div>
 
                     {/* Description */}

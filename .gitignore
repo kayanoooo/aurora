@@ -3,3 +3,5 @@ dist/
 uploads/
 *.env
 .env.local
+.env.production
+aurora_railway_export.sql

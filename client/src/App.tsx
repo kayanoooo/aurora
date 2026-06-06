@@ -1,11 +1,13 @@
 import { useState, useCallback, useEffect } from 'react';
 import Auth from './components/Auth';
 import Chat from './components/Chat';
+import LandingPage from './components/LandingPage';
 import SetupModal from './components/SetupModal';
 import OnboardingGuide, { resetOnboarding } from './components/OnboardingGuide';
 import { ThemeSettings, AccountEntry } from './types';
 import { api } from './services/api';
 import { wsService } from './services/websocket';
+import { initMobileAppRuntime } from './services/mobileApp';
 import './App.css';
 
 const DEFAULT_THEME: ThemeSettings = {
@@ -37,12 +39,17 @@ function App() {
     const [auth, setAuth] = useState<AuthState | null>(null);
     const [setupToken, setSetupToken] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
+    const [showAuth, setShowAuth] = useState(false);
     const [showOnboarding, setShowOnboarding] = useState(false);
     const [installPrompt, setInstallPrompt] = useState<any>(null);
     const [showInstallBanner, setShowInstallBanner] = useState(false);
     const [accounts, setAccounts] = useState<AccountEntry[]>(() => {
         try { return JSON.parse(localStorage.getItem('aurora_accounts') || '[]'); } catch { return []; }
     });
+
+    useEffect(() => {
+        return initMobileAppRuntime();
+    }, []);
 
     useEffect(() => {
         const handler = (e: any) => {
@@ -66,6 +73,13 @@ function App() {
             return t;
         } catch { return DEFAULT_THEME; }
     });
+
+    useEffect(() => {
+        const oled = theme.darkMode && theme.chatBg === '#000000';
+        document.body.classList.toggle('dark-theme', theme.darkMode);
+        document.body.classList.toggle('oled-theme', oled);
+        document.documentElement.style.colorScheme = theme.darkMode ? 'dark' : 'light';
+    }, [theme.darkMode, theme.chatBg]);
 
     const restoreSession = useCallback(async (token: string, userId: number, username: string) => {
         try {
@@ -238,6 +252,7 @@ function App() {
         localStorage.setItem(key, JSON.stringify(fixed));
         const oled = fixed.darkMode && fixed.chatBg === '#000000';
         document.body.classList.toggle('oled-theme', oled);
+        document.body.classList.toggle('dark-theme', fixed.darkMode);
     }, [auth]);
 
     const handleLogout = useCallback(() => {
@@ -255,6 +270,7 @@ function App() {
         }
         setAuth(null);
         setSetupToken(null);
+        setShowAuth(true);
         setTheme(DEFAULT_THEME);
     }, []);
 
@@ -299,7 +315,7 @@ function App() {
         <div className="App">
             {/* PWA install banner (Android Chrome / Edge) */}
             {showInstallBanner && installPrompt && (
-                <div style={{
+                <div className="mobile-install-banner" style={{
                     position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',
                     zIndex: 9999, background: 'linear-gradient(135deg,#6366f1,#8b5cf6)',
                     color: 'white', borderRadius: 16, padding: '12px 20px',
@@ -322,7 +338,16 @@ function App() {
                 </div>
             )}
             {!auth ? (
-                <Auth onAuth={handleAuth} />
+                showAuth ? (
+                    <div className="auth-shell">
+                        <button className="auth-shell-back" onClick={() => setShowAuth(false)}>
+                            ← На сайт
+                        </button>
+                        <Auth onAuth={handleAuth} />
+                    </div>
+                ) : (
+                    <LandingPage onOpenAuth={() => setShowAuth(true)} />
+                )
             ) : (
                 <Chat
                     token={auth.token}

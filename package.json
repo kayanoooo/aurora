@@ -7,12 +7,26 @@
     "electron:dev": "ELECTRON_START_URL=http://localhost:3000 electron .",
     "electron": "electron .",
     "build:client": "cd client && npm run build",
+    "mobile:build": "npm run build:client && npx cap sync",
+    "mobile:sync": "npm run build:client && npx cap sync",
+    "mobile:android": "npm run build:client && npx cap sync android",
+    "mobile:android:open": "npx cap open android",
+    "mobile:android:run": "npm run build:client && npx cap run android",
     "dist": "npm run build:client && electron-builder",
     "dist:linux": "npm run build:client && electron-builder --linux",
     "dist:win": "npm run build:client && electron-builder --win",
     "dist:mac": "npm run build:client && electron-builder --mac"
   },
+  "dependencies": {
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/core": "^8.4.0",
+    "@capacitor/local-notifications": "^8.2.0",
+    "@capacitor/push-notifications": "^8.1.1",
+    "@capawesome/capacitor-badge": "^8.0.2"
+  },
   "devDependencies": {
+    "@capacitor/android": "^8.4.0",
+    "@capacitor/cli": "^8.4.0",
     "electron": "^28.3.3",
     "electron-builder": "^24.13.3"
   },

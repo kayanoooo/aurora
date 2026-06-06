@@ -1,11 +1,11 @@
 import { config } from '../config';
 
-const API_URL = config.API_URL;
+const getApiUrl = () => config.API_URL;
 
 export const api = {
     async sendRegisterCode(email: string) {
         try {
-            const response = await fetch(`${API_URL}/auth/send-register-code`, {
+            const response = await fetch(`${getApiUrl()}/auth/send-register-code`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email }),
@@ -21,7 +21,7 @@ export const api = {
 
     async register(email: string, password: string, reg_code?: string) {
         try {
-            const response = await fetch(`${API_URL}/register`, {
+            const response = await fetch(`${getApiUrl()}/register`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, password, reg_code }),
@@ -37,7 +37,7 @@ export const api = {
 
     async setupProfile(token: string, tag: string, username: string, theme?: string) {
         try {
-            const response = await fetch(`${API_URL}/setup?token=${token}`, {
+            const response = await fetch(`${getApiUrl()}/setup?token=${token}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ tag, username, theme }),
@@ -58,7 +58,7 @@ export const api = {
                 deviceId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
                 localStorage.setItem('aurora_device_id', deviceId);
             }
-            const response = await fetch(`${API_URL}/login`, {
+            const response = await fetch(`${getApiUrl()}/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, password, device_id: deviceId }),
@@ -77,7 +77,7 @@ export const api = {
 
     async resetPassword(email: string, tag: string, old_password: string, new_password: string) {
         try {
-            const response = await fetch(`${API_URL}/password-reset`, {
+            const response = await fetch(`${getApiUrl()}/password-reset`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, tag, old_password, new_password }),
@@ -93,7 +93,7 @@ export const api = {
 
     async sendResetCode(email: string) {
         try {
-            const response = await fetch(`${API_URL}/auth/send-reset-code`, {
+            const response = await fetch(`${getApiUrl()}/auth/send-reset-code`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email }),
@@ -104,7 +104,7 @@ export const api = {
 
     async confirmReset(email: string, code: string, new_password: string) {
         try {
-            const response = await fetch(`${API_URL}/auth/confirm-reset`, {
+            const response = await fetch(`${getApiUrl()}/auth/confirm-reset`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, code, new_password }),
@@ -120,7 +120,7 @@ export const api = {
     
     async getUsers(token: string) {
         try {
-            const response = await fetch(`${API_URL}/users?token=${token}`);
+            const response = await fetch(`${getApiUrl()}/users?token=${token}`);
             
             if (!response.ok) {
                 const text = await response.text();
@@ -137,7 +137,7 @@ export const api = {
     
     async getConversation(token: string, userId: number, beforeId?: number) {
         try {
-            let url = `${API_URL}/conversation/${userId}?token=${token}&limit=200`;
+            let url = `${getApiUrl()}/conversation/${userId}?token=${token}&limit=200`;
             if (beforeId) url += `&before_id=${beforeId}`;
             const response = await fetch(url);
             if (!response.ok) {
@@ -178,14 +178,14 @@ export const api = {
             };
             xhr.onerror = () => reject(new Error('Network error'));
             xhr.onabort = () => reject(new Error('Upload cancelled'));
-            xhr.open('POST', `${API_URL}/upload`);
+            xhr.open('POST', `${getApiUrl()}/upload`);
             xhr.send(formData);
         });
     },
 
     async downloadFile(filePath: string, filename: string) {
         try {
-            const response = await fetch(`${config.BASE_URL}${filePath}`);
+            const response = await fetch(config.fileUrl(filePath) ?? filePath);
             const blob = await response.blob();
 
             const url = window.URL.createObjectURL(blob);
@@ -205,42 +205,42 @@ export const api = {
     },
 
     async findUser(token: string, username: string) {
-        const response = await fetch(`${API_URL}/users/find?token=${token}&username=${encodeURIComponent(username)}`);
+        const response = await fetch(`${getApiUrl()}/users/find?token=${token}&username=${encodeURIComponent(username)}`);
         if (!response.ok) throw new Error('User not found');
         return response.json();
     },
 
     async getRecentUsers(token: string) {
-        const response = await fetch(`${API_URL}/users/recent?token=${token}`);
+        const response = await fetch(`${getApiUrl()}/users/recent?token=${token}`);
         if (!response.ok) return { users: [] };
         return response.json();
     },
 
     async searchUsers(token: string, query: string) {
-        const response = await fetch(`${API_URL}/users/search?token=${token}&query=${encodeURIComponent(query)}`);
+        const response = await fetch(`${getApiUrl()}/users/search?token=${token}&query=${encodeURIComponent(query)}`);
         if (!response.ok) return { users: [] };
         return response.json();
     },
 
     async searchChannels(token: string, query: string) {
-        const response = await fetch(`${API_URL}/channels/search?token=${token}&query=${encodeURIComponent(query)}`);
+        const response = await fetch(`${getApiUrl()}/channels/search?token=${token}&query=${encodeURIComponent(query)}`);
         if (!response.ok) return { channels: [] };
         return response.json();
     },
 
     async joinGroup(token: string, groupId: number) {
-        const response = await fetch(`${API_URL}/groups/${groupId}/join?token=${token}`, { method: 'POST' });
+        const response = await fetch(`${getApiUrl()}/groups/${groupId}/join?token=${token}`, { method: 'POST' });
         if (!response.ok) return { success: false };
         return response.json();
     },
 
     async deleteGroup(token: string, groupId: number) {
-        const response = await fetch(`${API_URL}/groups/${groupId}?token=${token}`, { method: 'DELETE' });
+        const response = await fetch(`${getApiUrl()}/groups/${groupId}?token=${token}`, { method: 'DELETE' });
         return response.json();
     },
 
     async updateGroup(token: string, groupId: number, name?: string, description?: string) {
-        const response = await fetch(`${API_URL}/groups/${groupId}?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/groups/${groupId}?token=${token}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, description }),
@@ -249,17 +249,17 @@ export const api = {
     },
 
     async removeMember(token: string, groupId: number, userId: number) {
-        const response = await fetch(`${API_URL}/groups/${groupId}/members/${userId}?token=${token}`, { method: 'DELETE' });
+        const response = await fetch(`${getApiUrl()}/groups/${groupId}/members/${userId}?token=${token}`, { method: 'DELETE' });
         return response.json();
     },
 
     async clearConversation(token: string, userId: number) {
-        const response = await fetch(`${API_URL}/conversation/${userId}?token=${token}`, { method: 'DELETE' });
+        const response = await fetch(`${getApiUrl()}/conversation/${userId}?token=${token}`, { method: 'DELETE' });
         return response.json();
     },
 
     async clearGroupMessages(token: string, groupId: number) {
-        const response = await fetch(`${API_URL}/groups/${groupId}/messages?token=${token}`, { method: 'DELETE' });
+        const response = await fetch(`${getApiUrl()}/groups/${groupId}/messages?token=${token}`, { method: 'DELETE' });
         return response.json();
     },
 
@@ -268,24 +268,24 @@ export const api = {
 // ========== Групповые чаты ==========
 
     async createGroup(token: string, name: string, description: string = '') {
-        const response = await fetch(`${API_URL}/groups?token=${token}&name=${encodeURIComponent(name)}&description=${encodeURIComponent(description)}`, {
+        const response = await fetch(`${getApiUrl()}/groups?token=${token}&name=${encodeURIComponent(name)}&description=${encodeURIComponent(description)}`, {
             method: 'POST',
         });
         return response.json();
     },
 
     async getMyGroups(token: string) {
-        const response = await fetch(`${API_URL}/groups?token=${token}`);
+        const response = await fetch(`${getApiUrl()}/groups?token=${token}`);
         return response.json();
     },
 
     async getGroupInfo(token: string, groupId: number) {
-        const response = await fetch(`${API_URL}/groups/${groupId}?token=${token}`);
+        const response = await fetch(`${getApiUrl()}/groups/${groupId}?token=${token}`);
         return response.json();
     },
 
     async inviteToGroup(token: string, groupId: number, tag: string) {
-        const response = await fetch(`${API_URL}/groups/${groupId}/invite?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/groups/${groupId}/invite?token=${token}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -298,7 +298,7 @@ export const api = {
     },
 
     async getGroupMessages(token: string, groupId: number, beforeId?: number) {
-        let url = `${API_URL}/groups/${groupId}/messages?token=${token}&limit=200`;
+        let url = `${getApiUrl()}/groups/${groupId}/messages?token=${token}&limit=200`;
         if (beforeId) url += `&before_id=${beforeId}`;
         const response = await fetch(url);
         return response.json();
@@ -306,14 +306,14 @@ export const api = {
 
     async getLinkPreview(token: string, url: string) {
         try {
-            const response = await fetch(`${API_URL}/link-preview?token=${token}&url=${encodeURIComponent(url)}`);
+            const response = await fetch(`${getApiUrl()}/link-preview?token=${token}&url=${encodeURIComponent(url)}`);
             if (!response.ok) return null;
             return await response.json();
         } catch { return null; }
     },
 
     exportChat(token: string, chatType: string, chatId: number, fmt: 'json' | 'txt' = 'json') {
-        const url = `${API_URL}/export/chat?token=${token}&chat_type=${chatType}&chat_id=${chatId}&fmt=${fmt}`;
+        const url = `${getApiUrl()}/export/chat?token=${token}&chat_type=${chatType}&chat_id=${chatId}&fmt=${fmt}`;
         const a = document.createElement('a');
         a.href = url;
         a.download = `chat_${chatId}.${fmt}`;
@@ -321,7 +321,7 @@ export const api = {
     },
 
     async searchMessages(token: string, query: string, chatType?: string, chatId?: number) {
-        let url = `${API_URL}/search?token=${token}&query=${encodeURIComponent(query)}`;
+        let url = `${getApiUrl()}/search?token=${token}&query=${encodeURIComponent(query)}`;
         if (chatType && chatId) {
             url += `&chat_type=${chatType}&chat_id=${chatId}`;
         }
@@ -330,7 +330,7 @@ export const api = {
     },
 
     async getProfile(token: string) {
-        const response = await fetch(`${API_URL}/profile?token=${token}`);
+        const response = await fetch(`${getApiUrl()}/profile?token=${token}`);
         if (!response.ok) {
             let detail: any = null;
             try { detail = (await response.json()).detail; } catch {}
@@ -347,7 +347,7 @@ export const api = {
         username?: string; status?: string; avatar_color?: string;
         birthday?: string; phone?: string; privacy_settings?: string; tag?: string;
     }) {
-        const response = await fetch(`${API_URL}/profile?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/profile?token=${token}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
@@ -356,17 +356,17 @@ export const api = {
     },
 
     async removeAvatar(token: string) {
-        const response = await fetch(`${API_URL}/profile/avatar?token=${token}`, { method: 'DELETE' });
+        const response = await fetch(`${getApiUrl()}/profile/avatar?token=${token}`, { method: 'DELETE' });
         return response.json();
     },
 
     async getTags(token: string) {
-        const response = await fetch(`${API_URL}/profile/tags?token=${token}`);
+        const response = await fetch(`${getApiUrl()}/profile/tags?token=${token}`);
         return response.json();
     },
 
     async addTag(token: string, tag: string) {
-        const response = await fetch(`${API_URL}/profile/tags?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/profile/tags?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tag }),
@@ -375,22 +375,22 @@ export const api = {
     },
 
     async removeTag(token: string, tag: string) {
-        const response = await fetch(`${API_URL}/profile/tags/${encodeURIComponent(tag)}?token=${token}`, { method: 'DELETE' });
+        const response = await fetch(`${getApiUrl()}/profile/tags/${encodeURIComponent(tag)}?token=${token}`, { method: 'DELETE' });
         return response.json();
     },
 
     async blockUser(token: string, userId: number) {
-        const response = await fetch(`${API_URL}/block/${userId}?token=${token}`, { method: 'POST' });
+        const response = await fetch(`${getApiUrl()}/block/${userId}?token=${token}`, { method: 'POST' });
         return response.json();
     },
 
     async unblockUser(token: string, userId: number) {
-        const response = await fetch(`${API_URL}/block/${userId}?token=${token}`, { method: 'DELETE' });
+        const response = await fetch(`${getApiUrl()}/block/${userId}?token=${token}`, { method: 'DELETE' });
         return response.json();
     },
 
     async getBlockedUsers(token: string) {
-        const response = await fetch(`${API_URL}/blocked?token=${token}`);
+        const response = await fetch(`${getApiUrl()}/blocked?token=${token}`);
         return response.json();
     },
 
@@ -398,7 +398,7 @@ export const api = {
         const formData = new FormData();
         formData.append('token', token);
         formData.append('file', file);
-        const response = await fetch(`${API_URL}/profile/avatar`, {
+        const response = await fetch(`${getApiUrl()}/profile/avatar`, {
             method: 'POST',
             body: formData,
         });
@@ -409,7 +409,7 @@ export const api = {
         const formData = new FormData();
         formData.append('token', token);
         formData.append('file', file);
-        const response = await fetch(`${API_URL}/groups/${groupId}/avatar`, {
+        const response = await fetch(`${getApiUrl()}/groups/${groupId}/avatar`, {
             method: 'POST',
             body: formData,
         });
@@ -417,11 +417,11 @@ export const api = {
     },
 
     async getFolders(token: string) {
-        const response = await fetch(`${API_URL}/folders?token=${token}`);
+        const response = await fetch(`${getApiUrl()}/folders?token=${token}`);
         return response.json();
     },
     async createFolder(token: string, name: string, color: string) {
-        const response = await fetch(`${API_URL}/folders?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/folders?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, color }),
@@ -429,7 +429,7 @@ export const api = {
         return response.json();
     },
     async updateFolder(token: string, folderId: number, name: string, color: string) {
-        const response = await fetch(`${API_URL}/folders/${folderId}?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/folders/${folderId}?token=${token}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, color }),
@@ -437,11 +437,11 @@ export const api = {
         return response.json();
     },
     async deleteFolder(token: string, folderId: number) {
-        const response = await fetch(`${API_URL}/folders/${folderId}?token=${token}`, { method: 'DELETE' });
+        const response = await fetch(`${getApiUrl()}/folders/${folderId}?token=${token}`, { method: 'DELETE' });
         return response.json();
     },
     async addChatToFolder(token: string, folderId: number, chatType: string, chatId: number) {
-        const response = await fetch(`${API_URL}/folders/${folderId}/chats?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/folders/${folderId}/chats?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ chat_type: chatType, chat_id: chatId }),
@@ -449,7 +449,7 @@ export const api = {
         return response.json();
     },
     async removeChatFromFolder(token: string, folderId: number, chatType: string, chatId: number) {
-        const response = await fetch(`${API_URL}/folders/${folderId}/chats/${chatType}/${chatId}?token=${token}`, { method: 'DELETE' });
+        const response = await fetch(`${getApiUrl()}/folders/${folderId}/chats/${chatType}/${chatId}?token=${token}`, { method: 'DELETE' });
         return response.json();
     },
 
@@ -457,7 +457,7 @@ export const api = {
 
     async createChannel(token: string, name: string, description: string = '', channelType: string = 'public', channelTag?: string) {
         const body = { name, description, channel_type: channelType, channel_tag: channelTag || null };
-        const response = await fetch(`${API_URL}/channels?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/channels?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -469,7 +469,7 @@ export const api = {
         const formData = new FormData();
         formData.append('token', token);
         formData.append('file', file);
-        const response = await fetch(`${API_URL}/groups/${groupId}/avatar`, {
+        const response = await fetch(`${getApiUrl()}/groups/${groupId}/avatar`, {
             method: 'POST',
             body: formData,
         });
@@ -477,33 +477,33 @@ export const api = {
     },
 
     async generateInviteLink(token: string, groupId: number) {
-        const response = await fetch(`${API_URL}/groups/${groupId}/invite-link?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/groups/${groupId}/invite-link?token=${token}`, {
             method: 'POST',
         });
         return response.json();
     },
 
     async joinViaInviteLink(token: string, inviteLink: string) {
-        const response = await fetch(`${API_URL}/groups/join/${inviteLink}?token=${token}`);
+        const response = await fetch(`${getApiUrl()}/groups/join/${inviteLink}?token=${token}`);
         return response.json();
     },
 
     async setMemberRole(token: string, groupId: number, userId: number, role: string) {
-        const response = await fetch(`${API_URL}/groups/${groupId}/members/${userId}/role?token=${token}&role=${role}`, {
+        const response = await fetch(`${getApiUrl()}/groups/${groupId}/members/${userId}/role?token=${token}&role=${role}`, {
             method: 'PUT',
         });
         return response.json();
     },
 
     async setMemberTitle(token: string, groupId: number, userId: number, title: string) {
-        const response = await fetch(`${API_URL}/groups/${groupId}/members/${userId}/title?token=${token}&title=${encodeURIComponent(title)}`, {
+        const response = await fetch(`${getApiUrl()}/groups/${groupId}/members/${userId}/title?token=${token}&title=${encodeURIComponent(title)}`, {
             method: 'PUT',
         });
         return response.json();
     },
 
     async updateChannelSettings(token: string, groupId: number, channelType?: string, channelTag?: string) {
-        const response = await fetch(`${API_URL}/groups/${groupId}/channel-settings?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/groups/${groupId}/channel-settings?token=${token}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ channel_type: channelType, channel_tag: channelTag }),
@@ -513,7 +513,7 @@ export const api = {
 
     async viewPost(token: string, groupId: number, messageId: number) {
         try {
-            const response = await fetch(`${API_URL}/groups/${groupId}/messages/${messageId}/view?token=${token}`, {
+            const response = await fetch(`${getApiUrl()}/groups/${groupId}/messages/${messageId}/view?token=${token}`, {
                 method: 'POST',
             });
             return response.json();
@@ -521,7 +521,7 @@ export const api = {
     },
 
     async sendSupportMessage(token: string, message_text: string, file_path?: string, filename?: string) {
-        const response = await fetch(`${API_URL}/support/send?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/support/send?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message_text, file_path, filename }),
@@ -530,46 +530,46 @@ export const api = {
     },
 
     async getSupportMessages(token: string) {
-        const response = await fetch(`${API_URL}/support/messages?token=${token}`);
+        const response = await fetch(`${getApiUrl()}/support/messages?token=${token}`);
         return response.json();
     },
 
     async getSupportUnread(token: string) {
         try {
-            const response = await fetch(`${API_URL}/support/unread?token=${token}`);
+            const response = await fetch(`${getApiUrl()}/support/unread?token=${token}`);
             return response.json();
         } catch { return { has_unread: false }; }
     },
 
     async getAdminStats(token: string) {
-        const response = await fetch(`${API_URL}/admin/stats?token=${token}`);
+        const response = await fetch(`${getApiUrl()}/admin/stats?token=${token}`);
         return response.json();
     },
 
     async getAdminUsers(token: string, search = '') {
-        const response = await fetch(`${API_URL}/admin/users?token=${token}&search=${encodeURIComponent(search)}`);
+        const response = await fetch(`${getApiUrl()}/admin/users?token=${token}&search=${encodeURIComponent(search)}`);
         return response.json();
     },
 
     async deleteAdminUser(token: string, userId: number) {
-        const response = await fetch(`${API_URL}/admin/users/${userId}?token=${token}`, { method: 'DELETE' });
+        const response = await fetch(`${getApiUrl()}/admin/users/${userId}?token=${token}`, { method: 'DELETE' });
         return response.json();
     },
 
     async banAdminUser(token: string, userId: number, reason: string = '', expiresAt?: string) {
-        let url = `${API_URL}/admin/users/${userId}/ban?token=${token}&reason=${encodeURIComponent(reason)}`;
+        let url = `${getApiUrl()}/admin/users/${userId}/ban?token=${token}&reason=${encodeURIComponent(reason)}`;
         if (expiresAt) url += `&expires_at=${encodeURIComponent(expiresAt)}`;
         const response = await fetch(url, { method: 'POST' });
         return response.json();
     },
 
     async unbanAdminUser(token: string, userId: number) {
-        const response = await fetch(`${API_URL}/admin/users/${userId}/unban?token=${token}`, { method: 'POST' });
+        const response = await fetch(`${getApiUrl()}/admin/users/${userId}/unban?token=${token}`, { method: 'POST' });
         return response.json();
     },
 
     async updateAdminUser(token: string, userId: number, data: { username?: string; email?: string; tag?: string; status?: string }) {
-        const response = await fetch(`${API_URL}/admin/users/${userId}?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/admin/users/${userId}?token=${token}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
@@ -578,22 +578,22 @@ export const api = {
     },
 
     async deleteOwnAccount(token: string) {
-        const response = await fetch(`${API_URL}/account?token=${token}`, { method: 'DELETE' });
+        const response = await fetch(`${getApiUrl()}/account?token=${token}`, { method: 'DELETE' });
         return response.json();
     },
 
     async getAdminSupport(token: string) {
-        const response = await fetch(`${API_URL}/admin/support?token=${token}`);
+        const response = await fetch(`${getApiUrl()}/admin/support?token=${token}`);
         return response.json();
     },
 
     async getAdminSupportThread(token: string, userId: number) {
-        const response = await fetch(`${API_URL}/admin/support/${userId}?token=${token}`);
+        const response = await fetch(`${getApiUrl()}/admin/support/${userId}?token=${token}`);
         return response.json();
     },
 
     async updatePublicKey(token: string, public_key: string) {
-        const response = await fetch(`${API_URL}/users/me/public-key?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/users/me/public-key?token=${token}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ public_key }),
@@ -603,14 +603,14 @@ export const api = {
 
     async getUserPublicKey(token: string, userId: number): Promise<string | null> {
         try {
-            const response = await fetch(`${API_URL}/users/${userId}/public-key?token=${token}`);
+            const response = await fetch(`${getApiUrl()}/users/${userId}/public-key?token=${token}`);
             const data = await response.json();
             return data.public_key || null;
         } catch { return null; }
     },
 
     async scheduleMessage(token: string, message_text: string, scheduled_at?: string, receiver_id?: number, group_id?: number, send_when_online?: boolean) {
-        const response = await fetch(`${API_URL}/messages/schedule?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/messages/schedule?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message_text, scheduled_at, receiver_id, group_id, send_when_online: !!send_when_online }),
@@ -620,19 +620,19 @@ export const api = {
 
     async getScheduledMessages(token: string, receiver_id?: number, group_id?: number) {
         const params = receiver_id ? `&receiver_id=${receiver_id}` : group_id ? `&group_id=${group_id}` : '';
-        const response = await fetch(`${API_URL}/messages/scheduled?token=${token}${params}`);
+        const response = await fetch(`${getApiUrl()}/messages/scheduled?token=${token}${params}`);
         return response.json();
     },
 
     async deleteScheduledMessage(token: string, scheduledId: number) {
-        const response = await fetch(`${API_URL}/messages/scheduled/${scheduledId}?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/messages/scheduled/${scheduledId}?token=${token}`, {
             method: 'DELETE',
         });
         return response.json();
     },
 
     async adminSupportReply(token: string, user_id: number, message_text: string) {
-        const response = await fetch(`${API_URL}/admin/support/reply?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/admin/support/reply?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ user_id, message_text }),
@@ -641,7 +641,7 @@ export const api = {
     },
 
     async createPoll(token: string, question: string, options: string[], is_anonymous: boolean, is_multi_choice: boolean) {
-        const response = await fetch(`${API_URL}/polls?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/polls?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ question, options, is_anonymous, is_multi_choice }),
@@ -650,12 +650,12 @@ export const api = {
     },
 
     async getPoll(token: string, pollId: number) {
-        const response = await fetch(`${API_URL}/polls/${pollId}?token=${token}`);
+        const response = await fetch(`${getApiUrl()}/polls/${pollId}?token=${token}`);
         return response.json();
     },
 
     async votePoll(token: string, pollId: number, option_indices: number[]) {
-        const response = await fetch(`${API_URL}/polls/${pollId}/vote?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/polls/${pollId}/vote?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ option_indices }),
@@ -664,7 +664,7 @@ export const api = {
     },
 
     async unvotePoll(token: string, pollId: number) {
-        const response = await fetch(`${API_URL}/polls/${pollId}/vote?token=${token}`, {
+        const response = await fetch(`${getApiUrl()}/polls/${pollId}/vote?token=${token}`, {
             method: 'DELETE',
         });
         return response.json();
@@ -672,64 +672,103 @@ export const api = {
 
     async getServerInfo() {
         try {
-            const response = await fetch(`${API_URL}/server-info`);
+            const response = await fetch(`${getApiUrl()}/server-info`);
+            if (!response.ok) return null;
             return response.json();
         } catch { return null; }
     },
 
+    async checkFileStorage(samplePath?: string | null) {
+        if (!samplePath) return { ok: true, skipped: true };
+        const url = config.fileUrl(samplePath);
+        if (!url) return { ok: false, status: 0, url: '' };
+        try {
+            const response = await fetch(url, { method: 'GET', cache: 'no-store' });
+            if (response.body) {
+                try { await response.body.cancel(); } catch {}
+            }
+            return { ok: response.ok, status: response.status, url };
+        } catch {
+            return { ok: false, status: 0, url };
+        }
+    },
+
+    async registerPushToken(token: string, pushToken: string, platform?: string) {
+        const deviceId = localStorage.getItem('aurora_device_id') || undefined;
+        const response = await fetch(`${getApiUrl()}/push-tokens?token=${encodeURIComponent(token)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ push_token: pushToken, platform, device_id: deviceId }),
+        });
+        if (!response.ok) return { success: false };
+        return response.json();
+    },
+
+    async unregisterPushToken(token: string, pushToken: string) {
+        const response = await fetch(`${getApiUrl()}/push-tokens?token=${encodeURIComponent(token)}&push_token=${encodeURIComponent(pushToken)}`, {
+            method: 'DELETE',
+        });
+        if (!response.ok) return { success: false };
+        return response.json();
+    },
+
     async getPlaylists(token: string) {
-        const r = await fetch(`${API_URL}/playlists?token=${token}`);
+        const r = await fetch(`${getApiUrl()}/playlists?token=${token}`);
         return r.json();
     },
     async createPlaylist(token: string, name: string) {
-        const r = await fetch(`${API_URL}/playlists`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, name }) });
+        const r = await fetch(`${getApiUrl()}/playlists`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, name }) });
         return r.json();
     },
     async deletePlaylist(token: string, id: number) {
-        const r = await fetch(`${API_URL}/playlists/${id}?token=${token}`, { method: 'DELETE' });
+        const r = await fetch(`${getApiUrl()}/playlists/${id}?token=${token}`, { method: 'DELETE' });
         return r.json();
     },
     async renamePlaylist(token: string, id: number, name: string) {
-        const r = await fetch(`${API_URL}/playlists/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, name }) });
+        const r = await fetch(`${getApiUrl()}/playlists/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, name }) });
         return r.json();
     },
     async addTrack(token: string, data: { playlist_id: number; title: string; artist?: string; file_path: string; cover_path?: string; duration?: number }) {
-        const r = await fetch(`${API_URL}/playlists/tracks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, ...data }) });
+        const r = await fetch(`${getApiUrl()}/playlists/tracks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, ...data }) });
         return r.json();
     },
     async deleteTrack(token: string, trackId: number) {
-        const r = await fetch(`${API_URL}/playlists/tracks/${trackId}?token=${token}`, { method: 'DELETE' });
+        const r = await fetch(`${getApiUrl()}/playlists/tracks/${trackId}?token=${token}`, { method: 'DELETE' });
+        return r.json();
+    },
+    async extractTrackCover(token: string, trackId: number) {
+        const r = await fetch(`${getApiUrl()}/playlists/tracks/${trackId}/extract-cover?token=${encodeURIComponent(token)}`, { method: 'POST' });
         return r.json();
     },
     async sharePlaylist(token: string, playlistId: number) {
         const fd = new FormData(); fd.append('token', token);
-        const r = await fetch(`${API_URL}/playlists/${playlistId}/share`, { method: 'POST', body: fd });
+        const r = await fetch(`${getApiUrl()}/playlists/${playlistId}/share`, { method: 'POST', body: fd });
         return r.json();
     },
     async getSharedPlaylist(token: string, code: string) {
-        const r = await fetch(`${API_URL}/playlists/shared/${code}?token=${token}`);
+        const r = await fetch(`${getApiUrl()}/playlists/shared/${code}?token=${token}`);
         return r.json();
     },
     async setPlaylistCoverPath(token: string, playlistId: number, coverPath: string) {
-        const r = await fetch(`${API_URL}/playlists/${playlistId}/cover-path?token=${encodeURIComponent(token)}&cover=${encodeURIComponent(coverPath)}`, { method: 'PATCH' });
+        const r = await fetch(`${getApiUrl()}/playlists/${playlistId}/cover-path?token=${encodeURIComponent(token)}&cover=${encodeURIComponent(coverPath)}`, { method: 'PATCH' });
         return r.json();
     },
     async updatePlaylistCover(token: string, playlistId: number, file: File) {
         const fd = new FormData();
         fd.append('token', token);
         fd.append('file', file);
-        const r = await fetch(`${API_URL}/playlists/${playlistId}/cover`, { method: 'PUT', body: fd });
+        const r = await fetch(`${getApiUrl()}/playlists/${playlistId}/cover`, { method: 'PUT', body: fd });
         return r.json();
     },
     async setNowPlaying(token: string, title: string | null, artist?: string | null) {
-        const r = await fetch(`${API_URL}/now_playing`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, title: title ?? null, artist: artist ?? null }) });
+        const r = await fetch(`${getApiUrl()}/now_playing`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, title: title ?? null, artist: artist ?? null }) });
         return r.json();
     },
 
     async getDisappearSetting(token: string, chatType: 'private' | 'group', chatId: number): Promise<{ seconds: number | null }> {
         try {
             const param = chatType === 'group' ? `group_id=${chatId}` : `receiver_id=${chatId}`;
-            const r = await fetch(`${API_URL}/messages/disappear-setting?token=${token}&${param}`);
+            const r = await fetch(`${getApiUrl()}/messages/disappear-setting?token=${token}&${param}`);
             return r.json();
         } catch { return { seconds: null }; }
     },
@@ -738,7 +777,7 @@ export const api = {
         try {
             const param = chatType === 'group' ? `group_id=${chatId}` : `receiver_id=${chatId}`;
             const secondsParam = seconds != null ? `&seconds=${seconds}` : '';
-            const r = await fetch(`${API_URL}/messages/disappear-setting?token=${token}&${param}${secondsParam}`, { method: 'POST' });
+            const r = await fetch(`${getApiUrl()}/messages/disappear-setting?token=${token}&${param}${secondsParam}`, { method: 'POST' });
             return r.json();
         } catch { return { success: false, seconds: null }; }
     },

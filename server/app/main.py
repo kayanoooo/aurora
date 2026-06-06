@@ -18,9 +18,18 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from urllib.parse import quote
+from pathlib import Path
 from datetime import datetime, timezone
 import cloudinary
 import cloudinary.uploader
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+UPLOAD_DIR = PROJECT_ROOT / "uploads"
+from io import BytesIO
+try:
+    from mutagen import File as MutagenFile
+except ImportError:
+    MutagenFile = None
 
 cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
@@ -28,10 +37,113 @@ cloudinary.config(
     api_secret=os.getenv("CLOUDINARY_API_SECRET"),
 )
 
+def _format_reply_text(text: str) -> str:
+    """Конвертирует внутренние префиксы сообщений в читаемый вид для reply_to_text."""
+    if not text:
+        return text
+    if text.startswith('__gif__'):
+        return '🎞 GIF'
+    if text.startswith('__sticker__'):
+        return '🎭 Стикер'
+    if text.startswith('__call_ended__'):
+        return '📞 Звонок завершён'
+    if text.startswith('__geo__:'):
+        return '📍 Геопозиция'
+    if text.startswith('__contact__:'):
+        return '👤 Контакт'
+    if text.startswith('__poll__:'):
+        return '📊 Опрос'
+    if text.startswith('__playlist__:'):
+        return '🎵 Плейлист'
+    return text
+
+
 def _cloudinary_configured() -> bool:
     name = os.getenv("CLOUDINARY_CLOUD_NAME", "")
     key = os.getenv("CLOUDINARY_API_KEY", "")
     return bool(name and key and name not in ("ваш_cloud_name",) and key not in ("ваш_api_key",))
+
+
+def _embedded_audio_cover(content: bytes) -> tuple[Optional[bytes], Optional[str]]:
+    """Return embedded artwork bytes and MIME type from common audio containers."""
+    if MutagenFile is None:
+        return None, None
+    try:
+        audio = MutagenFile(BytesIO(content))
+        if not audio:
+            return None, None
+
+        pictures = getattr(audio, "pictures", None)
+        if pictures:
+            picture = pictures[0]
+            return bytes(picture.data), picture.mime or "image/jpeg"
+
+        tags = getattr(audio, "tags", None)
+        if tags:
+            covers = tags.get("covr") if hasattr(tags, "get") else None
+            if covers:
+                cover = covers[0]
+                image_format = getattr(cover, "imageformat", None)
+                mime = "image/png" if image_format == 14 else "image/jpeg"
+                return bytes(cover), mime
+
+            values = tags.values() if hasattr(tags, "values") else []
+            for value in values:
+                if value.__class__.__name__.startswith("APIC") and getattr(value, "data", None):
+                    return bytes(value.data), getattr(value, "mime", None) or "image/jpeg"
+    except Exception:
+        pass
+    return None, None
+
+
+def _audio_text_metadata(content: bytes) -> tuple[Optional[str], Optional[str]]:
+    """Return title and artist from embedded audio tags."""
+    if MutagenFile is None:
+        return None, None
+    try:
+        audio = MutagenFile(BytesIO(content), easy=True)
+        tags = getattr(audio, "tags", None)
+        if not tags:
+            return None, None
+
+        def first(key: str) -> Optional[str]:
+            values = tags.get(key) if hasattr(tags, "get") else None
+            if not values:
+                return None
+            value = values[0] if isinstance(values, (list, tuple)) else values
+            text = str(value).strip()
+            return text or None
+
+        return first("title"), first("artist") or first("albumartist")
+    except Exception:
+        return None, None
+
+
+def _store_audio_cover(content: bytes, mime: str) -> str:
+    if _cloudinary_configured():
+        result = cloudinary.uploader.upload(content, folder="track_covers", resource_type="image")
+        return result["secure_url"]
+
+    ext = mimetypes.guess_extension(mime) or ".jpg"
+    filename = f"track_cover_{uuid.uuid4().hex}{ext}"
+    with open(str(UPLOAD_DIR / filename), "wb") as output:
+        output.write(content)
+    return f"/files/{filename}"
+
+
+async def _read_stored_file(file_path: str) -> Optional[bytes]:
+    if file_path.startswith("/files/"):
+        local_path = str(UPLOAD_DIR / os.path.basename(file_path))
+        if os.path.exists(local_path):
+            with open(local_path, "rb") as source:
+                return source.read()
+        return None
+    if file_path.startswith(("http://", "https://")):
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(file_path)
+            if response.is_success:
+                return response.content
+    return None
 
 from .config import config
 from .models import DatabasePool, UserModel, MessageModel, GroupModel, GroupMessageModel, ReactionModel, FolderModel, GroupReadModel, PostViewModel, SupportModel, BlockModel
@@ -71,6 +183,11 @@ class ConfirmResetRequest(BaseModel):
 
 class SendRegisterCodeRequest(BaseModel):
     email: str
+
+class PushTokenRequest(BaseModel):
+    push_token: str
+    platform: Optional[str] = None
+    device_id: Optional[str] = None
 
 # In-memory reset code store: email → {code, expires_at, attempts}
 _reset_codes: dict = {}
@@ -188,6 +305,9 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost:8000",
     "http://127.0.0.1:8000",
+    "https://localhost",
+    "capacitor://localhost",
+    "ionic://localhost",
     "http://192.168.1.2:3000",
     "http://192.168.1.2:8000",
     "http://192.168.1.9:3000",
@@ -196,8 +316,13 @@ ALLOWED_ORIGINS = [
     "http://192.168.0.116:8000",
     "https://aurora-messenger.vercel.app",
 ]
+ALLOWED_ORIGINS.extend([
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+])
 # Regex pattern for ngrok and other tunnel services
-ALLOWED_ORIGIN_REGEX = r"https?://(.+\.(ngrok-free\.dev|ngrok-free\.app|ngrok\.io|ngrok\.app|loca\.lt|localhost\.run|lhr\.life|trycloudflare\.com|pinggy-free\.link)|bore\.pub:\d+)"
+ALLOWED_ORIGIN_REGEX = r"https?://(.+\.(ngrok-free\.dev|ngrok-free\.app|ngrok\.io|ngrok\.app|loca\.lt|localhost\.run|lhr\.life|trycloudflare\.com|pinggy-free\.link|up\.railway\.app)|bore\.pub:\d+)"
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
@@ -223,7 +348,7 @@ app.add_middleware(
 )
 
 # Создаем папку для загрузок
-os.makedirs("uploads", exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # ========== События жизненного цикла ==========
 
@@ -295,6 +420,19 @@ async def startup():
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE KEY idx_token_hash (token_hash),
                     INDEX idx_user_sessions (user_id)
+                )""",
+                """CREATE TABLE IF NOT EXISTS push_tokens (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    push_token VARCHAR(512) NOT NULL,
+                    platform VARCHAR(32) NULL,
+                    device_id VARCHAR(64) NULL,
+                    enabled TINYINT(1) NOT NULL DEFAULT 1,
+                    last_seen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_push_token (push_token),
+                    INDEX idx_push_user (user_id),
+                    INDEX idx_push_device (user_id, device_id)
                 )""",
                 """CREATE TABLE IF NOT EXISTS group_slow_mode_timestamps (
                     group_id INT NOT NULL,
@@ -684,6 +822,53 @@ async def delete_other_sessions(token: str):
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute("DELETE FROM user_sessions WHERE user_id=%s AND token_hash!=%s", (payload['user_id'], current_hash))
+            await conn.commit()
+    return {"success": True}
+
+@app.post("/api/push-tokens")
+async def register_push_token(request: PushTokenRequest, token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    push_token = (request.push_token or "").strip()
+    if not push_token:
+        raise HTTPException(status_code=400, detail="push_token is required")
+
+    platform = (request.platform or "unknown")[:32]
+    device_id = (request.device_id or "")[:64] or None
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                INSERT INTO push_tokens (user_id, push_token, platform, device_id, enabled, last_seen)
+                VALUES (%s, %s, %s, %s, 1, UTC_TIMESTAMP())
+                ON DUPLICATE KEY UPDATE
+                    user_id = %s,
+                    platform = %s,
+                    device_id = %s,
+                    enabled = 1,
+                    last_seen = UTC_TIMESTAMP()
+            """, (
+                payload['user_id'], push_token, platform, device_id,
+                payload['user_id'], platform, device_id,
+            ))
+            await conn.commit()
+    return {"success": True}
+
+@app.delete("/api/push-tokens")
+async def unregister_push_token(push_token: str, token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE push_tokens SET enabled = 0 WHERE user_id = %s AND push_token = %s",
+                (payload['user_id'], push_token)
+            )
             await conn.commit()
     return {"success": True}
 
@@ -1081,7 +1266,7 @@ async def update_avatar(token: str = Form(...), file: UploadFile = File(...)):
     else:
         ext = ext_map.get(file.content_type, '.jpg')
         local_filename = f"avatar_{uuid.uuid4().hex}{ext}"
-        local_path = os.path.join("uploads", local_filename)
+        local_path = str(UPLOAD_DIR / local_filename)
         with open(local_path, "wb") as f:
             f.write(content)
         avatar_url = f"/files/{local_filename}"
@@ -1251,7 +1436,7 @@ async def update_group_avatar(group_id: int, token: str = Form(...), file: Uploa
     else:
         ext = ext_map.get(file.content_type, '.jpg')
         local_filename = f"group_avatar_{uuid.uuid4().hex}{ext}"
-        local_path = os.path.join("uploads", local_filename)
+        local_path = str(UPLOAD_DIR / local_filename)
         with open(local_path, "wb") as f:
             f.write(content)
         avatar_url = f"/files/{local_filename}"
@@ -1980,11 +2165,24 @@ MAX_UPLOAD_SIZE = 5 * 1024 * 1024 * 1024  # 5 GB (dev limit)
 @app.get("/api/server-info")
 async def server_info():
     cloudinary_active = _cloudinary_configured()
+    sample_file = None
+    sample_file_exists = False
+    if not cloudinary_active:
+        try:
+            sample_path = next((p for p in UPLOAD_DIR.iterdir() if p.is_file()), None)
+            if sample_path:
+                sample_file = f"/files/{sample_path.name}"
+                sample_file_exists = sample_path.exists()
+        except Exception:
+            sample_file = None
     return {
         "storage": "cloudinary" if cloudinary_active else "local",
         "max_file_mb": 25 if cloudinary_active else 5120,
         "max_image_mb": 20 if cloudinary_active else 5120,
         "max_video_mb": 100 if cloudinary_active else 5120,
+        "upload_dir": None if cloudinary_active else str(UPLOAD_DIR),
+        "sample_file": sample_file,
+        "sample_file_exists": sample_file_exists,
     }
 
 @app.post("/api/upload")
@@ -2019,22 +2217,37 @@ async def upload_file(token: str = Form(...), file: UploadFile = File(...)):
         # Local storage fallback
         ext = os.path.splitext(file.filename or "")[1] if file.filename else ""
         local_filename = f"{uuid.uuid4().hex}{ext}"
-        local_path = os.path.join("uploads", local_filename)
+        local_path = str(UPLOAD_DIR / local_filename)
         with open(local_path, "wb") as f:
             f.write(content)
         file_url = f"/files/{local_filename}"
 
+    cover_path = None
+    audio_title = None
+    audio_artist = None
+    if file.content_type and file.content_type.startswith("audio/"):
+        audio_title, audio_artist = _audio_text_metadata(content)
+        cover_content, cover_mime = _embedded_audio_cover(content)
+        if cover_content and cover_mime:
+            try:
+                cover_path = _store_audio_cover(cover_content, cover_mime)
+            except Exception:
+                cover_path = None
+
     return {
         "success": True,
         "file_path": file_url,
+        "cover_path": cover_path,
+        "audio_title": audio_title,
+        "audio_artist": audio_artist,
         "filename": file.filename,
         "file_size": total_size
     }
 
-@app.get("/files/{filename}")
+@app.api_route("/files/{filename}", methods=["GET", "HEAD"])
 async def get_file(filename: str):
     """Получить файл"""
-    file_path = os.path.join("uploads", filename)
+    file_path = str(UPLOAD_DIR / filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     
@@ -2062,7 +2275,7 @@ async def download_file_by_id(message_id: int, token: str):
             raise HTTPException(status_code=404, detail="No file attached")
         
         file_name = os.path.basename(file_path)
-        full_path = os.path.join("uploads", file_name)
+        full_path = str(UPLOAD_DIR / file_name)
         
         if not os.path.exists(full_path):
             raise HTTPException(status_code=404, detail="File not found")
@@ -2124,7 +2337,7 @@ async def download_group_file_by_id(message_id: int, token: str):
             raise HTTPException(status_code=404, detail="No file attached")
         
         file_name = os.path.basename(file_path)
-        full_path = os.path.join("uploads", file_name)
+        full_path = str(UPLOAD_DIR / file_name)
         
         if not os.path.exists(full_path):
             raise HTTPException(status_code=404, detail="File not found")
@@ -2730,7 +2943,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     reply_msg = await MessageModel.get_message_by_id(reply_to_id)
                     if reply_msg:
                         if reply_msg.get('message_text'):
-                            reply_to_text = reply_msg['message_text']
+                            reply_to_text = _format_reply_text(reply_msg['message_text'])
                         elif reply_msg.get('filename'):
                             reply_to_text = f"📎 {reply_msg['filename']}"
                         else:
@@ -2921,7 +3134,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     reply_msg = await GroupMessageModel.get_message_by_id(reply_to_id)
                     if reply_msg:
                         if reply_msg.get('message_text'):
-                            reply_to_text = reply_msg['message_text']
+                            reply_to_text = _format_reply_text(reply_msg['message_text'])
                         elif reply_msg.get('filename'):
                             reply_to_text = f"📎 {reply_msg['filename']}"
                         else:
@@ -3065,18 +3278,21 @@ async def websocket_endpoint(websocket: WebSocket):
                 new_text = data.get("new_text", "") or ""
                 is_group = data.get("is_group", False)
 
-                if not new_text.strip():
-                    await manager.send_message_to_user(user_id, {"type": "error", "data": {"message": "Нельзя сохранить пустое сообщение"}})
-                    continue
-
-                print(f"✏️ EDIT MESSAGE RECEIVED: id={message_id}, new_text={new_text}, is_group={is_group}")
+                print(f"✏️ EDIT MESSAGE RECEIVED: id={message_id}, new_text={repr(new_text)}, is_group={is_group}")
 
                 try:
                     if is_group:
                         msg = await GroupMessageModel.get_message_by_id(message_id)
                         if not msg or msg['sender_id'] != user_id:
                             await manager.send_message_to_user(user_id, {"type": "error", "data": {"message": "Нет прав для редактирования этого сообщения"}})
-                        else:
+                            continue
+                        # Allow empty text only if message has attached files (clearing caption)
+                        if not new_text.strip():
+                            has_files = bool(msg.get('file_path') or msg.get('files'))
+                            if not has_files:
+                                await manager.send_message_to_user(user_id, {"type": "error", "data": {"message": "Нельзя сохранить пустое сообщение"}})
+                                continue
+                        if True:
                             success = await GroupMessageModel.update_message(message_id, new_text)
                             print(f"✏️ Group edit result: {success}")
                             if success:
@@ -3096,7 +3312,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         msg = await MessageModel.get_message_by_id(message_id)
                         if not msg or msg['sender_id'] != user_id:
                             await manager.send_message_to_user(user_id, {"type": "error", "data": {"message": "Нет прав для редактирования этого сообщения"}})
-                        else:
+                            continue
+                        if not new_text.strip():
+                            has_files = bool(msg.get('file_path') or msg.get('files'))
+                            if not has_files:
+                                await manager.send_message_to_user(user_id, {"type": "error", "data": {"message": "Нельзя сохранить пустое сообщение"}})
+                                continue
+                        if True:
                             success = await MessageModel.update_message(message_id, new_text)
                             print(f"✏️ Private edit result: {success}")
                             if success:
@@ -4322,6 +4544,46 @@ async def delete_track(track_id: int, token: str):
             await conn.commit()
     return {"ok": True}
 
+
+@app.post("/api/playlists/tracks/{track_id}/extract-cover")
+async def extract_track_cover(track_id: int, token: str):
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT pt.id, pt.file_path, pt.cover_path, pt.title, pt.artist FROM playlist_tracks pt "
+                "JOIN playlists p ON p.id = pt.playlist_id WHERE pt.id = %s AND p.user_id = %s",
+                (track_id, payload["user_id"]),
+            )
+            track = await cur.fetchone()
+            if not track:
+                raise HTTPException(status_code=404, detail="Track not found")
+            content = await _read_stored_file(track["file_path"])
+            if not content:
+                return {"cover_path": track["cover_path"], "title": track["title"], "artist": track["artist"]}
+
+            title, artist = _audio_text_metadata(content)
+            cover_path = track["cover_path"]
+            if not cover_path:
+                cover_content, cover_mime = _embedded_audio_cover(content)
+                if cover_content and cover_mime:
+                    cover_path = _store_audio_cover(cover_content, cover_mime)
+
+            await cur.execute(
+                "UPDATE playlist_tracks SET cover_path = %s, title = %s, artist = %s WHERE id = %s",
+                (cover_path, title or track["title"], artist or track["artist"], track_id),
+            )
+            await conn.commit()
+            return {
+                "cover_path": cover_path,
+                "title": title or track["title"],
+                "artist": artist or track["artist"],
+            }
+
 @app.post("/api/playlists/{playlist_id}/share")
 async def share_playlist(playlist_id: int, token: str = Form(...)):
     payload = decode_jwt_token(token)
@@ -4379,7 +4641,7 @@ async def update_playlist_cover(playlist_id: int, token: str = Form(...), file: 
     else:
         ext = os.path.splitext(file.filename or "")[1] or ".jpg"
         local_filename = f"playlist_cover_{uuid.uuid4().hex}{ext}"
-        local_path = os.path.join("uploads", local_filename)
+        local_path = str(UPLOAD_DIR / local_filename)
         with open(local_path, "wb") as f:
             f.write(content)
         cover_url = f"/files/{local_filename}"

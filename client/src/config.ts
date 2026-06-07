@@ -134,6 +134,7 @@ export const config = {
     },
 
     isElectron,
+    isCapacitorNative,
 
     /** Change the server address for Electron/Capacitor. Persists across restarts. */
     setServerHost(host: string) {

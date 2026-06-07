@@ -46,7 +46,7 @@ services:
       - "8000:8000"
     volumes:
       - uploads_data:/app/uploads
-    mem_limit: 900m
+    mem_limit: 2g
 
 volumes:
   mysql_data:

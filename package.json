@@ -33,10 +33,15 @@
   "build": {
     "appId": "com.aurora.messenger",
     "productName": "Aurora",
+    "asar": true,
     "files": [
       "electron/**/*",
-      "client/build/**/*"
+      "client/build/**",
+      "!client/build/downloads/**"
     ],
+    "directories": {
+      "buildResources": "client/public"
+    },
     "linux": {
       "target": [
         {

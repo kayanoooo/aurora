@@ -23,11 +23,15 @@ _MYSQL_URL_CONFIG = _mysql_from_url()
 
 class Config:
     # MySQL
-    MYSQL_HOST = os.getenv('MYSQL_HOST') or os.getenv('MYSQLHOST') or _MYSQL_URL_CONFIG.get('host', 'localhost')
-    MYSQL_PORT = int(os.getenv('MYSQL_PORT') or os.getenv('MYSQLPORT') or _MYSQL_URL_CONFIG.get('port', 3307))
-    MYSQL_USER = os.getenv('MYSQL_USER') or os.getenv('MYSQLUSER') or _MYSQL_URL_CONFIG.get('user', 'user')
-    MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD') or os.getenv('MYSQLPASSWORD') or _MYSQL_URL_CONFIG.get('password', 'userpassword')
-    MYSQL_DATABASE = os.getenv('MYSQL_DATABASE') or os.getenv('MYSQLDATABASE') or _MYSQL_URL_CONFIG.get('database', 'messenger')
+    # Render MySQL uses DATABASE_URL or MYSQL_URL (connection string)
+    # Railway MySQL uses MYSQLHOST, MYSQLPORT, etc.
+    # Also support individual MYSQL_* vars
+    _url = _MYSQL_URL_CONFIG
+    MYSQL_HOST = os.getenv('MYSQL_HOST') or os.getenv('MYSQLHOST') or _url.get('host', 'localhost')
+    MYSQL_PORT = int(os.getenv('MYSQL_PORT') or os.getenv('MYSQLPORT') or _url.get('port', 3307))
+    MYSQL_USER = os.getenv('MYSQL_USER') or os.getenv('MYSQLUSER') or _url.get('user', 'user')
+    MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD') or os.getenv('MYSQLPASSWORD') or _url.get('password', 'userpassword')
+    MYSQL_DATABASE = os.getenv('MYSQL_DATABASE') or os.getenv('MYSQLDATABASE') or _url.get('database', 'messenger')
     
     # JWT
     JWT_SECRET = os.getenv('JWT_SECRET', 'your-super-secret-key-change-this')

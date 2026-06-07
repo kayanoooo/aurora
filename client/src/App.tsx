@@ -8,6 +8,7 @@ import { ThemeSettings, AccountEntry } from './types';
 import { api } from './services/api';
 import { wsService } from './services/websocket';
 import { initMobileAppRuntime } from './services/mobileApp';
+import { config } from './config';
 import './App.css';
 
 const DEFAULT_THEME: ThemeSettings = {
@@ -312,10 +313,13 @@ function App() {
         setShowInstallBanner(false);
     };
 
+    // Detect if running in Electron or Capacitor (native mobile) - skip landing page
+    const isNativeApp = config.isElectron() || config.isCapacitorNative?.();
+
     return (
         <div className="App">
-            {/* PWA install banner (Android Chrome / Edge) */}
-            {showInstallBanner && installPrompt && (
+            {/* PWA install banner (Android Chrome / Edge) - only show in web/PWA, not native apps */}
+            {!isNativeApp && showInstallBanner && installPrompt && (
                 <div className="mobile-install-banner" style={{
                     position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',
                     zIndex: 9999, background: 'linear-gradient(135deg,#6366f1,#8b5cf6)',
@@ -347,7 +351,14 @@ function App() {
                         <Auth onAuth={handleAuth} />
                     </div>
                 ) : (
-                    <LandingPage onOpenAuth={() => setShowAuth(true)} />
+                    // Skip landing page in native apps (Electron/Capacitor), go straight to auth
+                    isNativeApp ? (
+                        <div className="auth-shell">
+                            <Auth onAuth={handleAuth} />
+                        </div>
+                    ) : (
+                        <LandingPage onOpenAuth={() => setShowAuth(true)} />
+                    )
                 )
             ) : (
                 <Chat

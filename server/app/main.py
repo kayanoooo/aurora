@@ -4672,9 +4672,125 @@ async def set_now_playing(req: NowPlayingUpdate):
             await manager.send_message_to_user(uid, msg)
     return {"ok": True}
 
+# ========== Скачивание файлов (перед статикой, чтобы не перехватывалось SPA) ==========
+
+@app.get("/api/downloads/status")
+async def downloads_status():
+    """Проверить, какие файлы релизов доступны для скачивания"""
+    download_dirs = [
+        PROJECT_ROOT / "client" / "build" / "downloads",
+        Path("client/build/downloads"),
+        Path("/app/client/build/downloads"),
+    ]
+    files = {}
+    for d in download_dirs:
+        if not d.exists():
+            continue
+        for fname in ('Aurora-Android.apk', 'Aurora-Linux.AppImage', 'Aurora-Windows.exe'):
+            fp = d / fname
+            if fp.exists() and fp.is_file():
+                size_mb = round(fp.stat().st_size / (1024 * 1024), 1)
+                files[fname] = {"size_mb": size_mb, "available": True}
+    return {"files": files}
+
+@app.get("/api/downloads/{filename}")
+async def download_file(filename: str):
+    """Отдать файл для скачивания"""
+    if filename not in ('Aurora-Android.apk', 'Aurora-Linux.AppImage', 'Aurora-Windows.exe'):
+        raise HTTPException(status_code=404, detail="Unknown file")
+
+    download_dirs = [
+        PROJECT_ROOT / "client" / "build" / "downloads",
+        Path("client/build/downloads"),
+        Path("/app/client/build/downloads"),
+    ]
+    for d in download_dirs:
+        if not d.exists():
+            continue
+        file_path = d / filename
+        try:
+            file_path = file_path.resolve()
+            if not str(file_path).startswith(str(d.resolve())):
+                continue
+        except Exception:
+            continue
+        if file_path.exists() and file_path.is_file():
+            media_type, _ = mimetypes.guess_type(str(file_path))
+            return FileResponse(
+                str(file_path),
+                media_type=media_type or "application/octet-stream",
+                filename=filename,
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+    # Файл не найден — понятная страница
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(
+        content=f"""<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="UTF-8"><title>Сборка готовится</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f6f8fc;color:#172033}}
+.card{{text-align:center;padding:48px 40px;background:white;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.1);max-width:480px;width:90%}}
+h1{{font-size:56px;margin:0 0 12px}}h2{{margin:0 0 8px;font-size:24px;font-weight:800}}p{{color:#5d6878;margin:0 0 24px;line-height:1.6;font-size:15px}}
+.btn{{display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:white;border-radius:14px;text-decoration:none;font-weight:700;font-size:16px;font-family:inherit}}
+.btn:hover{{opacity:0.92}}
+</style></head>
+<body><div class="card">
+<h1>⚙️</h1>
+<h2>Сборка приложения в процессе</h2>
+<p>Установочные файлы собираются в контейнере. Это может занять 5–10 минут.<br><br>
+Пока сборка не завершена, пользуйтесь Aurora прямо в браузере.</p>
+<a href="/" class="btn">Открыть Aurora в браузере</a>
+</div></body></html>""",
+        status_code=404
+    )
+
+@app.post("/api/admin/upload-release")
+async def admin_upload_release(token: str = Form(...), file: UploadFile = File(...)):
+    """Админ может загрузить релизный файл (APK/AppImage/EXE) вручную"""
+    payload = decode_jwt_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    pool = await DatabasePool.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT tag FROM users WHERE id = %s", (payload['user_id'],))
+            user = await cur.fetchone()
+    if not user or user.get('tag') not in ('kayano', 'durov'):
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename")
+
+    allowed = {'Aurora-Android.apk', 'Aurora-Linux.AppImage', 'Aurora-Windows.exe'}
+    if file.filename not in allowed:
+        raise HTTPException(status_code=400, detail=f"Filename must be one of: {', '.join(allowed)}")
+
+    dest_dirs = [
+        PROJECT_ROOT / "client" / "build" / "downloads",
+        Path("client/build/downloads"),
+        Path("/app/client/build/downloads"),
+    ]
+    dest_dir = None
+    for d in dest_dirs:
+        if d.exists():
+            dest_dir = d
+            break
+    if not dest_dir:
+        dest_dir = PROJECT_ROOT / "client" / "build" / "downloads"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+    content = await file.read()
+    dest_path = dest_dir / file.filename
+    with open(str(dest_path), "wb") as f:
+        f.write(content)
+
+    size_mb = round(len(content) / (1024 * 1024), 1)
+    return {"success": True, "filename": file.filename, "size_mb": size_mb}
+
 # ========== Статика ==========
 
-# Подключаем статические файлы клиента (если есть)
 client_build_candidates = [
     PROJECT_ROOT / "client" / "build",
     Path("/app/client/build"),

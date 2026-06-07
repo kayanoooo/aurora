@@ -31,8 +31,18 @@ const Auth: React.FC<AuthProps> = ({ onAuth }) => {
     const [success, setSuccess] = useState('');
     const [loading, setLoading] = useState(false);
     const [policyTab, setPolicyTab] = useState<'license' | 'privacy' | null>(null);
+    // Default to Railway URL if no server host saved yet (mobile/Electron)
+    const getDefaultHost = (): string => {
+        const saved = localStorage.getItem('auroraServerHost');
+        if (saved) return saved;
+        // Use Railway URL from env if available
+        const envUrl = process.env.REACT_APP_API_URL;
+        if (envUrl) return envUrl.replace(/\/api\/?$/, '');
+        return config.BASE_URL.replace(/\/api\/?$/, '');
+    };
+
     const [showServerSettings, setShowServerSettings] = useState(false);
-    const [serverHost, setServerHost] = useState(() => config.BASE_URL.replace(/\/api\/?$/, ''));
+    const [serverHost, setServerHost] = useState(getDefaultHost);
     const [currentServerBase, setCurrentServerBase] = useState(() => config.BASE_URL);
     const [serverChecking, setServerChecking] = useState(false);
     const [serverStatus, setServerStatus] = useState('');

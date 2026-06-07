@@ -5,3 +5,10 @@ uploads/
 .env.local
 .env.production
 aurora_railway_export.sql
+
+# Large binaries not tracked in git (pushed via LFS or excluded)
+client/public/downloads/Aurora-Linux.AppImage
+client/public/downloads/Aurora-Windows.exe
+client/public/downloads/Aurora-Android.apk
+cloudflared
+bore

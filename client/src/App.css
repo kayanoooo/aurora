@@ -553,7 +553,7 @@
 
 .landing-platforms {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -571,6 +571,13 @@
   text-align: left;
   text-decoration: none;
   box-shadow: 0 16px 34px rgba(23, 32, 51, 0.14);
+  transition: transform 0.2s, box-shadow 0.2s;
+  border-radius: 14px;
+}
+
+.landing-platform-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 24px 48px rgba(23, 32, 51, 0.25);
 }
 
 .landing-platform-card strong,
@@ -579,14 +586,20 @@
 }
 
 .landing-platform-card strong {
-  font-size: 22px;
+  font-size: 20px;
+  margin-top: 8px;
 }
 
 .landing-platform-card span {
-  margin-top: 8px;
+  margin-top: 4px;
   color: rgba(255, 255, 255, 0.72);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.35;
+}
+
+.platform-icon {
+  font-size: 32px;
+  line-height: 1;
 }
 
 .landing-security {
@@ -702,9 +715,12 @@
   }
 
   .landing-feature-grid,
-  .landing-platforms,
   .landing-showcase {
     grid-template-columns: 1fr;
+  }
+
+  .landing-platforms {
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .landing-orbit-card.top {

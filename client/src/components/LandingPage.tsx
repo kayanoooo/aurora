@@ -44,18 +44,33 @@ const platforms = [
         detail: 'APK для телефона',
         href: '/downloads/Aurora-Android.apk',
         fileName: 'Aurora-Android.apk',
+        icon: '📱',
+        color: '#34a853',
     },
     {
-        name: 'Linux',
-        detail: 'AppImage для Linux',
+        name: 'Desktop',
+        detail: 'Linux · AppImage',
         href: '/downloads/Aurora-Linux.AppImage',
         fileName: 'Aurora-Linux.AppImage',
+        icon: '🐧',
+        color: '#fbbc04',
     },
     {
-        name: 'Windows',
-        detail: 'Приложение для Windows',
+        name: 'Desktop',
+        detail: 'Windows · exe',
         href: '/downloads/Aurora-Windows.exe',
         fileName: 'Aurora-Windows.exe',
+        icon: '🪟',
+        color: '#4285f4',
+    },
+    {
+        name: 'Web',
+        detail: 'PWA · установить в браузере',
+        href: '#',
+        fileName: '',
+        icon: '🌐',
+        color: '#6366f1',
+        isPwa: true as const,
     },
 ];
 
@@ -204,20 +219,37 @@ const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
                 <div>
                     <span>Платформы</span>
                     <h2>Запускайте Aurora там, где удобно</h2>
-                    <p>Откройте в браузере, установите как PWA или подключите мобильную сборку.</p>
+                    <p>Откройте в браузере, установите как PWA или скачайте нативное приложение.</p>
                 </div>
                 <div className="landing-platforms">
-                    {platforms.map(platform => (
-                        <a
-                            key={platform.name}
-                            href={platform.href}
-                            download={platform.fileName}
-                            className="landing-platform-card"
-                        >
-                            <strong>{platform.name}</strong>
-                            <span>{platform.detail}</span>
-                        </a>
-                    ))}
+                    {platforms.map((platform, idx) => {
+                        if ('isPwa' in platform && platform.isPwa) {
+                            return (
+                                <button
+                                    key={idx}
+                                    onClick={onOpenAuth}
+                                    className="landing-platform-card"
+                                    style={{ cursor: 'pointer', border: 'none', fontFamily: 'inherit' }}
+                                >
+                                    <span className="platform-icon">{platform.icon}</span>
+                                    <strong>{platform.name}</strong>
+                                    <span>{platform.detail}</span>
+                                </button>
+                            );
+                        }
+                        return (
+                            <a
+                                key={idx}
+                                href={platform.href}
+                                download={platform.fileName}
+                                className="landing-platform-card"
+                            >
+                                <span className="platform-icon">{platform.icon}</span>
+                                <strong>{platform.name}</strong>
+                                <span>{platform.detail}</span>
+                            </a>
+                        );
+                    })}
                 </div>
             </section>
 

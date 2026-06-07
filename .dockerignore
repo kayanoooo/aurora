@@ -13,6 +13,7 @@ unpacked_diploma
 *.docx
 *.env
 .env*
+!client/.env.production
 bore
 cloudflared
 start-serveo.sh

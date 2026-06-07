@@ -1,4 +1,4 @@
-const CACHE_NAME = 'aurora-v2';
+const CACHE_NAME = 'aurora-v3';
 
 // App shell — static files to cache on install
 const SHELL = [

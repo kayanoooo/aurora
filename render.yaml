@@ -1,19 +1,17 @@
 # ============================================================
 # Aurora Messenger — Render Blueprint
-# Deploy: Web Service (FastAPI + React) + MySQL
+# Deploy: Web Service (FastAPI + React)
+# 
+# IMPORTANT:
+# 1. Create a MySQL database manually via Render Dashboard
+#    (type: MySQL, region: frankfurt, plan: free)
+# 2. Copy the "Internal Connection String" from the MySQL dashboard
+# 3. Set it as the MYSQL_URL environment variable for the web service
+#    (or set individual MYSQL_HOST, MYSQL_PORT, etc.)
 # ============================================================
 
 services:
-  # ---- MySQL Database ----
-  - type: mysql
-    name: aurora-db
-    plan: free
-    region: frankfurt
-    ipAllowList: [] # allow only internal connections
-    databaseName: messenger
-    user: aurora
-
-  # ---- Web Service ----
+  # ---- Web Service (FastAPI + React static files) ----
   - type: web
     name: aurora
     env: docker
@@ -21,23 +19,30 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile.render
     healthCheckPath: /api/health
+
     envVars:
       - key: PORT
         value: 8000
+
+      # MySQL connection — set this via Render Dashboard after creating the DB
+      # Internal connection string format:
+      # mysql://user:password@internal-host:3306/messenger
       - key: MYSQL_URL
-        fromDatabase:
-          name: aurora-db
-          property: connectionString
+        sync: false
+
       - key: JWT_SECRET
-        sync: false # you must set this manually in Render dashboard
+        sync: false # set manually in Render dashboard
+
       - key: CORS_ORIGINS
         value: https://aurora.onrender.com
+
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT

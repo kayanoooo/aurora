@@ -1607,7 +1607,7 @@ const AudioSubModal: React.FC<{ theme: ThemeSettings; onBack: () => void }> = ({
     );
 
     return (
-        <SubModal title={lang === 'en' ? 'Sound & Camera' : 'Звук и камера'} onBack={onBack} dm={dm}>
+        <SubModal title={lang === 'en' ? 'Sound & Camera' : 'Звук'} onBack={onBack} dm={dm}>
             <div style={{ padding: '4px 20px 20px', display: 'flex', flexDirection: 'column' }}>
 
                 {permDenied && (
@@ -1849,7 +1849,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     <SectionDivider label={t('Account')} />
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>} label={t('Profile')} hint={t('Name, tag, photo, about')} color="linear-gradient(135deg,#f59e0b,#f97316)" onClick={() => setActiveSub('profile')} />
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} label={t('Privacy')} hint={t('What others see')} color="linear-gradient(135deg,#10b981,#059669)" onClick={() => setActiveSub('privacy')} />
-                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} label={lang === 'en' ? 'Sound & Camera' : 'Звук и камера'} hint={lang === 'en' ? 'Microphone, speakers, calls' : 'Микрофон, колонки, звонки'} color="linear-gradient(135deg,#0ea5e9,#2563eb)" onClick={() => setActiveSub('audio')} />
+                    <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} label={lang === 'en' ? 'Sound' : 'Звук'} hint={lang === 'en' ? 'Microphone, speakers, calls' : 'Микрофон, колонки, звонки'} color="linear-gradient(135deg,#0ea5e9,#2563eb)" onClick={() => setActiveSub('audio')} />
 
                     <SectionDivider label={t('Appearance')} />
                     <MenuItem icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.437-.652-.437-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>} label={t('Chat settings')} hint={t('Themes, wallpapers, animations')} color="linear-gradient(135deg,#3b82f6,#6366f1)" onClick={() => setActiveSub('chat')} />

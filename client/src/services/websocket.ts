@@ -14,6 +14,8 @@ class WebSocketService {
     private readonly MAX_RECONNECT_DELAY = 30000;
     private readonly MAX_QUEUE_SIZE = 100;
     private _connState: WsConnectionState = 'connecting';
+    private _heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    private _lastPongAt: number = 0;
 
     private constructor() {}
 
@@ -69,6 +71,8 @@ class WebSocketService {
             console.log('✅ WS connected, flushing queue:', this.queue.length);
             this.reconnectAttempts = 0;
             this._setConnState('connected');
+            this._lastPongAt = Date.now();
+            this._startHeartbeat(ws);
             this.queue.forEach(msg => ws.send(JSON.stringify(msg)));
             this.queue = [];
         };
@@ -77,11 +81,13 @@ class WebSocketService {
             if (this.socket !== ws) { console.log('⚠️ onclose: stale socket, ignoring'); return; }
             console.log('❌ WS closed, code:', event.code, 'token present:', !!this.token);
             this.socket = null;
+            this._stopHeartbeat();
             if (this.token) {
                 this.reconnectAttempts++;
-                const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), this.MAX_RECONNECT_DELAY);
+                // Faster reconnect: start at 1s, cap at 10s for mobile
+                const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts - 1), 10000);
                 console.log(`🔄 Reconnect attempt ${this.reconnectAttempts} in ${delay}ms`);
-                this._setConnState(delay > 2000 ? 'waiting' : 'connecting');
+                this._setConnState('waiting');
                 this.reconnectTimer = setTimeout(() => {
                     this._setConnState('connecting');
                     this.connect(this.token);
@@ -94,12 +100,19 @@ class WebSocketService {
             console.error('WS error:', e);
         };
 
+        // Send client ping every 20s to keep connection alive through proxies
+        this._startClientPing(ws);
+
         ws.onmessage = (event) => {
             if (this.socket !== ws) return;
             try {
                 const data = JSON.parse(event.data);
-                // Ignore server heartbeat pings — just keep the connection alive
-                if (data.type === 'ping') return;
+                // Server heartbeat — pong back to confirm connection is alive
+                if (data.type === 'ping') {
+                    this._lastPongAt = Date.now();
+                    try { ws.send(JSON.stringify({ type: 'pong' })); } catch {}
+                    return;
+                }
                 console.log('📩 WS received type:', data.type, 'data:', data.data);
                 this.handlers.forEach(h => h(data));
             } catch (e) {
@@ -108,11 +121,45 @@ class WebSocketService {
         };
     }
 
+    private _startHeartbeat(ws: WebSocket) {
+        this._stopHeartbeat();
+        // Check every 20s if we got a pong within last 60s
+        this._heartbeatTimer = setInterval(() => {
+            if (this.socket !== ws) { this._stopHeartbeat(); return; }
+            const elapsed = Date.now() - this._lastPongAt;
+            if (elapsed > 60000 && this.socket === ws) {
+                console.log('💀 No pong in 60s — force closing dead connection');
+                try { ws.close(4000, 'pong timeout'); } catch {}
+            }
+        }, 20000);
+    }
+
+    private _stopHeartbeat() {
+        if (this._heartbeatTimer) { clearInterval(this._heartbeatTimer); this._heartbeatTimer = null; }
+    }
+
+    private _clientPingTimer: ReturnType<typeof setInterval> | null = null;
+    private _startClientPing(ws: WebSocket) {
+        this._stopClientPing();
+        this._clientPingTimer = setInterval(() => {
+            if (this.socket !== ws) { this._stopClientPing(); return; }
+            if (ws.readyState === WebSocket.OPEN) {
+                try { ws.send(JSON.stringify({ type: 'ping' })); } catch {}
+            }
+        }, 20000);
+    }
+
+    private _stopClientPing() {
+        if (this._clientPingTimer) { clearInterval(this._clientPingTimer); this._clientPingTimer = null; }
+    }
+
     disconnect() {
         console.log('🔌 disconnect() called');
         this.token = '';
         this.queue = [];
         this.reconnectAttempts = 0;
+        this._stopHeartbeat();
+        this._stopClientPing();
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;

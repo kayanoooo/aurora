@@ -1635,13 +1635,20 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
             if (document.visibilityState === 'visible') goOnline();
             else scheduleOffline();
         };
+        // Capacitor resume/pause events (more reliable than visibilitychange on native)
+        const handleAppForeground = () => { console.log('📱 App foreground — reconnecting WS'); goOnline(); };
+        const handleAppBackground = () => { console.log('📱 App background — scheduling offline'); scheduleOffline(); };
         document.addEventListener('visibilitychange', handleVisibility);
         window.addEventListener('focus', goOnline);
         window.addEventListener('blur', scheduleOffline);
+        window.addEventListener('aurora:app-foreground', handleAppForeground);
+        window.addEventListener('aurora:app-background', handleAppBackground);
         return () => {
             document.removeEventListener('visibilitychange', handleVisibility);
             window.removeEventListener('focus', goOnline);
             window.removeEventListener('blur', scheduleOffline);
+            window.removeEventListener('aurora:app-foreground', handleAppForeground);
+            window.removeEventListener('aurora:app-background', handleAppBackground);
             if (offlineTimer) clearTimeout(offlineTimer);
         };
     }, []);

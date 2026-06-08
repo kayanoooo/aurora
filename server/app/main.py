@@ -360,7 +360,10 @@ def _send_email_via_mailgun(to: str, subject: str, body: str) -> tuple[bool, Opt
 
 def _send_email_via_brevo(to: str, subject: str, body: str) -> tuple[bool, Optional[str]]:
     """Отправить письмо через Brevo (Sendinblue) API (HTTP/443). brevo.com (300 писем/день бесплатно)"""
-    api_key = os.getenv("BREVO_API_KEY", "")
+    raw_key = os.getenv("BREVO_API_KEY", "")
+    # Clean the key - remove whitespace, quotes, newlines
+    api_key = raw_key.strip().strip("'\"").strip()
+    print(f"📧 Brevo: raw_key len={len(raw_key)}, cleaned_key len={len(api_key)}, first_chars={api_key[:20]}...")
     if not api_key:
         return False, "BREVO_API_KEY is not set"
     smtp_from = os.getenv("SMTP_FROM", os.getenv("SMTP_USER", "noreply@aurora.app"))
@@ -372,6 +375,7 @@ def _send_email_via_brevo(to: str, subject: str, body: str) -> tuple[bool, Optio
             "subject": subject,
             "htmlContent": body,
         }
+        print(f"📧 Brevo: calling API with key len={len(api_key)}")
         resp = httpx.post(
             "https://api.brevo.com/v3/smtp/email",
             json=payload,
@@ -381,6 +385,7 @@ def _send_email_via_brevo(to: str, subject: str, body: str) -> tuple[bool, Optio
             },
             timeout=30,
         )
+        print(f"📧 Brevo: response status={resp.status_code}, body={resp.text[:300]}")
         if resp.status_code in (200, 201, 202):
             print(f"📧 Brevo: email sent to {to}")
             return True, None

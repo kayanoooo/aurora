@@ -149,11 +149,24 @@ COPY --from=python-backend /app/server /app/server
 # Copy built React client
 COPY --from=client-builder /build/client/build /app/client/build
 
-# Copy Electron AppImage
-COPY --from=electron-builder /build/dist/*.AppImage /app/client/build/downloads/
+# Ensure downloads directory exists before optional copies
+RUN mkdir -p /app/client/build/downloads
 
-# Copy Android APK
-COPY --from=android-builder /build/android/app/build/outputs/apk/debug/app-debug.apk /app/client/build/downloads/Aurora-Android.apk
+# Copy Electron AppImage if it was built inside the container (best-effort)
+RUN if ls /build/dist/*.AppImage >/dev/null 2>&1; then \
+      cp /build/dist/*.AppImage /app/client/build/downloads/Aurora-Linux.AppImage; \
+    fi
+
+# Copy Android APK if it was built inside the container (best-effort)
+RUN if [ -f /build/android/app/build/outputs/apk/debug/app-debug.apk ]; then \
+      cp /build/android/app/build/outputs/apk/debug/app-debug.apk /app/client/build/downloads/Aurora-Android.apk; \
+    fi
+
+# Prebuilt release artifacts committed to client/public/downloads/.
+# These are the canonical source — they override anything produced inside the container.
+COPY client/public/downloads/Aurora-Linux.AppImage /app/client/build/downloads/Aurora-Linux.AppImage
+COPY client/public/downloads/Aurora-Windows.exe    /app/client/build/downloads/Aurora-Windows.exe
+COPY client/public/downloads/Aurora-Android.apk   /app/client/build/downloads/Aurora-Android.apk
 
 # Create uploads directory
 RUN mkdir -p /app/uploads

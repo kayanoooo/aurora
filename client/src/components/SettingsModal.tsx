@@ -1607,7 +1607,7 @@ const AudioSubModal: React.FC<{ theme: ThemeSettings; onBack: () => void }> = ({
     );
 
     return (
-        <SubModal title={lang === 'en' ? 'Sound & Camera' : 'Звук'} onBack={onBack} dm={dm}>
+        <SubModal title={lang === 'en' ? 'Sound' : 'Звук'} onBack={onBack} dm={dm}>
             <div style={{ padding: '4px 20px 20px', display: 'flex', flexDirection: 'column' }}>
 
                 {permDenied && (

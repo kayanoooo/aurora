@@ -159,7 +159,7 @@ ipcMain.handle('is-electron', () => true);
 ipcMain.on('show-notification', (event, { title, body, silent, chatType, chatId, senderId, groupId }) => {
     if (Notification.isSupported()) {
         const icon = getAppIcon();
-        const notifOpts = { title, body, silent: cd "/home/kayano/Рабочий стол/aurora"silent, icon: icon.isEmpty() ? undefined : icon };
+        const notifOpts = { title, body, silent, icon: icon.isEmpty() ? undefined : icon };
         if (process.platform === 'darwin') { notifOpts.hasReply = true; notifOpts.replyPlaceholder = 'Введите ответ...'; }
         const n = new Notification(notifOpts);
         n.on('click', () => { showMainWindow(); if (chatType && chatId != null && mainWindow) { mainWindow.webContents.send('notification-click', { chatType, chatId }); } });
@@ -175,7 +175,7 @@ const Store = (() => {
     return { get: (k) => read()[k], set: (k, v) => { const d = read(); d[k] = v; write(d); } };
 })();
 
-ipcMain.handle('get-server-host', () => Store.get('serverHost') || 'localhost');
+ipcMain.handle('get-server-host', () => Store.get('serverHost') || 'https://aurora-production-1863.up.railway.app');
 ipcMain.handle('set-server-host', (event, host) => { Store.set('serverHost', host); mainWindow?.webContents.reload(); });
 
 if (!isDev) {

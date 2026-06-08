@@ -25,6 +25,38 @@ SMTP_USER=
 SMTP_PASS=
 SMTP_FROM=
 SMTP_FROM_NAME=Aurora Messenger
+
+# Email (HTTP API — рекомендуется для Railway, т.к. SMTP-порты блокируются)
+# Выберите ОДНОГО провайдера ниже:
+
+# --- Вариант A: SendGrid (100 писем/день бесплатно) ---
+# 1. Регистрация: https://signup.sendgrid.com/
+# 2. API Key: Settings → API Keys → Create API Key (Full Access)
+# 3. Добавьте переменную:
+SENDGRID_API_KEY=
+
+# --- Вариант B: Resend (100 писем/день бесплатно) ---
+# 1. Регистрация: https://resend.com
+# 2. API Key: Dashboard → API Keys
+# 3. Добавьте переменную:
+RESEND_API_KEY=
+
+# --- Вариант C: Mailgun (100 писем/день бесплатно) ---
+# 1. Регистрация: https://mailgun.com
+# 2. API Key: Settings → API Keys
+# 3. Добавьте переменные:
+MAILGUN_API_KEY=
+MAILGUN_DOMAIN=
+
+# --- Вариант D: Brevo (300 писем/день бесплатно) ---
+# 1. Регистрация: https://brevo.com
+# 2. API Key: SMTP & API → API Keys → Create
+# 3. Добавьте переменную:
+BREVO_API_KEY=
+
+# Если вы задали несколько провайдеров, код сам определит рабочий.
+# Можно указать конкретный через EMAIL_PROVIDER=sendgrid|resend|mailgun|brevo
+EMAIL_PROVIDER=
 ```
 
 Railway provides `PORT` automatically. The app listens on that port.

@@ -198,7 +198,7 @@ _MAX_CODE_ATTEMPTS = 5  # максимум попыток перед инвал�
 _reg_codes: dict = {}
 _REG_CODE_TTL = 600  # 10 минут
 
-def _send_email(to: str, subject: str, body: str) -> tuple[bool, Optional[str]]:
+def _send_email_via_smtp(to: str, subject: str, body: str) -> tuple[bool, Optional[str]]:
     """Отправить письмо через SMTP. Возвращает статус и диагностическое сообщение."""
     smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
     smtp_port_env = os.getenv("SMTP_PORT", "")
@@ -206,7 +206,11 @@ def _send_email(to: str, subject: str, body: str) -> tuple[bool, Optional[str]]:
     smtp_pass = os.getenv("SMTP_PASS", "")
     smtp_from = os.getenv("SMTP_FROM", smtp_user)
     smtp_from_name = os.getenv("SMTP_FROM_NAME", "Aurora Messenger")
+
+    print(f"📧 SMTP config check: host={smtp_host}, port={smtp_port_env or '465'}, user={'set' if smtp_user else 'EMPTY'}, pass={'set' if smtp_pass else 'EMPTY'}, from={smtp_from}")
+
     if not smtp_user or not smtp_pass:
+        print(f"❌ SMTP_USER or SMTP_PASS is empty: user={bool(smtp_user)}, pass={bool(smtp_pass)}")
         return False, "SMTP_USER or SMTP_PASS is empty"
     try:
         msg = MIMEMultipart("alternative")
@@ -216,22 +220,230 @@ def _send_email(to: str, subject: str, body: str) -> tuple[bool, Optional[str]]:
         msg.attach(MIMEText(body, "html", "utf-8"))
 
         port = int(smtp_port_env) if smtp_port_env else 465
+        print(f"📧 Connecting to SMTP: {smtp_host}:{port} (SSL={port==465})")
         if port == 465:
             with smtplib.SMTP_SSL(smtp_host, port, timeout=15) as server:
+                print(f"📧 Connected, logging in as {smtp_user}...")
                 server.login(smtp_user, smtp_pass)
+                print(f"📧 Login OK, sending to {to}...")
                 server.sendmail(smtp_from, to, msg.as_string())
+                print(f"📧 Email sent successfully to {to}")
         else:
             with smtplib.SMTP(smtp_host, port, timeout=15) as server:
                 server.ehlo()
                 if port != 25:
                     server.starttls()
                     server.ehlo()
+                print(f"📧 Connected (TLS), logging in as {smtp_user}...")
                 server.login(smtp_user, smtp_pass)
+                print(f"📧 Login OK, sending to {to}...")
                 server.sendmail(smtp_from, to, msg.as_string())
+                print(f"📧 Email sent successfully to {to}")
         return True, None
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"❌ SMTP AUTH ERROR: {e}. Check SMTP_USER and SMTP_PASS (app password required for Gmail)")
+        return False, f"SMTP Authentication Error: {e}"
+    except smtplib.SMTPConnectError as e:
+        print(f"❌ SMTP CONNECT ERROR: {e}. Check SMTP_HOST and SMTP_PORT and firewall/network")
+        return False, f"SMTP Connection Error: {e}"
+    except smtplib.SMTPServerDisconnected as e:
+        print(f"❌ SMTP DISCONNECTED: {e}")
+        return False, f"SMTP Server Disconnected: {e}"
+    except TimeoutError as e:
+        print(f"❌ SMTP TIMEOUT: {e}. Railway may be blocking outbound {port}/TCP")
+        return False, f"SMTP Timeout (port {port} may be blocked): {e}"
     except Exception as e:
-        print(f"❌ Email send error: {e}")
+        print(f"❌ Email send error (SMTP): {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         return False, str(e)
+
+
+def _send_email_via_sendgrid(to: str, subject: str, body: str) -> tuple[bool, Optional[str]]:
+    """Отправить письмо через SendGrid API (HTTP/443 — не блокируется Railway)."""
+    api_key = os.getenv("SENDGRID_API_KEY", "")
+    if not api_key:
+        return False, "SENDGRID_API_KEY is not set"
+    smtp_from = os.getenv("SMTP_FROM", os.getenv("SMTP_USER", "noreply@aurora.app"))
+    smtp_from_name = os.getenv("SMTP_FROM_NAME", "Aurora Messenger")
+    try:
+        payload = {
+            "personalizations": [{"to": [{"email": to}]}],
+            "from": {"email": smtp_from, "name": smtp_from_name},
+            "subject": subject,
+            "content": [{"type": "text/html", "value": body}],
+        }
+        resp = httpx.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
+        if resp.status_code in (200, 201, 202):
+            print(f"📧 SendGrid: email sent to {to}")
+            return True, None
+        else:
+            print(f"❌ SendGrid error {resp.status_code}: {resp.text[:500]}")
+            return False, f"SendGrid HTTP {resp.status_code}: {resp.text[:200]}"
+    except Exception as e:
+        print(f"❌ SendGrid exception: {e}")
+        return False, str(e)
+
+
+def _send_email_via_resend(to: str, subject: str, body: str) -> tuple[bool, Optional[str]]:
+    """Отправить письмо через Resend API (HTTP/443). resend.com"""
+    api_key = os.getenv("RESEND_API_KEY", "")
+    if not api_key:
+        return False, "RESEND_API_KEY is not set"
+    smtp_from = os.getenv("SMTP_FROM", os.getenv("SMTP_USER", "noreply@aurora.app"))
+    smtp_from_name = os.getenv("SMTP_FROM_NAME", "Aurora Messenger")
+    try:
+        payload = {
+            "from": f"{smtp_from_name} <{smtp_from}>",
+            "to": [to],
+            "subject": subject,
+            "html": body,
+        }
+        resp = httpx.post(
+            "https://api.resend.com/emails",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
+        if resp.status_code in (200, 201):
+            print(f"📧 Resend: email sent to {to}")
+            return True, None
+        else:
+            print(f"❌ Resend error {resp.status_code}: {resp.text[:500]}")
+            return False, f"Resend HTTP {resp.status_code}: {resp.text[:200]}"
+    except Exception as e:
+        print(f"❌ Resend exception: {e}")
+        return False, str(e)
+
+
+def _send_email_via_mailgun(to: str, subject: str, body: str) -> tuple[bool, Optional[str]]:
+    """Отправить письмо через Mailgun API (HTTP/443). mailgun.com"""
+    api_key = os.getenv("MAILGUN_API_KEY", "")
+    domain = os.getenv("MAILGUN_DOMAIN", "")
+    if not api_key or not domain:
+        return False, "MAILGUN_API_KEY or MAILGUN_DOMAIN is not set"
+    smtp_from = os.getenv("SMTP_FROM", f"noreply@{domain}")
+    smtp_from_name = os.getenv("SMTP_FROM_NAME", "Aurora Messenger")
+    try:
+        resp = httpx.post(
+            f"https://api.mailgun.net/v3/{domain}/messages",
+            auth=("api", api_key),
+            data={
+                "from": f"{smtp_from_name} <{smtp_from}>",
+                "to": to,
+                "subject": subject,
+                "html": body,
+            },
+            timeout=30,
+        )
+        if resp.status_code in (200, 201):
+            print(f"📧 Mailgun: email sent to {to}")
+            return True, None
+        else:
+            print(f"❌ Mailgun error {resp.status_code}: {resp.text[:500]}")
+            return False, f"Mailgun HTTP {resp.status_code}: {resp.text[:200]}"
+    except Exception as e:
+        print(f"❌ Mailgun exception: {e}")
+        return False, str(e)
+
+
+def _send_email_via_brevo(to: str, subject: str, body: str) -> tuple[bool, Optional[str]]:
+    """Отправить письмо через Brevo (Sendinblue) API (HTTP/443). brevo.com (300 писем/день бесплатно)"""
+    api_key = os.getenv("BREVO_API_KEY", "")
+    if not api_key:
+        return False, "BREVO_API_KEY is not set"
+    smtp_from = os.getenv("SMTP_FROM", os.getenv("SMTP_USER", "noreply@aurora.app"))
+    smtp_from_name = os.getenv("SMTP_FROM_NAME", "Aurora Messenger")
+    try:
+        payload = {
+            "sender": {"name": smtp_from_name, "email": smtp_from},
+            "to": [{"email": to}],
+            "subject": subject,
+            "htmlContent": body,
+        }
+        resp = httpx.post(
+            "https://api.brevo.com/v3/smtp/email",
+            json=payload,
+            headers={
+                "api-key": api_key,
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
+        if resp.status_code in (200, 201, 202):
+            print(f"📧 Brevo: email sent to {to}")
+            return True, None
+        else:
+            print(f"❌ Brevo error {resp.status_code}: {resp.text[:500]}")
+            return False, f"Brevo HTTP {resp.status_code}: {resp.text[:200]}"
+    except Exception as e:
+        print(f"❌ Brevo exception: {e}")
+        return False, str(e)
+
+
+def _send_email(to: str, subject: str, body: str) -> tuple[bool, Optional[str]]:
+    """Отправить письмо. Пробует HTTP API провайдеров (работает на Railway), затем SMTP."""
+    # Определяем, какой провайдер использовать (переменная EMAIL_PROVIDER: sendgrid|resend|mailgun|brevo)
+    provider = os.getenv("EMAIL_PROVIDER", "").strip().lower()
+
+    if provider == "sendgrid":
+        print(f"📧 Using SendGrid (provider=sendgrid) to {to}")
+        success, err = _send_email_via_sendgrid(to, subject, body)
+        if success: return True, None
+        print(f"⚠️ SendGrid failed: {err}")
+
+    elif provider == "resend":
+        print(f"📧 Using Resend (provider=resend) to {to}")
+        success, err = _send_email_via_resend(to, subject, body)
+        if success: return True, None
+        print(f"⚠️ Resend failed: {err}")
+
+    elif provider == "mailgun":
+        print(f"📧 Using Mailgun (provider=mailgun) to {to}")
+        success, err = _send_email_via_mailgun(to, subject, body)
+        if success: return True, None
+        print(f"⚠️ Mailgun failed: {err}")
+
+    elif provider == "brevo":
+        print(f"📧 Using Brevo (provider=brevo) to {to}")
+        success, err = _send_email_via_brevo(to, subject, body)
+        if success: return True, None
+        print(f"⚠️ Brevo failed: {err}")
+
+    else:
+        # Auto-detect: пробуем все провайдеры по очереди
+        providers = [
+            ("SendGrid", _send_email_via_sendgrid),
+            ("Resend", _send_email_via_resend),
+            ("Mailgun", _send_email_via_mailgun),
+            ("Brevo", _send_email_via_brevo),
+        ]
+        for name, func in providers:
+            print(f"📧 Trying {name}...")
+            success, err = func(to, subject, body)
+            if success:
+                return True, None
+            print(f"⚠️ {name} failed: {err}")
+
+    # Fallback: SMTP (локально работает, на Railway заблокирован)
+    print(f"📧 All HTTP APIs failed, trying SMTP fallback...")
+    success, err = _send_email_via_smtp(to, subject, body)
+    if success:
+        return True, None
+
+    print(f"❌ All email delivery methods failed for {to}. Last error: {err}")
+    return False, err
 
 class CreateGroupRequest(BaseModel):
     name: str
@@ -589,6 +801,66 @@ async def shutdown():
 @app.get("/api/health")
 async def root():
     return {"message": "Messenger API is running", "status": "ok", "version": "2.0.0"}
+
+# ========== SMTP диагностика ==========
+
+class SmtpTestRequest(BaseModel):
+    email: str
+    code: str = "123456"
+
+@app.post("/api/debug/test-smtp")
+async def debug_test_smtp(request: SmtpTestRequest):
+    """Тестовый эндпоинт для диагностики SMTP. Печатает детали в логи Railway."""
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port_env = os.getenv("SMTP_PORT", "")
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_pass = os.getenv("SMTP_PASS", "")
+    smtp_from = os.getenv("SMTP_FROM", smtp_user)
+
+    diagnostics = {
+        "smtp_host": smtp_host,
+        "smtp_port": smtp_port_env or "465",
+        "smtp_user_set": bool(smtp_user),
+        "smtp_pass_set": bool(smtp_pass),
+        "smtp_from": smtp_from,
+        "test_email": request.email,
+        "env_file_found": os.path.exists("server/.env") or os.path.exists(".env"),
+    }
+
+    if not smtp_user or not smtp_pass:
+        diagnostics["error"] = "SMTP_USER or SMTP_PASS is not set"
+        return diagnostics
+
+    # Try connecting
+    import socket
+    port = int(smtp_port_env) if smtp_port_env else 465
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        result = sock.connect_ex((smtp_host, port))
+        sock.close()
+        diagnostics["port_reachable"] = (result == 0)
+        if result != 0:
+            diagnostics["port_error"] = f"Connection refused or timeout (errno={result})"
+    except Exception as e:
+        diagnostics["port_reachable"] = False
+        diagnostics["port_error"] = str(e)
+
+    # Try sending a test email
+    body = f"<p>Test email from Aurora. Your verification code: <b>{request.code}</b></p>"
+    sent, email_error = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _send_email(request.email, "Aurora — SMTP Test", body)
+    )
+    diagnostics["send_result"] = sent
+    diagnostics["send_error"] = email_error
+
+    print(f"🔍 SMTP DIAGNOSTIC: {diagnostics}")
+
+    if sent:
+        return {"success": True, "diagnostics": diagnostics, "message": "Email sent successfully"}
+    else:
+        return {"success": False, "diagnostics": diagnostics, "message": f"SMTP failed: {email_error}"}
+
 
 # ========== Аутентификация ==========
 

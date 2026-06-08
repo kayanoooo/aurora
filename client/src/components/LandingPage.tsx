@@ -42,7 +42,7 @@ const platforms = [
     {
         name: 'Android',
         detail: 'APK для телефона',
-        href: '/api/downloads/Aurora-Android.apk',
+        href: '/downloads/Aurora-Android.apk',
         fileName: 'Aurora-Android.apk',
         icon: '📱',
         color: '#34a853',
@@ -50,7 +50,7 @@ const platforms = [
     {
         name: 'Desktop',
         detail: 'Linux · AppImage',
-        href: '/api/downloads/Aurora-Linux.AppImage',
+        href: '/downloads/Aurora-Linux.AppImage',
         fileName: 'Aurora-Linux.AppImage',
         icon: '🐧',
         color: '#fbbc04',
@@ -58,7 +58,7 @@ const platforms = [
     {
         name: 'Desktop',
         detail: 'Windows · exe',
-        href: '/api/downloads/Aurora-Windows.exe',
+        href: '/downloads/Aurora-Windows.exe',
         fileName: 'Aurora-Windows.exe',
         icon: '🪟',
         color: '#4285f4',

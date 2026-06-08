@@ -882,8 +882,14 @@ async def send_register_code(request: SendRegisterCodeRequest):
     for e in expired:
         del _reg_codes[e]
 
-    smtp_configured = bool(os.getenv("SMTP_USER") and os.getenv("SMTP_PASS"))
-    if smtp_configured:
+    email_configured = bool(
+        (os.getenv("SMTP_USER") and os.getenv("SMTP_PASS")) or
+        os.getenv("SENDGRID_API_KEY") or
+        os.getenv("RESEND_API_KEY") or
+        os.getenv("MAILGUN_API_KEY") or
+        os.getenv("BREVO_API_KEY")
+    )
+    if email_configured:
         body = f"""
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f9fafb;border-radius:12px">
             <div style="text-align:center;margin-bottom:24px">
@@ -921,8 +927,14 @@ async def register(request: RegisterRequest):
             if await cur.fetchone():
                 raise HTTPException(status_code=400, detail="Этот email уже зарегистрирован")
 
-    smtp_configured = bool(os.getenv("SMTP_USER") and os.getenv("SMTP_PASS"))
-    if smtp_configured:
+    email_configured = bool(
+        (os.getenv("SMTP_USER") and os.getenv("SMTP_PASS")) or
+        os.getenv("SENDGRID_API_KEY") or
+        os.getenv("RESEND_API_KEY") or
+        os.getenv("MAILGUN_API_KEY") or
+        os.getenv("BREVO_API_KEY")
+    )
+    if email_configured:
         entry = _reg_codes.get(request.email)
         if not entry:
             raise HTTPException(status_code=400, detail="Сначала подтвердите email — запросите код.")
@@ -1186,9 +1198,15 @@ async def send_reset_code(request: SendResetCodeRequest):
     for e in expired:
         del _reset_codes[e]
 
-    smtp_configured = bool(os.getenv("SMTP_USER") and os.getenv("SMTP_PASS"))
+    email_configured = bool(
+        (os.getenv("SMTP_USER") and os.getenv("SMTP_PASS")) or
+        os.getenv("SENDGRID_API_KEY") or
+        os.getenv("RESEND_API_KEY") or
+        os.getenv("MAILGUN_API_KEY") or
+        os.getenv("BREVO_API_KEY")
+    )
 
-    if smtp_configured:
+    if email_configured:
         body = f"""
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f9fafb;border-radius:12px">
             <div style="text-align:center;margin-bottom:24px">

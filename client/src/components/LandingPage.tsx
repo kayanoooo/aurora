@@ -5,6 +5,11 @@ interface LandingPageProps {
     onOpenAuth: () => void;
 }
 
+const GITHUB_RELEASE_TAG = 'aurora_beta_0_7';
+const GITHUB_REPO = 'kayanoooo/aurora';
+const githubAssetUrl = (name: string) =>
+    `https://github.com/${GITHUB_REPO}/releases/download/${GITHUB_RELEASE_TAG}/${name}`;
+
 const features = [
     {
         label: '01',
@@ -42,7 +47,7 @@ const platforms = [
     {
         name: 'Android',
         detail: 'APK для телефона',
-        href: '/downloads/Aurora-Android.apk',
+        href: githubAssetUrl('Aurora-Android.apk'),
         fileName: 'Aurora-Android.apk',
         icon: '📱',
         color: '#34a853',
@@ -50,7 +55,7 @@ const platforms = [
     {
         name: 'Desktop',
         detail: 'Linux · AppImage',
-        href: '/downloads/Aurora-Linux.AppImage',
+        href: githubAssetUrl('Aurora-Linux.AppImage'),
         fileName: 'Aurora-Linux.AppImage',
         icon: '🐧',
         color: '#fbbc04',
@@ -58,7 +63,7 @@ const platforms = [
     {
         name: 'Desktop',
         detail: 'Windows · exe',
-        href: '/downloads/Aurora-Windows.exe',
+        href: githubAssetUrl('Aurora-Windows.exe'),
         fileName: 'Aurora-Windows.exe',
         icon: '🪟',
         color: '#4285f4',

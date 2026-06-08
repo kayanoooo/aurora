@@ -3096,6 +3096,20 @@ async def websocket_endpoint(websocket: WebSocket):
         if uid != user_id:
             await manager.send_message_to_user(uid, {"type": "user_status", "data": {"user_id": user_id, "is_online": True}})
 
+    # === Heartbeat task: send ping every 30s to keep connection alive ===
+    _heartbeat_task_ref = {"task": None}
+    async def _heartbeat():
+        try:
+            while True:
+                await asyncio.sleep(30)
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break
+        except asyncio.CancelledError:
+            pass
+    _heartbeat_task_ref["task"] = asyncio.create_task(_heartbeat())
+
     # Отправляем сообщения "когда онлайн" для этого пользователя как получателя
     try:
         _pool = await DatabasePool.get_pool()
@@ -3891,6 +3905,10 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
     except WebSocketDisconnect:
+        # Cancel heartbeat task
+        _ht = _heartbeat_task_ref.get("task")
+        if _ht and not _ht.done():
+            _ht.cancel()
         manager.disconnect(user_id, websocket)
         await UserModel.update_last_seen(user_id)
         print(f"User {username} disconnected")
@@ -3900,6 +3918,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 await manager.send_message_to_user(uid, {"type": "user_status", "data": {"user_id": user_id, "is_online": False, "last_seen": _now_ts}})
     except Exception as e:
         print(f"❌ Unexpected error for {username}: {e}")
+        # Cancel heartbeat task
+        _ht = _heartbeat_task_ref.get("task")
+        if _ht and not _ht.done():
+            _ht.cancel()
         manager.disconnect(user_id, websocket)
         await UserModel.update_last_seen(user_id)
         if not manager.is_user_online(user_id):

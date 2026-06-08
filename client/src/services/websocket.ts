@@ -98,6 +98,8 @@ class WebSocketService {
             if (this.socket !== ws) return;
             try {
                 const data = JSON.parse(event.data);
+                // Ignore server heartbeat pings — just keep the connection alive
+                if (data.type === 'ping') return;
                 console.log('📩 WS received type:', data.type, 'data:', data.data);
                 this.handlers.forEach(h => h(data));
             } catch (e) {
@@ -122,6 +124,18 @@ class WebSocketService {
             this.socket.onmessage = null;
             this.socket.close();
             this.socket = null;
+        }
+    }
+
+    /** Force reconnect if the socket is dead or stale. Called when app returns to foreground. */
+    reconnect() {
+        if (this.token && this.socket &&
+            (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+            return; // Already connected/connecting — nothing to do
+        }
+        if (this.token) {
+            console.log('🔄 reconnect() — socket is dead, reconnecting...');
+            this.connect(this.token);
         }
     }
 

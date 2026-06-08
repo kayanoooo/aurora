@@ -1620,6 +1620,8 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
         let offlineTimer: ReturnType<typeof setTimeout> | null = null;
         const goOnline = () => {
             if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
+            // Reconnect if WebSocket is dead (e.g. killed by mobile OS in background)
+            wsService.reconnect();
             wsService.sendSetOnline();
         };
         const scheduleOffline = () => {

@@ -7241,10 +7241,17 @@ const Chat: React.FC<ChatProps> = ({ token, currentUserId, currentUsername, curr
                                         if (!reportReason || reportLoading) return;
                                         setReportLoading(true);
                                         try {
-                                            await fetch(`${config.API_URL}/reports?token=${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_type: reportTarget.type, target_id: reportTarget.id, reason: reportReason, comment: reportComment }) });
-                                            setReportSent(true);
-                                            showInAppToast({ title: lang === 'en' ? 'Report sent' : 'Жалоба отправлена', body: lang === 'en' ? 'Thank you, we will review it.' : 'Спасибо, мы рассмотрим её.', chatType: 'private', chatId: 0, avatarLetter: '✅', avatarColor: '#22c55e' });
-                                        } catch {} finally { setReportLoading(false); }
+                                            const res = await fetch(`${config.API_URL}/reports?token=${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_type: reportTarget.type, target_id: reportTarget.id, reason: reportReason, comment: reportComment }) });
+                                            const data = await res.json();
+                                            if (data.success || data.already_reported) {
+                                                setReportSent(true);
+                                                showInAppToast({ title: lang === 'en' ? 'Report sent' : 'Жалоба отправлена', body: lang === 'en' ? 'Thank you, we will review it.' : 'Спасибо, мы рассмотрим её.', chatType: 'private', chatId: 0, avatarLetter: '✅', avatarColor: '#22c55e' });
+                                            } else {
+                                                showInAppToast({ title: lang === 'en' ? 'Error' : 'Ошибка', body: data.detail || (lang === 'en' ? 'Failed to send report' : 'Не удалось отправить жалобу'), chatType: 'private', chatId: 0, avatarLetter: '❌', avatarColor: '#ef4444' });
+                                            }
+                                        } catch (e) {
+                                            showInAppToast({ title: lang === 'en' ? 'Network error' : 'Ошибка сети', body: lang === 'en' ? 'Could not reach server' : 'Не удалось связаться с сервером', chatType: 'private', chatId: 0, avatarLetter: '❌', avatarColor: '#ef4444' });
+                                        } finally { setReportLoading(false); }
                                     }} style={{ flex: 1, padding: '11px', borderRadius: 12, border: 'none', background: reportReason ? 'linear-gradient(135deg,#ef4444,#dc2626)' : (dm ? 'rgba(255,255,255,0.08)' : '#f3f4f6'), color: reportReason ? 'white' : (dm ? '#5a5a8a' : '#9ca3af'), fontSize: 14, fontWeight: 700, cursor: reportReason ? 'pointer' : 'default', transition: 'all 0.15s' }}>
                                         {reportLoading ? '...' : (lang === 'en' ? 'Send report' : 'Отправить')}
                                     </button>

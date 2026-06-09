@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Query
 import os
 import re
 import uuid
@@ -359,7 +359,17 @@ def _send_email_via_mailgun(to: str, subject: str, body: str) -> tuple[bool, Opt
 
 
 def _send_email_via_brevo(to: str, subject: str, body: str) -> tuple[bool, Optional[str]]:
-    """Отправить письмо через Brevo (Sendinblue) API (HTTP/443). brevo.com (300 писем/день бесплатно)"""
+    """Отправить письмо через Brevo (Sendinblue) API (HTTP/443). brevo.com (300 писем/день бесплатно)
+
+    ⚠️ ВАЖНО: Brevo по умолчанию включает IP whitelisting для API-ключей.
+    Если видите 401 'unrecognised IP address', зайдите в
+    https://app.brevo.com/security/authorised_ips и либо добавьте IP
+    сервера, либо отключите проверку 'Authorise IP address' (Allow all).
+    Можно задать BREVO_DISABLE=true чтобы полностью пропустить Brevo.
+    """
+    if os.getenv("BREVO_DISABLE", "").strip().lower() in ("1", "true", "yes"):
+        return False, "Brevo disabled via BREVO_DISABLE env var"
+
     raw_key = os.getenv("BREVO_API_KEY", "")
     # Clean the key - remove whitespace, quotes, newlines
     api_key = raw_key.strip().strip("'\"").strip()
@@ -391,6 +401,19 @@ def _send_email_via_brevo(to: str, subject: str, body: str) -> tuple[bool, Optio
             return True, None
         else:
             print(f"❌ Brevo error {resp.status_code}: {resp.text[:500]}")
+            # Специальная диагностика для 401 — обычно это IP whitelisting
+            if resp.status_code == 401 and (
+                "unrecognised IP" in resp.text
+                or "unrecognized IP" in resp.text
+                or "authorised_ips" in resp.text
+            ):
+                hint = (
+                    " | FIX: Brevo блокирует IP сервера. Откройте "
+                    "https://app.brevo.com/security/authorised_ips и добавьте IP "
+                    "либо отключите 'Whitelisted IP addresses' (Allow all). "
+                    "Также можно задать BREVO_DISABLE=true чтобы пропустить Brevo."
+                )
+                return False, f"Brevo HTTP 401: {resp.text[:200]}{hint}"
             return False, f"Brevo HTTP {resp.status_code}: {resp.text[:200]}"
     except Exception as e:
         print(f"❌ Brevo exception: {e}")
@@ -2788,7 +2811,7 @@ class ReportRequest(BaseModel):
     comment: str = ''
 
 @app.post("/api/reports")
-async def submit_report(request: ReportRequest, token: str):
+async def submit_report(request: ReportRequest, token: str = Query(...)):
     payload = decode_jwt_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
